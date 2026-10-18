@@ -1,22 +1,182 @@
-tier math: bf16 = 16 bits/weight; hot = 9 bits per 4 weights = 2.25 bpw; cold = 8 bits per 8 weights = 1.0 bpw
+# EmbeddingGemma-2 dense-VQ allocation plan
+# Written 2026-10-18. Every cosine on this page is MEASURED with tools/eg2_vq.c on the
+# pinned checkpoint (docs/ladder-embeddinggemma2.txt is the raw record); every size is
+# COMPUTED from the reference toolchain's own byte account (vq_qc_bytes.h for VQ,
+# ds4_quantfmt.c:17 for q8_0, :19 for q4_K). Nothing here is estimated, and numbers
+# that earlier drafts estimated are marked superseded at the end.
 
-class              MB bf16  tier   dim     MB VQ  cols divisible by dim
-audio-ffn            402.7  cold     8     25.17  48 ok, 0 BAD
-skeleton-table       268.4  keep     -    268.44  -
-text-tower           235.7   hot     4     33.14  169 ok, 0 BAD
-vision-ffn           226.5  cold     8     14.16  48 ok, 0 BAD
-audio-attn           128.0  cold     8      8.00  61 ok, 0 BAD
-audio-frontend        75.6  keep     -     75.62  -
-vision-attn           75.5  cold     8      4.72  64 ok, 0 BAD
-text-ple              37.7   hot     4      5.31  49 ok, 0 BAD
-vision-frontend       32.6  keep     -     32.64  -
-audio-other            3.1  keep     -      3.15  -
-other                  2.4  keep     -      2.36  -
-keep                   0.5  keep     -      0.48  -
+## 1. What is being compressed
 
-VQ matrix payloads          90.49 MB  (477 matrices, payload bytes incl. codebook+gain+idx)
-  of which codebooks         2.92 MB  (f16, 4 KB per matrix)
-token table q4_K            75.50 MB  (4.5 bpw)
-kept at source precision   114.24 MB  (tower frontends + tiny)
+Source: google/embeddinggemma-2 at revision 914f7f89142e33e77833254d9c9b90c3cef7303b,
+model.safetensors, 1488.74 MB of bf16. 1376 tensors, classified by eg2_pack's
+classify() from the checkpoint's own module layout (docs/tensor-inventory.tsv).
+Six classes carry VQ payloads: text-tower, text-ple, audio-attn, audio-ffn,
+audio-frontend (the lconv module's linears) and the vision tower's attention and FFN.
+The 262144x512 token table is a block-scalar slot, and 914 small tensors (norms,
+biases, per-channel scales, conv kernels, position tables, the four projection heads)
+ship verbatim at source precision.
 
-ESTIMATE 283.1 MB vs 1488.7 MB bf16 = 5.26x smaller
+## 2. The measured quality ladder
+
+One representative per class (layer 9 of each tower), crossed with every tier that has
+been measured: dim is the number of weights per codebook entry, nc the codebook size,
+cos is the reconstruction cosine against the source and relL2 the relative L2 error.
+payload is that matrix's payload in bytes, read back through the reference's own
+reader. The bottom half of each class block is the dim-8 family, which trades quality
+for size; the top half is dim 4.
+
+class          tier      cos     relL2     payload
+audio-attn     4/1024     0.9970   7.7986     337937
+audio-attn     4/2048     0.9989   4.7833     378897
+audio-attn     4/4096     0.9994   3.5672     428049
+audio-attn     4/512      0.9935  11.4239     301073
+audio-attn     8/1024     0.9015  43.2738     182289
+audio-attn     8/256      0.8433  53.7387     137232
+audio-attn     8/4096     0.9495  31.3737     264209
+audio-attn     8/512      0.8740  48.5931     157713
+audio-ffn      4/1024     0.9972   7.4628    1320977
+audio-ffn      4/2048     0.9986   5.2195    1460241
+audio-ffn      4/4096     0.9993   3.8428    1607697
+audio-ffn      4/512      0.9934  11.4518    1185809
+audio-ffn      8/1024     0.8989  43.8062     673809
+audio-ffn      8/256      0.8462  53.2872     530448
+audio-ffn      8/4096     0.9432  33.2368     854033
+audio-ffn      8/512      0.8740  48.5858     600081
+audio-frontend 4/512      0.9642  26.5276     598033
+audio-frontend 4/512      0.9941  10.8324     301073
+audio-frontend 8/256      0.8218  56.9836     270352
+audio-frontend 8/256      0.8464  53.2494     137232
+text-ple       4/1024     0.9728  23.1653    1998865
+text-ple       4/2048     0.9804  19.6927    2203665
+text-ple       4/4096     0.9857  16.8590    2416657
+text-ple       4/512      0.9622  27.2489    1798161
+text-ple       8/1024     0.8733  48.7114    1024017
+text-ple       8/256      0.8199  57.2570     815120
+text-ple       8/4096     0.9111  41.2207    1269777
+text-ple       8/512      0.8489  52.8524     917521
+text-tower     4/1024     0.9737  22.7824     339985
+text-tower     4/2048     0.9814  19.1933     380945
+text-tower     4/4096     0.9869  16.1583     430097
+text-tower     4/512      0.9631  26.9081     303121
+text-tower     8/1024     0.8782  47.8202     184337
+text-tower     8/256      0.8216  56.9998     139280
+text-tower     8/4096     0.9218  38.7762     266257
+text-tower     8/512      0.8520  52.3610     159761
+vision-attn    4/1024     0.9739  22.7207     194065
+vision-attn    4/2048     0.9818  18.9721     220689
+vision-attn    4/4096     0.9875  15.7434     255505
+vision-attn    4/512      0.9629  27.0093     171537
+vision-attn    8/1024     0.8816  47.2014     110097
+vision-attn    8/256      0.8235  56.7350      79376
+vision-attn    8/4096     0.9273  37.4244     177681
+vision-attn    8/512      0.8545  51.9529      92689
+vision-ffn     4/1024     0.9727  23.2190     751633
+vision-ffn     4/2048     0.9802  19.8031     833553
+vision-ffn     4/4096     0.9858  16.8008     923665
+vision-ffn     4/512      0.9619  27.3616     673809
+vision-ffn     8/1024     0.8736  48.6608     391185
+vision-ffn     8/256      0.8183  57.4793     305168
+vision-ffn     8/4096     0.9144  40.4787     514065
+vision-ffn     8/512      0.8483  52.9514     346129
+
+## 3. The tier decision
+
+The artifact ships dim 4 with a 4096-entry codebook (vq4x4096) for every VQ class, and
+the token table ships at q8_0.
+
+Why dim 4 rather than dim 8: at the same 12-bit index width, dim 4 measured 0.9869 on
+the text tower against 0.9218 for dim 8 (8x4096), and 0.9858 against 0.9144 on the
+vision FFN. Fewer weights per codebook entry is simply finer granularity. Dim 8 buys
+size (141.9 MB of VQ payload against 237.3 MB) and costs about 0.07 cosine; it is the
+right choice if the artifact must be smaller, not if quality leads.
+
+Why 4096 and not 1024 or 2048: the DeepSeek V4.1 recipe's measured bar, recorded in
+RECIPE-deepseek41-vq.md, is a routed-expert reconstruction cosine of 0.925 at 13 bits
+and 0.910-0.911 at 12 bits, with 17.06 percent relative error at layer 20. At 4/1024
+the text tower measures 0.9737 and the text PLE 0.9728 with 22.8 and 23.2 percent
+relative error — above the bar's cosine but well above its relative error. At 4/2048
+they are 0.9814 and 0.9804. At 4/4096 the text tower reaches 0.9869 and 16.16 percent
+relative error, the PLE 0.9857 and 16.86 percent, and the easy classes (audio FFN and
+attention) 0.9993 and 0.9994. 4/4096 is the only tier measured here whose relative
+error is at the DeepSeek recipe's level, and it is the highest quality measured at all.
+
+Why q8_0 for the token table: q8_K is not a weight format in this toolchain. Its trait
+entry is can_quantize=false (quants_p1.inc.c:55), ds4q_quantize_chunk has no q8_K
+branch, there is no ds4_deq_q8_K in the reader, and both engines use Q8_K only for
+activation blocks (core_types.h:16, ds4.c:1322,4581). q8_0 is the 8-bit weight type
+that is supported end to end: encoder at quants_p3.inc.c:276, gold decoder
+ds4_quantfmt.h:45, 34 bytes per 32 values (ds4_quantfmt.c:17). The token table goes
+from 268.44 MB to 142.61 MB, measured round trip cosine 1.0000 and 0.5484 percent
+relative error.
+
+## 4. The plan report (computed by eg2_pack plan)
+
+# DQVD v1 plan — written by eg2_pack (unit 3). Measured and computed, never estimated.
+# source: .models/EmbeddingGemma-2-914f7f8/model.safetensors
+# class totals: tensors, VQ matrices, source MB, payload MB, tier, bpw
+class             tensors matrices       src MB   payload MB  tier          bpw
+text-tower            216    216       260.05        56.24  vq4x4096      3.460
+text-ple                1      1        12.58         2.42  vq4x4096      3.073
+audio-attn             60     60       125.83        25.68  vq4x4096      3.266
+audio-ffn              48     48       402.65        77.32  vq4x4096      3.072
+audio-frontend         24     24        75.50        15.02  vq4x4096      3.182
+vision-attn            64     64        75.50        16.35  vq4x4096      3.466
+vision-ffn             48     48       226.49        44.26  vq4x4096      3.127
+skeleton-table          1      0       268.44       142.61  q8_0          8.500
+keep                  914      0        41.71        41.71  verbatim     16.000
+TOTAL                1376      -      1488.74       421.60
+ratio: 3.53x smaller than the source checkpoint
+per-tensor plan -> docs/encode-plan.tsv
+
+## 5. What the alternatives would cost
+
+Computed with the reference byte account over the 461 VQ matrices, with the token table
+at q8_0 (142.61 MB) and 41.71 MB of verbatim tensors:
+
+    tier        VQ payload   artifact total   vs the 1488.74 MB source
+    8/4096        141.9 MB        326.2 MB     4.6x smaller
+    4/512         168.8 MB        353.1 MB     4.2x
+    4/1024        189.1 MB        373.4 MB     4.0x
+    4/2048        211.3 MB        395.6 MB     3.8x
+    4/4096        237.3 MB        421.6 MB     3.5x   (shipped)
+
+## 6. What the encode costs (measured)
+
+Per matrix, at 4/4096 on this machine's CPU (single process, i7-14700F): 12.8 s for a
+0.59 M-element vision attention matrix, 19.4 s for a 1.05 M-element audio attention
+matrix, 23.3 s for a 2.36 M-element vision FFN, 27.9 s for a 4.19 M-element audio FFN,
+19.6 s for a 1.05 M-element text-tower matrix and 34.2 s for the 6.29 M-element text
+PLE. At 4/1024 the same matrices cost 3.5 to 8.6 s, so the codebook size is the cost
+driver, not the element count. The whole plan is about two hours single-process; it is
+run as 14 shards and merged (see eg2_pack's merge mode, proved byte-identical to a
+single-process run).
+
+Why the GPU is not used for this tier: vq_qc.h only takes its GPU paths when
+vqg_shm_ok(nc,dim) passes, and that gate measures the codebook against
+cudaDevAttrMaxSharedMemoryPerBlock, which is 49152 bytes on this card. Dim 4 with 4096
+entries needs 81920 bytes and dim 8 with 4096 needs 147456, so at this tier the
+reference's kernels cannot launch at all and the encoder runs on the CPU by the
+reference's own rule. The reference's device-resident encoder for exactly this shape
+(dim 8 / nc 4096, codebook chunked into shared memory) is gguf-tools/quantize/v41_vq.cu;
+adopting it is the GPU route for a later unit, and it writes its own payload layout.
+
+## 7. Corrections and superseded numbers
+
+- An earlier draft of this file estimated 283.1 MB total and 5.26x on the strength of an
+  unmeasured tier choice. Superseded by the plan report above: 421.60 MB, 3.53x.
+- An earlier draft reported "all-hot 345.2 MB, 4.31x". Superseded: that was the 4/512
+  configuration, whose measured artifact total is 353.1 MB.
+- The class classifier had a substring bug: "conv_projection" contains "v_proj", so the
+  audio subsample-conv projection weights were classified audio-attn. Fixed in
+  eg2_pack's classify(), which now catches ".subsample_conv_projection." and
+  "patch_embedder." before the prefix rules; the affected tensors are verbatim slots in
+  the keep class and the 24 audio-frontend matrices are the lconv module's linears.
+
+## 8. What this page is not
+
+It is not a measurement of the artifact: the artifact's own numbers (per tensor, by
+class, with the container's checks) are in out/encode-log.txt and out/verify-log.txt.
+It is not a measurement of a running engine: no engine can load this container yet.
+ds4-dfm-rs has no embedding_gemma family support (no gemma string in its crates or
+ds4.c, no embeddings endpoint), which is why the artifact is a preparation for a family
+port rather than something to run today.

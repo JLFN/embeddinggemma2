@@ -17,3 +17,201 @@ audio_tower.layers.0.feed_forward1.ffw_layer_1.linear.weight dim=8 nc= 256  cos=
 tensor vision_tower.encoder.layers.0.mlp.down_proj.linear.weight  768x3072  dtype=BF16  (4.7 MB bf16)
 vision_tower.encoder.layers.0.mlp.down_proj.linear.weight dim=8 nc= 256  cos=0.8001  relL2=59.9821%  maxabs=0.18269  n=2359296  1.62s
     payload 300560 B (1.0192 bpw)  decode-vs-encode maxabs=0
+
+# --- extended ladder 2026-10-18: one representative tensor per class (the largest with cols divisible by 8) x four tiers ---
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=4 512
+language_model.layers.9.mlp.up_proj.weight           dim=4 nc= 512  cos=0.9631  relL2=26.9081%  maxabs=0.28503  n=1048576  2.34s
+    payload 303121 B (2.3126 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=4 1024
+language_model.layers.9.mlp.up_proj.weight           dim=4 nc=1024  cos=0.9737  relL2=22.7824%  maxabs=0.26733  n=1048576  4.85s
+    payload 339985 B (2.5939 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=8 512
+language_model.layers.9.mlp.up_proj.weight           dim=8 nc= 512  cos=0.8520  relL2=52.3610%  maxabs=0.33453  n=1048576  2.07s
+    payload 159761 B (1.2189 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=8 256
+language_model.layers.9.mlp.up_proj.weight           dim=8 nc= 256  cos=0.8216  relL2=56.9998%  maxabs=0.34344  n=1048576  1.03s
+    payload 139280 B (1.0626 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=4 512
+language_model.ple.per_layer_model_projection.weight dim=4 nc= 512  cos=0.9622  relL2=27.2489%  maxabs=0.39844  n=6291456  4.08s
+    payload 1798161 B (2.2865 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=4 1024
+language_model.ple.per_layer_model_projection.weight dim=4 nc=1024  cos=0.9728  relL2=23.1653%  maxabs=0.29993  n=6291456  8.58s
+    payload 1998865 B (2.5417 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=8 512
+language_model.ple.per_layer_model_projection.weight dim=8 nc= 512  cos=0.8489  relL2=52.8524%  maxabs=0.39124  n=6291456  4.17s
+    payload 917521 B (1.1667 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=8 256
+language_model.ple.per_layer_model_projection.weight dim=8 nc= 256  cos=0.8199  relL2=57.2570%  maxabs=0.43268  n=6291456  2.08s
+    payload 815120 B (1.0365 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=4 512
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=4 nc= 512  cos=0.9934  relL2=11.4518%  maxabs=0.07581  n=4194304  3.37s
+    payload 1185809 B (2.2618 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=4 1024
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=4 nc=1024  cos=0.9972  relL2= 7.4628%  maxabs=0.07110  n=4194304  6.91s
+    payload 1320977 B (2.5196 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=8 512
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=8 nc= 512  cos=0.8740  relL2=48.5858%  maxabs=0.07269  n=4194304  3.82s
+    payload 600081 B (1.1446 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=8 256
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=8 nc= 256  cos=0.8462  relL2=53.2872%  maxabs=0.06986  n=4194304  1.84s
+    payload 530448 B (1.0117 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=4 512
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=4 nc= 512  cos=0.9629  relL2=27.0093%  maxabs=0.10608  n=589824  1.70s
+    payload 171537 B (2.3266 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=4 1024
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=4 nc=1024  cos=0.9739  relL2=22.7207%  maxabs=0.09869  n=589824  3.48s
+    payload 194065 B (2.6322 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=8 512
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=8 nc= 512  cos=0.8545  relL2=51.9529%  maxabs=0.11780  n=589824  1.18s
+    payload 92689 B (1.2572 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=8 256
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=8 nc= 256  cos=0.8235  relL2=56.7350%  maxabs=0.12805  n=589824  0.57s
+    payload 79376 B (1.0766 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=4 512
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=4 nc= 512  cos=0.9619  relL2=27.3616%  maxabs=0.31824  n=2359296  2.76s
+    payload 673809 B (2.2848 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=4 1024
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=4 nc=1024  cos=0.9727  relL2=23.2190%  maxabs=0.24927  n=2359296  5.77s
+    payload 751633 B (2.5487 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=8 512
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=8 nc= 512  cos=0.8483  relL2=52.9514%  maxabs=0.35480  n=2359296  3.30s
+    payload 346129 B (1.1737 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=8 256
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=8 nc= 256  cos=0.8183  relL2=57.4793%  maxabs=0.36700  n=2359296  1.63s
+    payload 305168 B (1.0348 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=4 512
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=4 nc= 512  cos=0.9935  relL2=11.4239%  maxabs=0.11871  n=1048576  2.35s
+    payload 301073 B (2.2970 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=4 1024
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=4 nc=1024  cos=0.9970  relL2= 7.7986%  maxabs=0.09277  n=1048576  4.84s
+    payload 337937 B (2.5783 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=8 512
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=8 nc= 512  cos=0.8740  relL2=48.5931%  maxabs=0.14746  n=1048576  2.06s
+    payload 157713 B (1.2033 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=8 256
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=8 nc= 256  cos=0.8433  relL2=53.7387%  maxabs=0.16089  n=1048576  1.02s
+    payload 137232 B (1.0470 bpw)  decode-vs-encode maxabs=0
+# --- end extended ladder ---
+
+# --- ladder pass 2 2026-10-18: dim-8 codebook-size sweep (the cheap-tier boundary), same tensors ---
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=8 1024
+language_model.layers.9.mlp.up_proj.weight           dim=8 nc=1024  cos=0.8782  relL2=47.8202%  maxabs=0.28223  n=1048576  4.29s
+    payload 184337 B (1.4064 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=8 4096
+language_model.layers.9.mlp.up_proj.weight           dim=8 nc=4096  cos=0.9218  relL2=38.7762%  maxabs=0.24976  n=1048576  17.00s
+    payload 266257 B (2.0314 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=8 1024
+language_model.ple.per_layer_model_projection.weight dim=8 nc=1024  cos=0.8733  relL2=48.7114%  maxabs=0.38684  n=6291456  8.73s
+    payload 1024017 B (1.3021 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=8 4096
+language_model.ple.per_layer_model_projection.weight dim=8 nc=4096  cos=0.9111  relL2=41.2207%  maxabs=0.30103  n=6291456  34.62s
+    payload 1269777 B (1.6146 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=8 1024
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=8 nc=1024  cos=0.8989  relL2=43.8062%  maxabs=0.07805  n=4194304  7.61s
+    payload 673809 B (1.2852 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=8 4096
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=8 nc=4096  cos=0.9432  relL2=33.2368%  maxabs=0.08724  n=4194304  30.45s
+    payload 854033 B (1.6289 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=8 1024
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=8 nc=1024  cos=0.8816  relL2=47.2014%  maxabs=0.11310  n=589824  2.39s
+    payload 110097 B (1.4933 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=8 4096
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=8 nc=4096  cos=0.9273  relL2=37.4244%  maxabs=0.08981  n=589824  9.61s
+    payload 177681 B (2.4100 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=8 1024
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=8 nc=1024  cos=0.8736  relL2=48.6608%  maxabs=0.34479  n=2359296  6.86s
+    payload 391185 B (1.3264 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=8 4096
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=8 nc=4096  cos=0.9144  relL2=40.4787%  maxabs=0.27173  n=2359296  27.31s
+    payload 514065 B (1.7431 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=8 1024
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=8 nc=1024  cos=0.9015  relL2=43.2738%  maxabs=0.14111  n=1048576  4.22s
+    payload 182289 B (1.3908 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=8 4096
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=8 nc=4096  cos=0.9495  relL2=31.3737%  maxabs=0.08105  n=1048576  16.92s
+    payload 264209 B (2.0158 bpw)  decode-vs-encode maxabs=0
+# --- end ladder pass 2 ---
+
+# --- ladder pass 3 2026-10-18: the two classes pass 1/2 did not cover (audio-frontend conv-module linears, small text-tower matrices) ---
+[audio-frontend] audio_tower.layers.9.lconv1d.linear_start.linear.weight tier=4 512
+audio_tower.layers.9.lconv1d.linear_start.linear.weight dim=4 nc= 512  cos=0.9642  relL2=26.5276%  maxabs=0.08362  n=2097152  2.71s
+    payload 598033 B (2.2813 bpw)  decode-vs-encode maxabs=0
+[audio-frontend] audio_tower.layers.9.lconv1d.linear_start.linear.weight tier=8 256
+audio_tower.layers.9.lconv1d.linear_start.linear.weight dim=8 nc= 256  cos=0.8218  relL2=56.9836%  maxabs=0.11836  n=2097152  1.59s
+    payload 270352 B (1.0313 bpw)  decode-vs-encode maxabs=0
+[audio-frontend] audio_tower.layers.9.lconv1d.linear_end.linear.weight tier=4 512
+audio_tower.layers.9.lconv1d.linear_end.linear.weight dim=4 nc= 512  cos=0.9941  relL2=10.8324%  maxabs=0.10529  n=1048576  2.36s
+    payload 301073 B (2.2970 bpw)  decode-vs-encode maxabs=0
+[audio-frontend] audio_tower.layers.9.lconv1d.linear_end.linear.weight tier=8 256
+audio_tower.layers.9.lconv1d.linear_end.linear.weight dim=8 nc= 256  cos=0.8464  relL2=53.2494%  maxabs=0.15050  n=1048576  1.03s
+    payload 137232 B (1.0470 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.self_attn.o_proj.weight tier=4 512
+language_model.layers.9.self_attn.o_proj.weight      dim=4 nc= 512  cos=0.9585  relL2=28.5101%  maxabs=0.22141  n=524288  1.50s
+    payload 152593 B (2.3284 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.self_attn.o_proj.weight tier=8 256
+language_model.layers.9.self_attn.o_proj.weight      dim=8 nc= 256  cos=0.8122  relL2=58.3340%  maxabs=0.27521  n=524288  0.51s
+    payload 70672 B (1.0784 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.relative_k_proj.weight tier=4 512
+audio_tower.layers.9.self_attn.relative_k_proj.weight dim=4 nc= 512  cos=0.9996  relL2= 2.7651%  maxabs=0.04413  n=1048576  2.34s
+    payload 301073 B (2.2970 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.relative_k_proj.weight tier=8 256
+audio_tower.layers.9.self_attn.relative_k_proj.weight dim=8 nc= 256  cos=0.9989  relL2= 4.7757%  maxabs=0.05273  n=1048576  1.01s
+    payload 137232 B (1.0470 bpw)  decode-vs-encode maxabs=0
+# --- end ladder pass 3 ---
+
+# --- ladder pass 4 2026-10-18: the high-quality dim-4 tiers (4/1024, 4/2048, 4/4096) on the same six class representatives, for the quality-versus-size choice above 8/4096 ---
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=4 1024
+language_model.layers.9.mlp.up_proj.weight           dim=4 nc=1024  cos=0.9737  relL2=22.7824%  maxabs=0.26733  n=1048576  4.95s
+    payload 339985 B (2.5939 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=4 2048
+language_model.layers.9.mlp.up_proj.weight           dim=4 nc=2048  cos=0.9814  relL2=19.1933%  maxabs=0.25354  n=1048576  9.75s
+    payload 380945 B (2.9064 bpw)  decode-vs-encode maxabs=0
+[text-tower] language_model.layers.9.mlp.up_proj.weight tier=4 4096
+language_model.layers.9.mlp.up_proj.weight           dim=4 nc=4096  cos=0.9869  relL2=16.1583%  maxabs=0.10815  n=1048576  19.60s
+    payload 430097 B (3.2814 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=4 1024
+language_model.ple.per_layer_model_projection.weight dim=4 nc=1024  cos=0.9728  relL2=23.1653%  maxabs=0.29993  n=6291456  8.63s
+    payload 1998865 B (2.5417 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=4 2048
+language_model.ple.per_layer_model_projection.weight dim=4 nc=2048  cos=0.9804  relL2=19.6927%  maxabs=0.27795  n=6291456  17.19s
+    payload 2203665 B (2.8021 bpw)  decode-vs-encode maxabs=0
+[text-ple] language_model.ple.per_layer_model_projection.weight tier=4 4096
+language_model.ple.per_layer_model_projection.weight dim=4 nc=4096  cos=0.9857  relL2=16.8590%  maxabs=0.26025  n=6291456  34.18s
+    payload 2416657 B (3.0729 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=4 1024
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=4 nc=1024  cos=0.9972  relL2= 7.4628%  maxabs=0.07110  n=4194304  6.89s
+    payload 1320977 B (2.5196 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=4 2048
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=4 nc=2048  cos=0.9986  relL2= 5.2195%  maxabs=0.04764  n=4194304  13.94s
+    payload 1460241 B (2.7852 bpw)  decode-vs-encode maxabs=0
+[audio-ffn] audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight tier=4 4096
+audio_tower.layers.9.feed_forward2.ffw_layer_2.linear.weight dim=4 nc=4096  cos=0.9993  relL2= 3.8428%  maxabs=0.04729  n=4194304  27.88s
+    payload 1607697 B (3.0664 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=4 1024
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=4 nc=1024  cos=0.9739  relL2=22.7207%  maxabs=0.09869  n=589824  3.54s
+    payload 194065 B (2.6322 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=4 2048
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=4 nc=2048  cos=0.9818  relL2=18.9721%  maxabs=0.08618  n=589824  6.92s
+    payload 220689 B (2.9933 bpw)  decode-vs-encode maxabs=0
+[vision-attn] vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight tier=4 4096
+vision_tower.encoder.layers.9.self_attn.v_proj.linear.weight dim=4 nc=4096  cos=0.9875  relL2=15.7434%  maxabs=0.08356  n=589824  13.80s
+    payload 255505 B (3.4655 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=4 1024
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=4 nc=1024  cos=0.9727  relL2=23.2190%  maxabs=0.24927  n=2359296  5.76s
+    payload 751633 B (2.5487 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=4 2048
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=4 nc=2048  cos=0.9802  relL2=19.8031%  maxabs=0.21155  n=2359296  11.65s
+    payload 833553 B (2.8264 bpw)  decode-vs-encode maxabs=0
+[vision-ffn] vision_tower.encoder.layers.9.mlp.up_proj.linear.weight tier=4 4096
+vision_tower.encoder.layers.9.mlp.up_proj.linear.weight dim=4 nc=4096  cos=0.9858  relL2=16.8008%  maxabs=0.19385  n=2359296  23.33s
+    payload 923665 B (3.1320 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=4 1024
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=4 nc=1024  cos=0.9970  relL2= 7.7986%  maxabs=0.09277  n=1048576  4.89s
+    payload 337937 B (2.5783 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=4 2048
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=4 nc=2048  cos=0.9989  relL2= 4.7833%  maxabs=0.08575  n=1048576  9.77s
+    payload 378897 B (2.8908 bpw)  decode-vs-encode maxabs=0
+[audio-attn] audio_tower.layers.9.self_attn.q_proj.linear.weight tier=4 4096
+audio_tower.layers.9.self_attn.q_proj.linear.weight  dim=4 nc=4096  cos=0.9994  relL2= 3.5672%  maxabs=0.08038  n=1048576  19.49s
+    payload 428049 B (3.2658 bpw)  decode-vs-encode maxabs=0
+# --- end ladder pass 4 ---

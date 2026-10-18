@@ -1,4 +1,7 @@
-.models/
 graphify-out/
-*.o
-*.bin.tmp
+graphify-rs-out/
+graphify-rs.toml
+.models/
+*[.]o
+out/
+out/*.bin
