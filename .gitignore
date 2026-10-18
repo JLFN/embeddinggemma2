@@ -1,0 +1,4 @@
+.models/
+graphify-out/
+*.o
+*.bin.tmp

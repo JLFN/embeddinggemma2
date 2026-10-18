@@ -1,0 +1,22 @@
+tier math: bf16 = 16 bits/weight; hot = 9 bits per 4 weights = 2.25 bpw; cold = 8 bits per 8 weights = 1.0 bpw
+
+class              MB bf16  tier   dim     MB VQ  cols divisible by dim
+audio-ffn            402.7  cold     8     25.17  48 ok, 0 BAD
+skeleton-table       268.4  keep     -    268.44  -
+text-tower           235.7   hot     4     33.14  169 ok, 0 BAD
+vision-ffn           226.5  cold     8     14.16  48 ok, 0 BAD
+audio-attn           128.0  cold     8      8.00  61 ok, 0 BAD
+audio-frontend        75.6  keep     -     75.62  -
+vision-attn           75.5  cold     8      4.72  64 ok, 0 BAD
+text-ple              37.7   hot     4      5.31  49 ok, 0 BAD
+vision-frontend       32.6  keep     -     32.64  -
+audio-other            3.1  keep     -      3.15  -
+other                  2.4  keep     -      2.36  -
+keep                   0.5  keep     -      0.48  -
+
+VQ matrix payloads          90.49 MB  (477 matrices, payload bytes incl. codebook+gain+idx)
+  of which codebooks         2.92 MB  (f16, 4 KB per matrix)
+token table q4_K            75.50 MB  (4.5 bpw)
+kept at source precision   114.24 MB  (tower frontends + tiny)
+
+ESTIMATE 283.1 MB vs 1488.7 MB bf16 = 5.26x smaller
