@@ -1,0 +1,20 @@
+# Independent verify: one line per shard. Each shard re-encoded its slots from the
+# checkpoint with the same binary and compared every payload byte with the container.
+
+verify OK (all payloads bit-identical to a fresh encode): 99 tensors, payload 17427993 B, source 86152134 B, 4.94x, 1086.3s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 16867850 B, source 79988168 B, 4.74x, 1008.8s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 160152313 B, source 355648712 B, 2.22x, 998.2s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 18861484 B, source 90209608 B, 4.78x, 1075.2s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 15271372 B, source 75669454 B, 4.95x, 971.1s
+verify OK (all payloads bit-identical to a fresh encode): 99 tensors, payload 17157017 B, source 84726598 B, 4.94x, 1166.4s
+verify OK (all payloads bit-identical to a fresh encode): 99 tensors, payload 18719084 B, source 88380236 B, 4.72x, 1062.6s
+verify OK (all payloads bit-identical to a fresh encode): 99 tensors, payload 51999078 B, source 121163078 B, 2.33x, 1095.7s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 19423662 B, source 87587658 B, 4.51x, 1129.2s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 18369900 B, source 91794252 B, 5.00x, 1019.7s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 19386005 B, source 96507458 B, 4.98x, 1156.2s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 16389478 B, source 80869702 B, 4.93x, 1020.2s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 14145399 B, source 69772170 B, 4.93x, 918.7s
+verify OK (all payloads bit-identical to a fresh encode): 98 tensors, payload 17433922 B, source 80274756 B, 4.60x, 1078.3s
+
+# slot coverage
+1376 slots verified across 14 shards (container: 1376)

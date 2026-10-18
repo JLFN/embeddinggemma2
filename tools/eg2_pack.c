@@ -1082,6 +1082,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: eg2_pack plan <hf-dir> [plan.tsv]\n"
                         "       eg2_pack encode <hf-dir> <out.bin> [log.txt] [--cold cls,...] [--limit N] [--only SUBSTR] [--shard i/N] [--profile]\n"
                         "       eg2_pack verify <hf-dir> <in.bin>  [log.txt] [--cold cls,...] [--limit N] [--only SUBSTR] [--shard i/N]\n"
+                        "       eg2_pack check  <in.bin>\n"
                         "       eg2_pack merge  <hf-dir> <out.bin> <log.txt> <shard.bin>...\n");
         return 2;
     }
@@ -1127,6 +1128,19 @@ int main(int argc, char **argv) {
         }
         v41_st_close(&S);
         return 0;
+    }
+
+    if (!strcmp(mode, "check")) {
+        /* check <in.bin> — the container's structure only: magic, version, kind
+         * range, name blob, hashes, ordering, alignment, payload ranges and every
+         * geometry the reference's byte accounts imply. No re-encode, so this is the
+         * cheap gate that a merged artifact is run through; the determinism proof
+         * (re-encode and compare bytes) is verify, which is run per shard because a
+         * payload only depends on its own matrix. */
+        dvd_slot *tab = NULL; uint32_t n_tab = 0; uint64_t po = 0, pb = 0;
+        const int rc = check_container(argv[2], &tab, &n_tab, &po, &pb);
+        free(tab);
+        return rc ? 1 : 0;
     }
 
     if (!strcmp(mode, "merge")) {

@@ -1,0 +1,117 @@
+=== waiting for the 14 shard encodes ===
+wait 19:47:47Z
+shards done 20:02:16Z
+--- shard 0 wrote to stderr/stdout:
+encode OK: 99 tensors, payload 17427993 B, source 86152134 B, 4.94x, 1055.7s
+--- shard 1 wrote to stderr/stdout:
+encode OK: 99 tensors, payload 17157017 B, source 84726598 B, 4.94x, 1063.3s
+--- shard 2 wrote to stderr/stdout:
+encode OK: 99 tensors, payload 18719084 B, source 88380236 B, 4.72x, 1091.2s
+--- shard 3 wrote to stderr/stdout:
+encode OK: 99 tensors, payload 51999078 B, source 121163078 B, 2.33x, 1017.1s
+--- shard 4 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 19423662 B, source 87587658 B, 4.51x, 1140.3s
+--- shard 5 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 18369900 B, source 91794252 B, 5.00x, 1128.9s
+--- shard 6 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 19386005 B, source 96507458 B, 4.98x, 1154.9s
+--- shard 7 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 16389478 B, source 80869702 B, 4.93x, 1093.3s
+--- shard 8 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 14145399 B, source 69772170 B, 4.93x, 920.3s
+--- shard 9 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 17433922 B, source 80274756 B, 4.60x, 1058.8s
+--- shard 10 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 16867850 B, source 79988168 B, 4.74x, 1171.4s
+--- shard 11 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 160152313 B, source 355648712 B, 2.22x, 1013.9s
+--- shard 12 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 18861484 B, source 90209608 B, 4.78x, 1096.6s
+--- shard 13 wrote to stderr/stdout:
+encode OK: 98 tensors, payload 15271372 B, source 75669454 B, 4.95x, 1079.4s
+=== merge ===
+container out/shard-0.bin: kind=0 slots=99
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5285) slots=5488 payloads=10240+17429008
+structure OK: 99 slots, names, hashes, alignment, payload ranges
+container out/shard-1.bin: kind=0 slots=99
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5242) slots=5440 payloads=10192+17158032
+structure OK: 99 slots, names, hashes, alignment, payload ranges
+container out/shard-2.bin: kind=0 slots=99
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5252) slots=5456 payloads=10208+18720096
+structure OK: 99 slots, names, hashes, alignment, payload ranges
+container out/shard-3.bin: kind=0 slots=99
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5239) slots=5440 payloads=10192+52000048
+structure OK: 99 slots, names, hashes, alignment, payload ranges
+container out/shard-4.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5276) slots=5472 payloads=10176+19424720
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-5.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5250) slots=5456 payloads=10160+18370912
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-6.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5254) slots=5456 payloads=10160+19386992
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-7.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5230) slots=5424 payloads=10128+16390448
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-8.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5251) slots=5456 payloads=10160+14146352
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-9.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5203) slots=5408 payloads=10112+17434848
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-10.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5223) slots=5424 payloads=10128+16868864
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-11.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5210) slots=5408 payloads=10112+160153312
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-12.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5256) slots=5456 payloads=10160+18862528
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+container out/shard-13.bin: kind=0 slots=98
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+5206) slots=5408 payloads=10112+15272368
+structure OK: 98 slots, names, hashes, alignment, payload ranges
+merge OK: 1376 tensors from 14 shards, payload 421604557 B, source 1488743984 B, 3.53x, 1.4s
+merge exit=0
+=== structural check of the merged container ===
+container out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin: kind=0 slots=1376
+recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+layout: recipe=64 names=192(+73377) slots=73584 payloads=139632+421618528
+structure OK: 1376 slots, names, hashes, alignment, payload ranges
+check exit=0
+8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+=== determinism: re-encode each shard's slots and compare payload bytes, in parallel ===
+verify shard 8 exit=0
+verify shard 13 exit=0
+verify shard 11 exit=0
+verify shard 10 exit=0
+verify shard 5 exit=0
+verify shard 7 exit=0
+verify shard 2 exit=0
+verify shard 12 exit=0
+verify shard 9 exit=0
+verify shard 0 exit=0
+verify shard 3 exit=0
+verify shard 4 exit=0
+verify shard 6 exit=0
+verify shard 1 exit=0
+verifies done:
+14
+=== artifact ===
+-rw-rw-r-- 1 leandro leandro 421758160 Oct 18 22:02 out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+done 20:21:45Z

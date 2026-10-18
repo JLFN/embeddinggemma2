@@ -1,12 +1,13 @@
 ---
-project: EmbeddingGemma-2 VQ
+project: embeddinggemma2
 plan_start_commit: 0b12d1be6e01368be910af96b0de4fe482641e4f
-last_updated_commit: 5e510a73fb167ddfc015b33b3f0a482a874d044d
+last_updated_commit: 7ec9b56dfc0aa00ad5279d1f7b4c79a1a36eebfc
 branch: dev
-remote: none
-handoff_written_at_context_usage: 14
-handoff_written_at: 2026-10-18T19:05:00Z
+remote: 
+handoff_written_at_context_usage: 18%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-18T20:53:20+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
+boundary_state: dirty
 ---
 
 Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-18)
