@@ -1,0 +1,19 @@
+# ladder-embeddinggemma2.txt — MEASURED reconstruction of real EmbeddingGemma-2 matrices
+# measured 2026-10-18 with bin/eg2_vq (nocal: X=NULL, codebooks solved on weights alone), checkpoint rev 914f7f8
+# columns: tensor, dim, nc, cosine, relative L2, max abs error, seconds
+# bar to match (DeepSeek V4.1 recipe): cos 0.925 at 13 bit, 0.910-0.911 at 12 bit, 17.06% relL2 layer 20
+tensor language_model.layers.0.self_attn.q_proj.weight  1024x512  dtype=BF16  (1.0 MB bf16)
+language_model.layers.0.self_attn.q_proj.weight      dim=4 nc= 512  cos=0.9597  relL2=28.1164%  maxabs=0.32300  n=524288  1.49s
+    payload 153617 B (2.3440 bpw)  decode-vs-encode maxabs=0
+tensor language_model.layers.0.mlp.down_proj.weight  512x2048  dtype=BF16  (2.1 MB bf16)
+language_model.layers.0.mlp.down_proj.weight         dim=4 nc= 512  cos=0.9568  relL2=29.0899%  maxabs=0.25891  n=1048576  2.35s
+    payload 300049 B (2.2892 bpw)  decode-vs-encode maxabs=0
+tensor language_model.layers.0.mlp.gate_proj.weight  2048x512  dtype=BF16  (2.1 MB bf16)
+language_model.layers.0.mlp.gate_proj.weight         dim=4 nc= 512  cos=0.9629  relL2=26.9996%  maxabs=0.27325  n=1048576  2.35s
+    payload 303121 B (2.3126 bpw)  decode-vs-encode maxabs=0
+tensor audio_tower.layers.0.feed_forward1.ffw_layer_1.linear.weight  4096x1024  dtype=BF16  (8.4 MB bf16)
+audio_tower.layers.0.feed_forward1.ffw_layer_1.linear.weight dim=8 nc= 256  cos=0.8552  relL2=51.8250%  maxabs=0.08406  n=4194304  1.83s
+    payload 536592 B (1.0235 bpw)  decode-vs-encode maxabs=0
+tensor vision_tower.encoder.layers.0.mlp.down_proj.linear.weight  768x3072  dtype=BF16  (4.7 MB bf16)
+vision_tower.encoder.layers.0.mlp.down_proj.linear.weight dim=8 nc= 256  cos=0.8001  relL2=59.9821%  maxabs=0.18269  n=2359296  1.62s
+    payload 300560 B (1.0192 bpw)  decode-vs-encode maxabs=0
