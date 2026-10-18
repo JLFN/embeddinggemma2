@@ -1,16 +1,16 @@
 ---
 project: embeddinggemma2
-plan_start_commit: 0b12d1be6e01368be910af96b0de4fe482641e4f
-last_updated_commit: 7ec9b56dfc0aa00ad5279d1f7b4c79a1a36eebfc
+plan_start_commit: ed2fa0be41e80d3de2ccdd181a642f87b1552f5d
+last_updated_commit: ed2fa0be41e80d3de2ccdd181a642f87b1552f5d
 branch: dev
 remote: 
-handoff_written_at_context_usage: 18%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-18T20:53:20+02:00
+handoff_written_at_context_usage: 34%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-18T22:24:24+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
-boundary_state: dirty
+boundary_state: clean
 ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-18)
+Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-18, after unit 3)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -52,164 +52,161 @@ configured yet).
    entry and the commits are in place, call the compact_session tool as the
    last action of that turn.
 
-2. Current state (2026-10-18 — COMPLETE, verified)
+2. Current state (2026-10-18, after unit 3 — COMPLETE, verified this session)
 
-- Unit 2 outcome: the dense-matrix VQ encoder exists and its known-answer test
-  passes. tools/eg2_vq.c includes the reference encoder verbatim
-  (vq_qc.h:vq_encode_full, X=NULL nocal path, plus vq_pack and
-  vq_unpack_dequant) and reuses src/common/ds4_st41.h as the safetensors index;
-  bin/eg2_vq builds with the command in the file header.
-- Round trip is exact: for every matrix measured, pack size equals
-  vq_payload_bytes and decode-vs-encode maxabs is 0.
-- Selftest (deterministic 512x512): hot 4/512 cos 0.9946 at 2.41 effective bpw,
-  cold 8/256 cos 0.9685 at 1.16 effective bpw.
-- First real measurements (docs/ladder-embeddinggemma2.txt): hot tier on text
-  tower cos 0.9568-0.9629 (relL2 27.0-29.1%); cold tier on audio and vision FFN
-  cos 0.8552 and 0.8001 (relL2 51.8% and 60.0%).
-- FINDING that supersedes the unit 1 estimate: the cold tier MISSES the
-  DeepSeek quality bar (cos 0.910-0.925) on audio and vision FFN, so the
-  two-tier split as chosen does not hold; 283.1 MB is not reachable at the
-  agreed quality, while an all-hot allocation costs about 345.2 MB (4.31x).
-- Encoder cost measured on the CPU path: 1.5-2.4 s per 0.5-4.2M-parameter
-  matrix, so the full 553M-parameter VQ set is tens of minutes and the GPU path
-  (untrusted on this card, see section 4) is not needed for the first pass.
-- Context-usage note: signals.json is absent for this session; the frontmatter
-  percent is the bytes/4 fallback (582 KB transcript) against an unverified
-  window (the active model id has no explicit context_window block).
+- Unit 3 outcome: the artifact exists.
+  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B
+  (421,604,557 B payload), from a 1,488,743,984 B bf16 checkpoint: 3.53x
+  smaller. sha256 8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe.
+  1376 slots: 461 VQ matrices at dim 4 / K=4096, the token table at q8_0, 914
+  tensors verbatim.
+- Quality measured from the merged file (decode every payload through the
+  reference's reader): text-tower 216 matrices mean cos 0.9859 / 16.69% relL2,
+  text-ple 0.9857 / 16.86, audio-attn 0.9992 / 3.64, audio-ffn 0.9993 / 3.35,
+  audio-frontend 0.9936 / 9.53, vision-attn 0.9853 / 17.07, vision-ffn 0.9841 /
+  17.76, token table 1.0000 / 0.55. Worst single matrix 0.9740 (vision encoder
+  layer 0 attention o_proj); nothing lower. DeepSeek bar is 0.910-0.925.
+- Verified: structure OK on read-back (1376 slots, names, hashes, order,
+  alignment, ranges, reference byte accounts); 14 parallel verify runs covering
+  all 1376 slots re-encoded and compared byte for byte, all identical; source
+  bytes sum exactly to the checkpoint's tensor total.
+- Cost: shards 19:42:39Z-20:02:16Z, merge 1.4 s, verifies to 20:21:45Z; 39 min
+  wall on 14 cores against ~2 h single-process.
+- GPU, all measured by tools/eg2_gpuprobe.cu: pageableMemoryAccess 0, so vq_gpu.cu's
+  host-pointer kernels fault (cudaErrorIllegalAddress, 0/200000 indices written);
+  the reference's vqg_host_alloc pinning fixes it (146x the CPU scalar loop on
+  that stage); driven end to end the GPU path is 1.25-3x SLOWER per tensor on
+  this card (89.6 s vs 58.8 s over a 92-tensor subset, identical cosines); and
+  dim 4 / K=4096 cannot run at all (81920 B codebook vs the 49152 B gate).
+- q8_K is not a weight format here (quants_p1.inc.c:55 can_quantize=false, no
+  encoder, no ds4_deq_q8_K, engines use Q8_K for activations only). q8_0 is
+  supported on both ends (quants_p3.inc.c:276, ds4_quantfmt.h:45).
+- Owner decisions this session: asked for vq8 + q8_K, then "I want high quality";
+  measurement showed dim 8 is the size path (0.9111-0.9495 at K=4096) and dim 4
+  the quality path, so the artifact ships vq4x4096 with a q8_0 token table.
 
-3. Next unit plan — tier selection from a measured ladder, then the full encode
-   and RECIPE.md (2026-10-18)
+3. Next unit plan — the behavioural proof (2026-10-18, after unit 3)
 
-Status: not yet started.
+Status: not yet started. The owner asked for it in these words: "when we are done
+i want proof what this model can do". Weight-reconstruction cosine is not that
+proof; this unit produces it.
 
-Goal: pick the cheapest per-class tier that still meets the quality bar, with
-the choice resting on measured rows only, then run the full encode and write
-RECIPE.md from the measured numbers.
+Goal: show, end to end, what the artifact can do relative to the original
+checkpoint, in one runtime on one input set.
 
-Step 1 — complete the ladder (acceptance: docs/ladder-embeddinggemma2.txt has a
-measured row for every class x tier, and the chosen tier per class is the
-cheapest passing row, named as such).
-- Add the intermediate tiers to the tool's CLI call: dim 4 / nc 1024 (2.5 bpw),
-  dim 8 / nc 512 (1.125 bpw), and dim 8 / nc 1024 (1.25 bpw) if the first two
-  still miss. Existing measured rows: 4/512 and 8/256.
-- Sample per class, 2-4 tensors each, using the exact names in
-  docs/tensor-inventory.tsv: text-tower q/k/v/o and mlp gate/up/down, text-ple,
-  audio attention and FFN, vision attention and FFN.
-- The bar is the DeepSeek V4.1 recipe's recorded quality (cos 0.925 at 13 bit,
-  0.910-0.911 at 12 bit) and it applies per class. A class that cannot reach
-  the bar at any tier is a finding, not a silent downgrade: it moves to the
-  cheapest passing tier and the deviation is recorded with its measurement, or
-  the class is left at source precision and the size consequence is stated.
+Step 1 — reconstruct mode in eg2_pack (acceptance: `eg2_pack_cpu reconstruct
+<hf-dir> <in.bin> <out-dir>` writes a standard safetensors directory containing
+all 1376 tensors with the checkpoint's names, shapes and dtypes, and a byte
+comparison of the verbatim slots against the source is exact).
+- VQ slots decode through vq_unpack_dequant, q8_0 slots through ds4_deq_q8_0, and
+  verbatim slots are copied. Write BF16 for tensors that were BF16 and F32 only
+  where the source was F32; never silently widen, so the reconstruction is
+  loadable by the same loading path as the original.
+- This is also the strongest container proof available: if the reconstruction
+  loads and runs, no slot can be missing, misnamed or mis-shaped. The safetensors
+  header is JSON written by hand (write_safetensors: header length, then 8-byte
+  aligned offsets) — the format is 8-byte-aligned little-endian data plus a JSON
+  header, and it must be written in C, no Python.
 
-Step 2 — rewrite the allocation from the measured ladder (acceptance:
-docs/allocation-plan.txt carries the chosen tier per class, the per-class
-cosine, and a byte estimate computed from the ladder, with the previous
-283.1 MB figure marked superseded).
-- Known reference points: all-hot is 345.2 MB (4.31x); all-cold is about 253 MB
-  but fails the bar on FFN.
+Step 2 — a runtime for the ORIGINAL checkpoint (acceptance: the pinned checkpoint
+loads and emits a 768-dim embedding in the venv, printed with its dtype).
+- The checkpoint pins transformers 5.18.0.dev0 and this machine has 5.14.1, with
+  no remote code in the checkpoint, so nothing here can load the model today.
+  Install into an ISOLATED venv (e.g. /data/embeddinggemma2/.venv) with pip, not
+  into the system python which other projects use. Record the exact versions
+  (transformers, sentence-transformers, torch) in the recipe and in the proof log.
+- This is a dependency change: state it to the owner in the session report before
+  installing, per rule 20.
 
-Step 3 — the container and the full encode (acceptance: the artifact exists,
-its size matches the account, SHA256SUMS is written, and a decode of every
-payload agrees with the encoder's own dequant at maxabs 0).
-- Container: versioned header with a recipe string, a slot table mapping tensor
-  name hash to payload offset and size, then the DQVQ payloads verbatim. Do not
-  invent payload fields; the payload contract is vq_qc_bytes.h and
-  /data/ds4-dfm-rs/ds41_vq_fmt.h, and an unknown container version must be a
-  hard stop (the version whitelist precedent is ds4vq_blob_ok).
-- Carries the skeleton per the unit 1 allocation: token table at q4_K (the
-  reference recipe's choice for embeddings), tower frontends and tiny tensors
-  at source precision.
+Step 3 — embedding agreement (acceptance: docs/proof-embeddings.txt carries, for a
+fixed sentence set of at least 100 sentences, the mean and minimum cosine between
+the original's embeddings and the reconstruction's, the max absolute element
+difference, and the same three numbers under MRL truncation to 512/256/128).
+- Inputs: the model card's own usage text, plus a small public set (a fixed slice
+  of a public sentence-similarity or retrieval dataset). Freeze the exact list in
+  the repo so the numbers are reproducible.
+- Both models must be fed identical tokenization (same tokenizer.json), and the
+  pooling/normalization composition from 1_Pooling + 2_Normalize.
 
-Step 4 — RECIPE.md in the format of RECIPE-deepseek41-vq.md (pinned inputs
-table with the checkpoint revision and the YoungAi revision a4e6d31, settings
-table with the chosen tiers, exact commands, verification table with the
-measured cosines, build notes). Replace the DeepSeek text currently in
-RECIPE.md; RECIPE-deepseek41-vq.md keeps it.
+Step 4 — behaviour (acceptance: docs/proof-retrieval.txt carries one retrieval or
+ranking metric for BOTH models on the same labelled set, plus the delta).
+- Prefer a small, deterministic task the two models can run in minutes: e.g.
+  rank 100 queries against 1000 candidate passages and report recall@1/10 and MRR
+  for the original and for the reconstruction.
+- If the runtime handles the vision and audio towers, extend the same comparison
+  to a handful of images and audio clips and say plainly if it does not.
 
-Alternative worth naming in the recipe: the reference toolchain solves this
-allocation problem without calibration in v41_nc_alloc.c (per-tensor energy
-Σw², rate-distortion greedy with relative distortion 2^(-b/4) per index bit,
-byte account from the same formulas). If per-class tiering leaves the artifact
-larger than the owner accepts, that allocator is the next unit, and it is the
-owner's own stated preference ("quantize from the weights, no corpora").
+Step 5 — record and commit: docs/proof-embeddings.txt, docs/proof-retrieval.txt,
+the frozen input lists, the exact commands and the pinned runtime versions.
+Anything that cannot be measured is written as unmeasured, with the reason.
 
-Execution order: CPU path only for this unit. The earlier phases showed the CPU
-cost is minutes, not hours, and the GPU kernels are untrusted here.
-
-Verify, package, handoff: run the ladder, rewrite the allocation, run the full
-encode, write RECIPE.md, then commit with the trailer "Unit: 3 complete" as the
-last body line, refresh section 2, rotate this section, update the memory entry,
-and offer the push (no remote exists, so that offer is to create one).
+Known limits to state in the proof: the artifact is verifiable but not runnable in
+ds4-dfm-rs (no embedding_gemma2 family, no embeddings endpoint), so the only way
+to run it today is the reconstruction in an HF runtime; and the numbers say how
+close the quantized model is to the original, which is a different question from
+how good the original is.
 
 4. Project facts a fresh session cannot re-derive
 
 - What exists: .models/EmbeddingGemma-2-914f7f8 (pinned checkpoint, 1.5 GB,
-  gitignored); tools/eg2_vq.c and bin/eg2_vq (the encoder, build command in the
-  file header); docs/tensor-inventory.tsv; docs/allocation-plan.txt;
-  docs/ladder-embeddinggemma2.txt; RECIPE-deepseek41-vq.md (style and quality
-  bar reference); RECIPE.md (still the DeepSeek text, replaced in step 4).
-- The encoder TU compiles with go2b_qc.h (g2_inv), onebit_quant.c (f16), a
-  local dq_matmul definition, and vq_qc.h included verbatim; it emits the
-  reference header's known harmless warnings (unused static plan-table paths,
-  "vq_w2_dim used but never defined" from those unused paths).
-- Reference toolchain pinned at /data/YoungAi revision a4e6d31
-  (gguf-tools/quantize/vq_qc.h, vq_qc_bytes.h, go2b_qc.h, onebit_quant.c;
-  src/common/ds4_st41.h, ds4_float.h). The future loader is /data/ds4-dfm-rs,
-  which this session verified has no gemma and no embeddings support at all
-  (no "gemma" string in crates/ or ds4.c; family list deepseek4|motif3|
-  solar-open2|exaone-moe|dots3-note|qwen4exp|glm5-next|k2-horizon|iquest_q1; no
-  embeddings endpoint), so it is not on the critical path for this unit.
-- Environment: RTX 4070 SUPER, 12282 MiB, sm_89; CUDA 13.3; max dynamic smem
-  per block opt-in 101376; pageableMemoryAccess 0, concurrentManagedAccess 1,
-  unifiedAddressing 1. The VQ GPU kernels (vq_gpu.cu) assume unified memory
-  ("malloc pointers passed directly, no explicit transfer") and their error
-  path warns at most four times and continues, so a faulting kernel can leave a
-  silently wrong index stream: add explicit copies and re-run the known-answer
-  test before trusting any GPU output. The smem gate nc*(dim+1)*4 rules out
-  dim 8 / nc 4096 here (147456 B); 4/512 and 8/256 are 10240 B and 9216 B.
-- transformers 5.14.1 has no embedding_gemma2 model (the checkpoint config pins
-  5.18.0.dev0), which is why the nocal path is the one this plan uses; no
-  reference forward pass is required by the owner's chosen gate.
+  gitignored); tools/eg2_vq.c + bin/eg2_vq (single-matrix ladder tool);
+  tools/eg2_pack.c + bin/eg2_pack_cpu + bin/eg2_pack (plan/encode/verify/check/
+  merge, sharded encode); tools/eg2_gpuprobe.cu + bin/eg2_gpuprobe (GPU facts);
+  bin/eg2_pack (the CUDA build) exists only as an A/B artifact — for the shipped
+  tier the kernels cannot run (81920 B codebook vs the 49152 B gate), so the
+  release binary is bin/eg2_pack_cpu and the container says encoder=cpu.
+- Build commands are in the header of each tool and in RECIPE.md section 4. The
+  reference headers emit harmless warnings (unused static plan-table paths).
+- Reference toolchain pinned at /data/YoungAi revision a4e6d31. The future loader
+  is /data/ds4-dfm-rs @ 233dc7a9 (no gemma string anywhere, no embeddings
+  endpoint; ds41_vq_fmt.h:7 is the DQVQ value rule the container's kind 0 obeys).
+- Environment: RTX 4070 SUPER, 12282 MiB, sm_89, CUDA 13.3, 28 CPUs (i7-14700F);
+  nvcc flags for vq_gpu.cu per the reference Makefile:197 (nvcc -O3 -arch=native
+  -c, no -fmad=false — the reference validates the VQ GPU path by quality, not by
+  bytes, vq_gpu.cu:7).
+- transformers 5.14.1, torch 2.13.0+cu130 (torch sees CUDA). The checkpoint
+  requires transformers 5.18.0.dev0. No auto_map / remote code in the checkpoint.
 - Guardrails mount: /data/embeddinggemma2/.opengrok/rules/project-work-rules.md
-  (link=yes exclude=yes listed=yes), excluded via .git/info/exclude.
+  listed=yes, excluded via .git/info/exclude. .gitignore excludes .models/,
+  graphify-out/, graphify-rs-out/, out/ and *.o.
 
 5. Guardrails and open items
 
-- Global guardrails in effect: the always-on core is ~/.opengrok/AGENTS.md
-  (rules 0, 0.1, 1, 2, 4, 8, 15, 16, 17, 18, 20, 21, 22). The project-workflow
-  rules 3, 5, 6, 7, 9, 10, 12, 13, 14, 19 and 23 live in
-  ~/.opengrok/project-work-rules.md and load through the mount above.
-- Repo hygiene: .gitignore excludes .models/ and graphify-out/; no remote is
-  configured, so rule 23's push offer is an offer to create one.
-- LIVE DECISION: the cold tier missed the bar on audio and vision FFN. Step 1
-  settles it by measurement; if no cheap tier passes, the artifact lands near
-  the all-hot 345.2 MB (4.31x) and the owner is told the size consequence rather
-  than the quality being quietly lowered.
-- OPEN: the owner's scope answer came as a quality statement, not an explicit
-  list, so the reading used here (all three towers' dense matrices VQ'd, token
-  table and frontends as skeleton) still needs confirmation.
-- OPEN: rule 12 graphify graph and rule 19 QA evidence before any push; rule 10
-  has no Cargo.lock to scan because this repo is not Rust.
-- OPEN: whether to pursue the v41_nc_alloc-style per-tensor allocator after step
-  4 (see section 3's alternative) is the owner's call, and depends on the size
-  step 2 actually reaches.
+- Global guardrails: always-on core in ~/.opengrok/AGENTS.md (0, 0.1, 1, 2, 4, 8,
+  15, 16, 17, 18, 20, 21, 22); project-work rules 3, 5, 6, 7, 9, 10, 12, 13, 14,
+  19, 23 via the mount above.
+- Repo hygiene: no remote configured, so rule 23's push offer is an offer to
+  create one. The artifact (421 MB) is gitignored; SHA256SUMS, RECIPE.md, the
+  docs and the tool sources are committed.
+- OPEN (owner): installing a newer transformers in an isolated venv, which the
+  proof unit needs. Nothing else in the project depends on it, but it is a
+  dependency change and rule 20 wants it stated before it happens.
+- OPEN (owner): whether to pursue gguf-tools/quantize/v41_vq.cu, the reference's
+  device-resident encoder for dim 8 / K=4096, as the GPU route — it would need
+  its own payload layout and its own quality ladder.
+- OPEN (owner): the scope reading (all three towers VQ'd) still rests on a
+  quality statement rather than an explicit list.
+- OPEN: rule 12 graphify graph rebuild and rule 19 QA evidence before any push;
+  rule 10 has no Cargo.lock to scan (this repo is not Rust).
 
 6. Progress and staleness check (run this first, every session)
 
     cd /data/embeddinggemma2
-    git log --oneline 0b12d1be6e01368be910af96b0de4fe482641e4f..HEAD
-    git diff --stat 0b12d1be6e01368be910af96b0de4fe482641e4f..HEAD
-    git log --grep "Unit: .* complete" 0b12d1be6e01368be910af96b0de4fe482641e4f..HEAD
+    git log --oneline ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
+    git diff --stat ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
+    git log --grep "Unit: .* complete" ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
+    ./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+    sha256sum -c SHA256SUMS
 
-Trust git over this document's headings: continue with the first unit whose
-work is not in the diff.
+Trust git over this document's headings: continue with the first unit whose work
+is not in the diff.
 
 Staleness check:
 
-    cd /data/embeddinggemma2 && git log --oneline 5e510a73fb167ddfc015b33b3f0a482a874d044d..HEAD
+    cd /data/embeddinggemma2 && git log --oneline 7ec9b56dfc0aa00ad5279d1f7b4c79a1a36eebfc..HEAD
 
-A single docs commit carrying this handoff is expected; anything else must be
-read before sections 2-5 are trusted.
+Three commits carrying unit 3 (the tooling, the artifact, this handoff) are
+expected; anything else must be read before sections 2-5 are trusted.
 
 This document is COMPLETE and self-contained: a new session can execute the
 project end to end from this file alone. It carries the plan ahead, the facts
