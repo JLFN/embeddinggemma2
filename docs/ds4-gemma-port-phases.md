@@ -132,6 +132,22 @@ re-enumerated here; treat it as unverified and use the measurement above.
 
 ## 4. P1 — the text tower on the CPU reference path
 
+DONE 2026-10-19 (unit 14). Landed: `ds4-rs/crates/ds4-core/src/tok/gemma_vq.rs` (the
+`gemma4` pre-tokenizer, the merge queue and the special-token partition) plus its
+driver `crates/ds4-core/examples/gemma_vq_tok.rs`; the tower as the C reference
+forward `ds4-rs/ds4_eg2vq_graph.inc` with its bind `ds4_eg2vq_bind.inc` (every
+type-42 payload decoded once into a 520 MiB f32 cache) and its oracle
+`ds4-rs/tests/parity/eg2vq_embd_c_oracle.c`; the Rust host's own leg as the
+integration test `crates/ds4-core/tests/eg2vq_ref.rs`. Gate script
+`tools/eg2_phase4_gate.sh` (its tokenizer leg is `tools/eg2_tok_check.sh`), evidence
+`docs/text-tower-gate4.txt`. Rows P1.1-P1.20 below are all landed.
+
+Two facts the run settled that the rows did not predict: the anchor's own model is
+the BASELINE GGUF (llama.cpp refuses the artifact at its type-42 tensors), so the
+declared C-vs-anchor cosine is a baseline-weights measurement and the artifact's
+distance from it is the quantization, not the port; and the C oracle therefore
+binds both weight sources by name.
+
 Every line below is `src/models/gemma-embedding2.cpp` at `b11723` unless another
 file is named. Gate: on a frozen set of at least 100 sentences, our 768-dim
 vectors agree with the C reference path's (X.1 leg 2; the optional external anchor
@@ -143,26 +159,26 @@ truncation and the required re-normalization: `.models/EmbeddingGemma-2-914f7f8/
 
 | id | Item to port | Reference | Status |
 |---|---|---|---|
-| P1.1 | Embedding lookup scaled by `sqrt(n_embd)` = `sqrt(512)` (not the usual 1.0) | `:86` | OPEN |
-| P1.2 | Position input and no-cache attention inputs; the whole tower is non-causal | `:90`, `:92` (metadata `causal_attn = false` at `:7`) | OPEN |
-| P1.3 | Per-layer input: project with `per_layer_model_proj`, scale by `1/sqrt(n_embd)`, reshape to `[n_embd_per_layer, n_layer, n_tokens]`, RMS with `per_layer_proj_norm`, permute to `[n_embd_per_layer, n_tokens, n_layer]`; there is no per-layer token embedding | `:97`, `:215-232` (comment `:216-217`) | OPEN |
-| P1.4 | Per layer: `attn_norm` RMS with weight | `:109` | OPEN |
-| P1.5 | q/k/v projections and the head reshape | `:113-116`, `:121-123` | OPEN |
-| P1.6 | Weighted RMS on Q and K (`q_norm`, `k_norm` of width `n_embd_head`), weightless RMS on V | `:125-127` (no V-norm weight exists in our inventory, which matches) | OPEN |
-| P1.7 | RoPE per layer with that layer's own base (SWA layers 1e4, the four full layers 1e6) and `n_rot(il)` | `:104`, `:132-137`; base selection `src/llama-model.cpp:2748-2750`; which layers are SWA `src/llama-hparams.cpp:8-20` (`il % 6 < 5`) | OPEN |
-| P1.8 | Attention with scale 1.0 — `q_norm` makes the `1/sqrt(head_dim)` scaling unnecessary; sliding window 512 on the twenty sliding layers, full attention on 5/11/17/23. The window is SYMMETRIC: masked at `\|p1 - p0\| > n_swa/2` = 256, so a token sees a 513-wide span — not a trailing cut | `:139-141` (scale), `:8` (scale value and reason), window key `:11`, SWA type `:4` (`LLAMA_SWA_TYPE_SYMMETRIC`), mask rule `src/llama-hparams.h:524-533` | OPEN |
-| P1.9 | `attn_post_norm` RMS with weight, then residual onto the layer input | `:149-152` | OPEN |
-| P1.10 | `ffn_norm` + gated FFN: `gelu(gate_proj(x)) * up_proj(x)`, then `down_proj`; the GELU is the tanh form | `:156-165` (`LLM_FFN_GELU` + `LLM_FFN_PAR` → `src/llama-graph.cpp:1995-2000` → `ggml_geglu_split` `ggml/src/ggml.c:3061`); formula `ggml/src/ggml-cpu/ops.cpp:3316` + `ggml_vec_geglu_f32` `ggml/src/ggml-cpu/vec.h:1462` (`gelu(x) * g`); tanh constants `ggml/src/ggml-cpu/vec.h:963-969` | OPEN |
-| P1.11 | `ffn_post_norm` RMS with weight, then residual onto the attention output | `:167-170` | OPEN |
-| P1.12 | Per-layer embedding block: `gelu(per_layer_inp_gate(x))` (a plain GELU, no up-projection and no `1/sqrt(2)` factor) × this layer's slice of the per-layer input, then `per_layer_proj`, `per_layer_post_norm`, residual | `:172-193` | OPEN |
-| P1.13 | `layer_scalar` multiply, one learned scalar per layer | `:195-196` | OPEN |
-| P1.14 | Control-vector hook: a no-op without a cvec file — implement nothing, record the decision | `:199` | OPEN |
-| P1.15 | Output: `output_norm` RMS, then the embedding projection to 768 (projecting per token ≡ projecting after pooling) | `:206-211` | OPEN |
-| P1.16 | Mean pooling over tokens | `src/llama-graph.cpp:4049-4053`; `1_Pooling/config.json` (`pooling_mode: mean`, `include_prompt: true`) | OPEN |
-| P1.17 | L2 normalization — the graph does not do it, the application does | `examples/embedding/embedding.cpp:70` (`common_embd_normalize`); `2_Normalize/` and `modules.json` in the checkpoint | OPEN |
-| P1.18 | Task prompts as data, taken from the checkpoint (20 named prompts) and defaulted per task | `.models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json` (read fully this session) | OPEN |
-| P1.19 | The BPE tokenizer (262,144 entries, byte fallback, merges, normalizer, Split pre-tokenizer, `▁`→space decoder) | ties to `tokenizer.json` / `tokenizer_config.json` / `tokenizer.model` in the checkpoint; ds4-rs pattern `crates/ds4-core/src/tok/ling31.rs` | OPEN |
-| P1.20 | The layer split itself, as a self-check on load: 24 layers, hidden 512, 4 heads, 2 KV heads, head_dim 256; layers 5/11/17/23 with head_dim 512 and 1 KV head; intermediate 2048; rms eps 1e-6 | `.models/EmbeddingGemma-2-914f7f8/config.json` (`layer_types`, `per_layer_config`), agreeing with P1.7's SWA rule | OPEN |
+| P1.1 | Embedding lookup scaled by `sqrt(n_embd)` = `sqrt(512)` (not the usual 1.0) | `:86` | DONE 2026-10-19 (unit 14) |
+| P1.2 | Position input and no-cache attention inputs; the whole tower is non-causal | `:90`, `:92` (metadata `causal_attn = false` at `:7`) | DONE 2026-10-19 (unit 14) |
+| P1.3 | Per-layer input: project with `per_layer_model_proj`, scale by `1/sqrt(n_embd)`, reshape to `[n_embd_per_layer, n_layer, n_tokens]`, RMS with `per_layer_proj_norm`, permute to `[n_embd_per_layer, n_tokens, n_layer]`; there is no per-layer token embedding | `:97`, `:215-232` (comment `:216-217`) | DONE 2026-10-19 (unit 14) |
+| P1.4 | Per layer: `attn_norm` RMS with weight | `:109` | DONE 2026-10-19 (unit 14) |
+| P1.5 | q/k/v projections and the head reshape | `:113-116`, `:121-123` | DONE 2026-10-19 (unit 14) |
+| P1.6 | Weighted RMS on Q and K (`q_norm`, `k_norm` of width `n_embd_head`), weightless RMS on V | `:125-127` (no V-norm weight exists in our inventory, which matches) | DONE 2026-10-19 (unit 14) |
+| P1.7 | RoPE per layer with that layer's own base (SWA layers 1e4, the four full layers 1e6) and `n_rot(il)` | `:104`, `:132-137`; base selection `src/llama-model.cpp:2748-2750`; which layers are SWA `src/llama-hparams.cpp:8-20` (`il % 6 < 5`) | DONE 2026-10-19 (unit 14) |
+| P1.8 | Attention with scale 1.0 — `q_norm` makes the `1/sqrt(head_dim)` scaling unnecessary; sliding window 512 on the twenty sliding layers, full attention on 5/11/17/23. The window is SYMMETRIC: masked at `\|p1 - p0\| > n_swa/2` = 512, so a token sees a 1025-wide span — not a trailing cut | `:139-141` (scale), `:8` (scale value and reason), window key `:11`, SWA type `:4` (`LLAMA_SWA_TYPE_SYMMETRIC`), mask rule `src/llama-hparams.h:524-533` | DONE 2026-10-19 (unit 14). CORRECTION of this row: it said `n_swa/2` = 256 and a 513-wide span, which is wrong — `n_swa` is the file's 1024 (the converter's doubling of HF's one-sided 512), so the half-window is 512 and the span 1025 positions |
+| P1.9 | `attn_post_norm` RMS with weight, then residual onto the layer input | `:149-152` | DONE 2026-10-19 (unit 14) |
+| P1.10 | `ffn_norm` + gated FFN: `gelu(gate_proj(x)) * up_proj(x)`, then `down_proj`; the GELU is the tanh form | `:156-165` (`LLM_FFN_GELU` + `LLM_FFN_PAR` → `src/llama-graph.cpp:1995-2000` → `ggml_geglu_split` `ggml/src/ggml.c:3061`); formula `ggml/src/ggml-cpu/ops.cpp:3316` + `ggml_vec_geglu_f32` `ggml/src/ggml-cpu/vec.h:1462` (`gelu(x) * g`); tanh constants `ggml/src/ggml-cpu/vec.h:963-969` | DONE 2026-10-19 (unit 14) |
+| P1.11 | `ffn_post_norm` RMS with weight, then residual onto the attention output | `:167-170` | DONE 2026-10-19 (unit 14) |
+| P1.12 | Per-layer embedding block: `gelu(per_layer_inp_gate(x))` (a plain GELU, no up-projection and no `1/sqrt(2)` factor) × this layer's slice of the per-layer input, then `per_layer_proj`, `per_layer_post_norm`, residual | `:172-193` | DONE 2026-10-19 (unit 14) |
+| P1.13 | `layer_scalar` multiply, one learned scalar per layer | `:195-196` | DONE 2026-10-19 (unit 14) |
+| P1.14 | Control-vector hook: a no-op without a cvec file — implement nothing, record the decision | `:199` | DONE 2026-10-19 (unit 14) |
+| P1.15 | Output: `output_norm` RMS, then the embedding projection to 768 (projecting per token ≡ projecting after pooling) | `:206-211` | DONE 2026-10-19 (unit 14) |
+| P1.16 | Mean pooling over tokens | `src/llama-graph.cpp:4049-4053`; `1_Pooling/config.json` (`pooling_mode: mean`, `include_prompt: true`) | DONE 2026-10-19 (unit 14) |
+| P1.17 | L2 normalization — the graph does not do it, the application does | `examples/embedding/embedding.cpp:70` (`common_embd_normalize`); `2_Normalize/` and `modules.json` in the checkpoint | DONE 2026-10-19 (unit 14) |
+| P1.18 | Task prompts as data, taken from the checkpoint (20 named prompts) and defaulted per task | `.models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json` (read fully this session) | DONE 2026-10-19 (unit 14) |
+| P1.19 | The BPE tokenizer (262,144 entries, byte fallback, merges, normalizer, Split pre-tokenizer, `▁`→space decoder) | ties to `tokenizer.json` / `tokenizer_config.json` / `tokenizer.model` in the checkpoint; ds4-rs pattern `crates/ds4-core/src/tok/ling31.rs` | DONE 2026-10-19 (unit 14) |
+| P1.20 | The layer split itself, as a self-check on load: 24 layers, hidden 512, 4 heads, 2 KV heads, head_dim 256; layers 5/11/17/23 with head_dim 512 and 1 KV head; intermediate 2048; rms eps 1e-6 | `.models/EmbeddingGemma-2-914f7f8/config.json` (`layer_types`, `per_layer_config`), agreeing with P1.7's SWA rule | DONE 2026-10-19 (unit 14) |
 
 ## 5. P2 — the entry point
 

@@ -481,6 +481,26 @@ metadata value). The C side gained the family enum value 16, the variant 19,
 copies and `test-catalog-parity` compares them. Evidence:
 `docs/loader-gate3.txt`; gate: `tools/eg2_loader_check.sh`.
 
-Gate 4 and onward are open: there is no graph, no tokenizer and no forward pass
-yet. `Vocab::load` refuses this family by name and `eg2vq_bind` stops by name, so
-nothing can silently run the artifact through another family's mathematics.
+Gate 4: PASSED 2026-10-19 (unit 14). The text tower runs on the CPU reference path
+and the tokenizer exists host-side. `Vocab::load` now builds the family's
+vocabulary (the `gemma4` pre-tokenizer: partition on the special-token cache,
+escape spaces to U+2581, split on newline runs, the merge queue, the `<0xXX>` byte
+fallback) and its ids equal llama.cpp's own over the frozen 113-item set, element
+for element. `eg2vq_bind` binds all 413 text-tower tensors by name and decodes
+every type-42 payload once through `ds4vq_dequant_f32`, whose geometry it checks
+against the tower architecture before decoding. The forward is
+`ds4_eg2vq_ref_embed` in `ds4-rs/ds4_eg2vq_graph.inc`; its oracle is
+`tests/parity/eg2vq_embd_c_oracle`. One property of the gate is worth carrying in
+the contract: the bind has TWO weight legs by name, because the phase-2 anchor's
+vectors came from the baseline BF16 GGUF (llama.cpp refuses this file's type 42),
+so the declared C-vs-anchor cosine is measured on baseline weights and the
+artifact's own distance from it is the codec's cost, not the port's. Evidence:
+`docs/text-tower-gate4.txt`; gate: `tools/eg2_phase4_gate.sh`.
+
+What is still open after gate 4: the device path (the CUDA object does not build in
+this working copy — the environment finding in the handoff), the serving route
+(phase 6) and the vision/audio tower encoders (phase 8). There is still no
+production graph for this family — the binding stops by name
+(`eg2vq_bind`'s artifact leg binds the CPU reference's tensors, and nothing else
+binds a `gemma_vq` layer) — so nothing runs the artifact through another family's
+mathematics, and phase 6 is what turns the reference path into a route.

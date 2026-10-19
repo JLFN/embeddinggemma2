@@ -1,0 +1,214 @@
+# Gate 4 — the EmbeddingGemma-2 text tower in ds4-rs
+
+Unit 14 (phase 4), 2026-10-19. This is the evidence for the unit that makes the
+artifact's 768-dim embeddings come out of the ds4 runtime: the `gemma4` tokenizer
+and the text tower as the family's CPU reference forward.
+
+Everything below was run in this session on this machine; the commands are
+reproducible from a clean checkout (the model and the artifacts live in `out/`
+and `.models/`, both gitignored, with their digests in `SHA256SUMS`).
+
+## 1. Files
+
+| Path | What it is |
+|---|---|
+| `ds4-rs/crates/ds4-core/src/tok/gemma_vq.rs` | the `gemma4` pre-tokenizer, the BPE merge queue and the special-token partition, with a synthetic-vocabulary unit test module |
+| `ds4-rs/crates/ds4-core/examples/gemma_vq_tok.rs` | the Rust host's token dump: per item the id, the prompt name, the token count and the ids |
+| `ds4-rs/crates/ds4-core/tests/eg2vq_ref.rs` | the Rust host's leg of the gate (ids and the anchor comparison, driven through the C oracle) |
+| `ds4-rs/ds4_eg2vq.h` | the family constants, the matrix/layer/weights structs, the reference entry |
+| `ds4-rs/ds4_eg2vq_bind.inc` | the by-name bind of all 413 text-tower tensors, for both weight sources, and the one f32 decode cache for every type-42 payload |
+| `ds4-rs/ds4_eg2vq_graph.inc` | the tower: GELU, RMS, NeoX RoPE, the flat parallel dense matvec, the symmetric-window attention, the layer loop, `ds4_eg2vq_ref_embed` |
+| `ds4-rs/tests/parity/eg2vq_embd_c_oracle.c` | the standalone C oracle (includes `ds4.c` with `DS4_NO_GPU`) |
+| `tools/eg2_tok_check.sh` | the tokenizer leg: the host's ids against the reference's own, per item |
+| `tools/eg2_phase4_gate.sh` | the whole gate: tokenizer, the C reference on both weight sources, the Rust host's route, the anchor comparison |
+
+## 2. What was declared before the run
+
+From the committed handoff (PHASE 4, written before this session):
+
+- the host's token ids must equal the reference's own for every item of the frozen
+  set — the tokenizer port is checked before any matmul exists;
+- the C reference must reproduce the anchor at **768 mean cosine >= 0.9999**, with
+  512/256/128 reported beside it (truncate, then re-normalize) — "if it is not,
+  the port is wrong, not the anchor".
+
+The second declaration has a precondition this unit had to establish by reading the
+anchor's own provenance line: the anchor was produced by llama.cpp on the
+**baseline BF16 GGUF**, because llama.cpp cannot read the artifact at all — ds4's
+private GGUF type 42 is `vqblob` and llama.cpp's 42 is `q2_0`, so the reference
+loads the baseline and refuses the artifact at its first VQ tensor (measured in
+unit 12, `docs/artifact-gguf-gate1b.txt`, restated in `RECIPE.md` section 4d). The
+declared floor is therefore measured on baseline weights, and the artifact runs the
+same graph as a separate, reported leg: judging the port by the artifact leg would
+blame the tower for the codec, whose cost `RECIPE.md` section 5 already measures as
+a 0.9859 text-tower weight cosine.
+
+## 3. The tokenizer, against the reference's own ids
+
+    tools/eg2_tok_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json
+
+    tokenizer: 113 items, 0 count mismatches, 0 id mismatches
+    TOKENS items=113 tokens=7088 bos=1 eos=1 bos_id=2 eos_id=1
+
+Both sides of that comparison are the reference's own contract: the input string per
+item is the checkpoint's task prompt plus the text, the ids are compared element for
+element (not just their count), and the reference side is llama.cpp at the pin
+running `--verbose-prompt` over the same item file. The script also regenerates that
+dump by itself (its default path, exercised this session: `out/tok-anchor-verbose.log`,
+byte-stable) rather than trusting the phase-2 log; both paths give the same verdict.
+
+What the port had to mirror, and where it is pinned (`/data/llama.cpp`):
+`tokenizer.ggml.model == "gemma4"` selects the pre-type and whitespace escaping
+(`src/llama-vocab.cpp:2360-2362`, `:3652-3654`); the only pre-tokenizer regex is
+`[^\n]+|[\n]+` with `byte_encode = false` (`:528-536`, fast path
+`src/unicode.cpp:unicode_regex_split_custom_newlines`); the special-token cache is
+every CONTROL/USER_DEFINED/UNKNOWN token plus the EOG literals that exist here
+(`</s>`, id 212, is the one that matters — `:3026-3054`, `:3168-3191`) and the
+partition runs on it first (`:3401-3500`); the merge queue is ordered by rank then
+left position (`:264-278`) and the byte fallback writes uppercase `<0xXX>`
+(`:753-775`). Two named limits are in the module's header: invalid UTF-8 (llama.cpp
+substitutes U+FFFD, this port emits byte fallbacks) and
+`tokenizer.ggml.ignore_merges = true`, which is refused by name rather than
+guessed at; neither is reachable from this project's inputs.
+
+## 4. The tower, and the two weight legs
+
+    cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle
+
+`make ds4_cpu.o` compiles the tower into the C runtime (no CUDA; the CUDA object is
+a separate, pre-existing environment problem, section 7). The oracle then runs the
+tower per item, batch-free and without a cache, exactly as the reference's own
+`--pooling mean` route does:
+
+    tests/parity/eg2vq_embd_c_oracle <artifact-or-baseline.gguf> out/phase4-ids.tsv
+    eg2vq_embd: items=113 tokens=7088 dense_mb=520.0 secs=310.29     (baseline)
+
+The engine per item: token embedding x sqrt(512); the per-layer input block from
+`per_layer_model_proj` scaled by 1/sqrt(512) and RMS-normed; per layer the four
+norms, q/k/v, the weighted Q/K and weightless V head norms, NeoX RoPE with the
+layer's own base (1e4 sliding, 1e6 full) over the whole head vector, attention at
+scale 1.0 with the SYMMETRIC +-512 mask on the twenty sliding layers and no causal
+mask anywhere, the gated tanh-GELU FFN, the per-layer input block, `layer_scalar`,
+then `output_norm` and the 768 projection per token; mean pool over the item's
+tokens; L2 normalize. Every one of those carries its `gemma-embedding2.cpp` line in
+the code; the two a reader should check against the plan are the ones the earlier
+draft of the phase doc got wrong (the mask half-window is 512, not 256 — `n_swa` is
+the file's 1024) and the ones a port is tempted to add (a `1/sqrt(head_dim)`
+attention scale, which belongs to the *older* 300m gemma-embedding, and a trailing
+window, which is what the CUDA kernel does today at `ds4_cuda.cu:42214`).
+
+The dense cache is 136,314,880 f32 values = 520.0 MiB, and its size is accounted
+for exactly: 20 sliding layers x 5,242,880 + 4 full layers x 6,291,456 + the
+12288x512 PLE projection 6,291,456 = 136,314,880. Each matrix is decoded once, by
+`ds4vq_dequant_f32` (`ds41_vq_fmt.h:73-105`), from the payload header's own
+geometry, which the bind checks against the architecture before decoding.
+
+## 5. The gate
+
+    tools/eg2_phase4_gate.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+        tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json
+
+Baseline weights (the declared 0.9999 floor; the anchor's own model):
+
+    width   items       mincos      meancos      maxdelt   meanabsdev   worst_item
+    768       113  0.999987274  0.999996809    6.327e-04    6.956e-05          e06
+    512       113  0.999987401  0.999996882    7.110e-04    8.444e-05          e06
+    256       113  0.999988874  0.999997193    8.384e-04    1.136e-04          e06
+    128       113  0.999991689  0.999998044    9.028e-04    1.337e-04          e06
+
+    gate 4: PASSED (baseline C reference vs anchor, 768 mean cosine 0.999996809 >= 0.9999)
+    baseline jsonl: out/phase4-baseline.jsonl sha256 9aefc2eb…
+    ids: out/phase4-ids.tsv sha256 f6497ed1… (113 items, 7088 token ids, the host's own dump)
+    the run's wall clock: 310 s (baseline) + 312 s (artifact) for the oracle legs at -O0, plus the
+    two cargo-test legs at 313 s each — 21 minutes end to end, exit 0
+
+VQ artifact weights (the same graph, the container we ship; reported, not declared —
+this gap is the codec):
+
+    width   items       mincos      meancos      maxdelt   meanabsdev   worst_item
+    768       113  0.829453471  0.960067049    7.410e-02    7.889e-03          e05
+    512       113  0.838662031  0.961372995    8.362e-02    9.539e-03          e05
+    256       113  0.849044592  0.965512940    1.012e-01    1.276e-02          e05
+    128       113  0.890588368  0.976129403    1.124e-01    1.502e-02          e05
+
+    artifact jsonl: out/phase4-artifact.jsonl sha256 0b5557cb…
+
+Read that pair of tables the way it should be read: the same code, the same ids,
+the same comparison, differing only in which weights are in the cache. The
+baseline column is the port compared against a foreign implementation; the
+artifact column is the shipped container compared against the baseline's own
+vectors, i.e. the codec's cost on this task, at 768 mean cosine 0.9601 and a worst
+item (e05) of 0.8295. Phase 5 owns that number with a retrieval metric; nothing
+here should be read as a quality claim.
+
+The Rust host's own leg prints its own table from the oracle's printed vectors and
+agrees with the table above to within 5e-7: baseline 768 mean 0.999997377 / min
+0.999987125, artifact 768 mean 0.960067093 / min 0.829453766. It asserts the floor
+only on the leg the gate sets it for (`DS4_EG2VQ_MIN_COS=0.9999` on the baseline
+leg; the artifact leg prints "(no DS4_EG2VQ_MIN_COS: derived vectors, nothing
+asserted)").
+
+The residual on the baseline leg is the anchor's own batch-shape spread plus float
+ordering, not a wiring difference: phase 2 measured that the reference's own output
+for one input depends on the batch it sits in by 3.4e-4 per element (cosine
+0.9999962), which is the same order as these 6.3e-4 maxima, and the three long
+items that actually exercise the +-512 window (1175/1221/1398 tokens) agree at
+0.9999974 or better.
+
+The Rust host's own leg runs in the same script: `cargo test -p ds4-core --test
+eg2vq_ref` builds the ids from the artifact's vocabulary and the checkpoint's prompt
+map, drives the C oracle with them, and compares against the frozen anchor,
+reporting the per-width table and asserting the floor only when
+`DS4_EG2VQ_MIN_COS` sets one (the baseline leg sets 0.9999; the artifact leg derives
+its vectors and asserts nothing).
+
+## 6. What this proves, and what it does not
+
+Proves, all measured here: the port's tokenizer is id-for-id the pinned reference's
+over the frozen set; the port's tower reproduces an independent implementation's
+embeddings on the same weights to 768 mean cosine 0.999996809 (min 0.999987274), with
+the symmetric window, the GQA head mapping, the PLE block and the pooling all in the
+path (the long items are in the set and are the best, not the worst, agreements);
+and the same code runs the shipped artifact end to end on the CPU, from the GGUF
+through the VQ payloads to a normalized 768-dim vector.
+
+Does not prove: anything about the device path (the CUDA object does not build in
+this working copy — section 7), the serving route (phase 6), the vision/audio towers
+(phase 8), or the artifact's quality (the artifact legs' numbers are the codec's
+cost, which phase 5 measures with a retrieval metric rather than a cosine). It also
+does not prove a *second independent implementation* of the tower: the C reference
+is this project's own oracle and the anchor is the only foreign implementation here.
+The oracle runs at `-O0` by the tree's own oracle convention; the same entry at
+`-O2` ran the full set in 89 s, which is the number to reuse if a later unit needs
+the wall time.
+
+## 7. Corrections this unit made
+
+Three, each with the evidence that found it:
+
+1. The phase doc's P1.8 said the symmetric mask's half-window is 256 and the span
+   513. `n_swa` is the file's 1024 (the converter double of HF's one-sided 512),
+   so the half is 512 and the span 1025 — corrected in the phase doc in this
+   commit, from `src/llama-hparams.h:524-533` and `out/artifact-kv.txt`.
+2. `crates/ds4-core/src/gemma_vq/layout.rs` carried a doc comment whose indented
+   arithmetic block rustdoc reads as a doctest, so `cargo test -p ds4-core` failed
+   at its doctest step (from unit 13 until now). The block is a `text` fence
+   instead; the file's own claim is unchanged.
+3. The C oracle refuses any line that is not a four-field item line, and the Rust
+   host's token dump ends with its own `TOKENS ...` summary — so pointing the
+   oracle straight at the driver's output stopped after a full tower run. The
+   oracle now skips that one line by name (and the gate strips it too), which is a
+   usability fix, not a relaxation: a malformed item line still exits non-zero.
+
+## 8. Environment, unchanged by this unit
+
+Neither finding was caused by this work and neither is fixed here:
+`make ds4-c ds4-server` still cannot relink because `ds4_cuda.o` is older than the
+CUDA sources it depends on and its rebuild fails in ptxas
+(`Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher`) while
+`.ds4-cuda-config.mk` pins `CUDA_ARCH := native` = sm_89 on this GPU; and
+`/data/build/linux/build.sh` still cannot build this tree's binaries at all (they
+require `--features native`, which it cannot pass). Both are phase 6/7 currency; the
+CPU reference path this unit delivers needs neither.

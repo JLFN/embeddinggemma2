@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: fca7ba6c537a5d15cec9fb1aa31d05391104fa51
+last_updated_commit: f811ce3ad7e3372cc5f8df28b3319ab3a8e2840d
 branch: dev
 remote: 
-handoff_written_at_context_usage: 27%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T14:55:00+02:00
+handoff_written_at_context_usage: 33%
+handoff_written_at: 2026-10-19T16:53:07+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -53,22 +53,22 @@ configured on the outer repo).
    entry and the commits are in place, call the compact_session tool as the
    last action of that turn.
 
-2. Current state (2026-10-19, verified in this session, unit 13)
+2. Current state (2026-10-19, verified in this session, unit 14)
 
-- Workspace: /data/embeddinggemma2, branch dev, HEAD fca7ba6 plus this unit's commit, tree clean but for this handoff. Nested ds4-rs carries this unit's loader — the `gemma_vq` family and its layout, the family arms, the C identity, ds4_eg2vq.{h,inc} — on top of 125e902e, branch feat/ds41-dsml-carriage.
-- Artifact (phase 1b, THE RUNNABLE FORM): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf, 437,508,416 B, sha256 5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f — arch gemma_vq, 1376 tensors (461 type-42 vqblob, 1 type-8 q8_0 token table, 914 type-30 bf16), 42 KV, DATA_POS 15,881,824. Gate 1b still passes with the family validator in the path (re-run this unit).
-- THE LOADER (phase 3, new): `cargo run -q -p ds4-core --release --example gguf_inventory -- <artifact> --no-kv --family` reports `IDENTIFY EmbeddingGemma-2 VQ family=16 variant=19`, `META ok`, `BIND ok slots=1376`, `LAYOUT ok specs=1376`. Gate 3 (`tools/eg2_loader_check.sh`) passes: the reader's 1376-tensor dump equals the writer's manifest line for line, two loads are identical, and 8 tampered copies are refused by name. Evidence: docs/loader-gate3.txt.
-- Baseline (phase 1a/2): out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, 557,949,600 B, sha256 0d84f1a9…, unchanged. Gate 1a passes; llama.cpp at the pin loads it.
-- Anchor (phase 2, frozen, unchanged this unit): tests/anchor/anchor-items.tsv (113 items, sha256 0e746c6c…) and tests/expected/anchor-embeddinggemma2.jsonl (sha256 7561254c…). What phase 4 is measured against.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD f811ce3 plus this unit's commit, tree clean but for this handoff. Nested ds4-rs carries this unit's work — the tokenizer, the family's C bind, dense decode, reference tower and its oracle — on top of 467af3a4, branch feat/ds41-dsml-carriage.
+- Artifact (phase 1b, THE RUNNABLE FORM): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf, 437,508,416 B, sha256 5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f — arch gemma_vq, 1376 tensors (461 type-42 vqblob, 1 type-8 q8_0 token table, 914 type-30 bf16), 42 KV, DATA_POS 15,881,824. Gates 1b and 3 still pass with the tower's bind in the path (re-run this unit).
+- THE TOWER (phase 4, new): `ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>` prints one 768-dim normalized vector per item; 113 items / 7088 tokens take 310 s and a 520.0 MiB dense decode at the oracle's -O0. `cargo run -p ds4-core --release --example gemma_vq_tok -- <gguf> <items.tsv> <prompt-map.json>` is the host's token dump. Gate 4 (`tools/eg2_phase4_gate.sh`): the ids equal llama.cpp's own id for id on all 113 items, and the reference reproduces the anchor on baseline weights at 768 mean cosine 0.99999681 / min 0.99998727 against a declared floor of 0.9999; the same graph on the VQ artifact is reported separately (its gap is the codec, phase 5's subject). Evidence: docs/text-tower-gate4.txt.
+- Baseline (phase 1a/2): out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, 557,949,600 B, sha256 0d84f1a9…, unchanged. Gate 1a passes; llama.cpp at the pin loads it — and it, not the artifact, is what the anchor's vectors came from (llama.cpp cannot read type 42).
+- Anchor (phase 2, frozen, unchanged this unit): tests/anchor/anchor-items.tsv (113 items, sha256 0e746c6c…) and tests/expected/anchor-embeddinggemma2.jsonl (sha256 7561254c…).
 - Container (the artifact's input, still the byte-verified record of the quantization): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B, `bin/eg2_pack_cpu check` says kind=0 slots=1376, structure OK.
-- Tools: bin/{eg2_vq,eg2_pack,eg2_pack_cpu,eg2_gpuprobe,eg2_gguf}; tools/{eg2_gguf_check.sh,eg2_artifact_check.sh,eg2_loader_check.sh (new: gate 3),eg2_anchor.sh,eg2_anchor_cmp.sh,ref_vocab_probe.py}.
-- New this unit, measured: the family layout matched the artifact tensor for tensor on its first run, so the hand-written 1376-entry table is verified against the file rather than assumed; an out-of-range index cannot be encoded at this tier (12-bit indices exactly cover nc 4096), so the reachable payload tamper is a geometry/byte-account disagreement, which the loader refuses; and the C copies of the shape are compared by the existing parity test.
-- Environment findings, pre-existing and both measured (section 7): ds4_cuda.o is stale and its rebuild fails in ptxas while targeting sm_89, so the C binaries cannot be relinked from this working copy; and /data/build/linux/build.sh cannot build this tree's binaries at all (they require `--features native`).
-- Guardrails: all five P-1 checks return zero on 2026-10-19; `sha256sum -c SHA256SUMS` passes on all five entries.
+- Tools: bin/{eg2_vq,eg2_pack,eg2_pack_cpu,eg2_gpuprobe,eg2_gguf}; tools/{eg2_gguf_check.sh,eg2_artifact_check.sh,eg2_loader_check.sh,eg2_tok_check.sh (new: the tokenizer leg),eg2_phase4_gate.sh (new: gate 4),eg2_anchor.sh,eg2_anchor_cmp.sh,ref_vocab_probe.py}.
+- New this unit, measured: the tokenizer port matches the pinned reference id for id (a stronger check than the counts, because the gate compares sequences); the tower's baseline leg is the only leg that can be compared to the anchor, since llama.cpp refuses the artifact at its type-42 tensors; and the two a reader should not "fix" later are the symmetric +-512 mask (not a trailing window) and the attention scale of exactly 1.0 (no 1/sqrt(head_dim) — that belongs to the older 300m gemma-embedding).
+- Environment findings, pre-existing and both still true (section 7): ds4_cuda.o is stale and its rebuild fails in ptxas while targeting sm_89, so the C binaries and the GPU-linked Rust host cannot be built from this working copy; and /data/build/linux/build.sh cannot build this tree's binaries at all (they require `--features native`).
+- Guardrails: all five P-1 checks return zero on 2026-10-19; `sha256sum -c SHA256SUMS` passes on all five entries. The frontmatter's usage figure is a FALLBACK, not the gauge: this session's `signals.json` was last written at 14:57 and still reads 37%, so the number is `chat_history.jsonl` bytes / 4 (the protocol in section 1 says to name that fallback in the session report).
 
 3. Next unit plan — run EmbeddingGemma-2 in ds4-rs, phase by phase (2026-10-19)
 
-Status: 1a, 2, 1b and 3 done (all 2026-10-19); 4..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
+Status: 1a, 2, 1b, 3 and 4 done (all 2026-10-19); 5..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
 `gemma_vq` payload, per the owner's container decision) and emits the 768-dim
 embeddings this model exists for, on the GPU, with the measurements that show the
 port matches the pinned original. Runtime is Rust + C + CUDA; no Python anywhere,
@@ -176,13 +176,13 @@ PHASE 3 — the loader: identity, payload reader, layouts, registration. DONE 20
   - A VQ tensor is rank 1 with `ne` = payload bytes and its geometry lives in its own header, which Rust has already validated; the C side reads the record table (ds4_eg2vq.h) and never the payload.
 - Named deviations from this document's own Land line, each justified in docs/loader-gate3.txt: crates/ds4-cli/src/lib.rs needed no family arm (the sites named here are the MTP speculation lists and this family has no MTP; its entry point is phase 6); the phase doc's `ds4_gemma_vq_*` file names are wrong and the real files are `ds4_eg2vq.{h,inc}`; and the layout landed as the family's shape authority rather than as a bind-only table.
 
-PHASE 4 — the text tower on the CPU reference path (phase-doc rows P1.1-P1.20). NEXT UNIT.
+PHASE 4 — the text tower on the CPU reference path (phase-doc rows P1.1-P1.20). DONE 2026-10-19 (unit 14). Evidence: docs/text-tower-gate4.txt.
 
-- Authority, every line from /data/llama.cpp/src/models/gemma-embedding2.cpp unless named: embedding lookup scaled by sqrt(512) :86; no-cache, non-causal inputs :90-92 (causal_attn = false at :7); per-layer input block :97 with :215-232; attn_norm :109; q/k/v and heads :113-123; weighted RMS on Q and K, weightless on V :125-127; per-layer RoPE base (:132-137, base selection src/llama-model.cpp:2748-2750, the SWA split rule src/llama-hparams.cpp:8-20) ; attention scale 1.0 :139-141; attn_post_norm + residual :149-152; gated tanh-GELU FFN :156-170; the per-layer embedding block :172-193; layer_scalar :195-196; the control-vector hook is a no-op without a cvec file :199 (implement nothing, record the decision); output_norm + the 768 projection :206-211; mean pool src/llama-graph.cpp:4049-4053; L2 normalize in the caller, examples/embedding/embedding.cpp:70.
-- The one mechanism to get exactly right, and the reason: the sliding layers use a SYMMETRIC window — declared at gemma-embedding2.cpp:4 (LLAMA_SWA_TYPE_SYMMETRIC) and masked at |p1 - p0| > n_swa/2 (src/llama-hparams.h:524-533), and the file's n_swa is 1024, because the converter doubles HF's one-sided 512 (conversion/gemma.py:824-825: "HF sliding_window is bidirectional, llama.cpp expects the full window size"). So a token sees ±512, a 1025-wide span. With causal_attn = false every query sees every row, so a trailing cut (what ds4's kernel does at ds4_cuda.cu:42214) is the wrong mask — and any implementation that reads the checkpoint's 512 straight into n_swa would get the window half the width it should be.
-- Tokenizer: .models/EmbeddingGemma-2-914f7f8/tokenizer.json + tokenizer_config.json + tokenizer.model (262,144 entries, byte fallback), ported in the pattern of crates/ds4-core/src/tok/ling31.rs.
-- Land: the family's C graph (ds4_eg2vq_graph.inc) plus its CPU reference entry, and the tokenizer module.
-- Gate: the frozen sentence set (phase 2) through three things — the C reference path, the Rust host, and the anchor vectors. Report mean and minimum cosine and max element difference for C-vs-Rust and C-vs-anchor, at 768 and at 512/256/128 with re-normalization. Declared before the run: C-vs-anchor mean cosine ≥ 0.9999 (if it is not, the port is wrong, not the anchor), and Rust-vs-C within a stated element tolerance.
+- Landed: the tokenizer `ds4-rs/crates/ds4-core/src/tok/gemma_vq.rs` plus its driver `ds4-rs/crates/ds4-core/examples/gemma_vq_tok.rs`; the tower as the C reference forward `ds4-rs/ds4_eg2vq_graph.inc` with its bind `ds4-rs/ds4_eg2vq_bind.inc` (every type-42 payload decoded once into a 520 MiB f32 cache) and its oracle `ds4-rs/tests/parity/eg2vq_embd_c_oracle.c`; the Rust host's own leg as `ds4-rs/crates/ds4-core/tests/eg2vq_ref.rs`. Gate script: `tools/eg2_phase4_gate.sh` (its first leg is `tools/eg2_tok_check.sh`).
+- The gate, as run (all four numbers in docs/text-tower-gate4.txt): the host's ids equal llama.cpp's own on all 113 items, id for id (7088 tokens, 0 mismatches); the C reference on the BASELINE weights reproduces the anchor at 768 mean cosine 0.99999681 / min 0.99998727 (declared floor 0.9999, met; 6.3e-04 worst element); and the same graph on the VQ artifact agrees with the anchor at mean 0.96007 / min 0.82945, which is the quantization's own gap (RECIPE.md section 5 measures a 0.9859 text-tower weight cosine) and phase 5's subject.
+- The one thing to read before touching this: the anchor's model is the BASELINE GGUF, not the artifact — llama.cpp refuses the artifact at its type-42 tensors (ds4's private 42 is `vqblob`, llama.cpp's is `q2_0`). So a C-vs-anchor cosine is only meaningful on baseline weights, and the C bind deliberately carries both weight legs (artifact names and llama.cpp names) so that the declared floor and the container report are separable numbers. Judging the port by the artifact leg would blame the tower for the codec.
+- Two corrections of the plan this unit made. (1) The phase doc's P1.8 said the symmetric half-window is 256 and the span 513; `n_swa` is the file's 1024, so the half is 512 and the span 1025 (corrected in the same commit). (2) The tokenizer is host-side only: no C gemma4 splitter was added, because the C oracle consumes ids and the tokenizer's oracle is the pinned reference itself (`tools/eg2_tok_check.sh`); the three `tests/tokenizer.rs` arms that used to say "no tokenizer yet" now say that.
+- What this unit does NOT claim: no device path (the CUDA object does not build in this working copy), no route (phase 6), no tower encoders (phase 8), and no quality verdict — the artifact's 0.96 is what the codec costs on this task, which phase 5 measures properly against the baseline.
 
 PHASE 5 — what VQ costs (phase-doc row X.7)
 
@@ -206,22 +206,21 @@ PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owne
 
 Order of work, and the first command of the next session:
 
-0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (the text tower, the tokenizer) → 5 → 6 → 7 → 8 if wanted.
+0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (done, the text tower and the tokenizer) → 5 (what VQ costs) → 6 (the entry point) → 7 (the device path) → 8 if wanted.
 
-First commands of the next unit (phase 4, the text tower): confirm both gates still
-hold before writing any arithmetic — `tools/eg2_loader_check.sh
-out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv`
-must print its line counts with 1376 tensors and 8 refusals, `tools/eg2_artifact_check.sh
-out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv
-out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin .models/EmbeddingGemma-2-914f7f8
-out/artifact-inventory.txt` must print its three counts, and `sha256sum -c SHA256SUMS`
-must pass. Then build the tower exactly as the PHASE 4 block above specifies, with the
-tokenizer first: the port of the `gemma4` pre-tokenizer and the family's specials, so
-the anchor's per-item token counts can be reproduced before any matmul exists. Its gate
-is the frozen 113-item set through the C reference path, the Rust host and the anchor,
-at all four MRL widths, with the C-vs-anchor mean cosine ≥ 0.9999 declared before the
-run. The re-encode fallback for the artifact remains available and is not expected to
-be needed.
+First commands of the next unit (phase 5, the quantization's cost): re-confirm the
+gates before writing anything — `sha256sum -c SHA256SUMS` must pass, `tools/eg2_loader_check.sh
+out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv` must
+print its line counts with 1376 tensors and 8 refusals, and `tools/eg2_phase4_gate.sh <artifact>
+<baseline> tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json`
+must end with the declared floor met on the baseline leg (about 20 minutes: four tower runs at the
+oracle's -O0). Then the unit itself: a frozen labelled retrieval set with a
+recall@k/MRR harness run twice through the same C reference entry — baseline weights and VQ
+weights — reporting cosine agreement (mean, min, quantiles) at 768 and at each MRL width, and the
+artifact hashes both runs were measured on. The engine now exists for it: `ds4_eg2vq_ref_embed`
+(one item's ids -> the pooled, normalized 768 vector) and the oracle that drives it
+(`ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>`, written by
+`crates/ds4-core/examples/gemma_vq_tok.rs`). Phase 5 needs no new kernel and no GPU.
 
 4. Reference map — the exact repos and files (pinned; verified in this session)
 
@@ -235,6 +234,8 @@ be needed.
 | The level to hit (phase 2) | our own committed data | tests/anchor/anchor-items.tsv (113 items, the checkpoint's task prompts, three of them long enough to exercise the mask) and tests/expected/anchor-embeddinggemma2.jsonl (the reference's vectors at 768/512/256/128, sha256 7561254c…); tools/eg2_anchor.sh regenerates it, tools/eg2_anchor_cmp.sh compares any two |
 | The artifact to load (phase 3's input, and phase 4's) | our own committed recipe | out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf (sha256 5bcf2216…, 1376 tensors per docs/artifact-gguf-gate1b.txt), out/artifact-manifest.tsv (name/type/rank/dims/bytes/offset/role per tensor — the loader's gate joins against it), out/artifact-kv.txt (the metadata with values), and the container out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin (sha256 8902fb8a…) as the byte-verified record behind it |
 | The loader and its gate (phase 3, landed) | our own code | ds4-rs/crates/ds4-core/src/gemma_vq.rs + gemma_vq/layout.rs, the family arms, ds4.c's `DS4_SHAPE_GEMMA_VQ`, ds4_eg2vq.h/.inc; tools/eg2_loader_check.sh (gate 3) and docs/loader-gate3.txt (the evidence) |
+| The tower and its gate (phase 4, landed) | our own code | ds4-rs/crates/ds4-core/src/tok/gemma_vq.rs + examples/gemma_vq_tok.rs + tests/eg2vq_ref.rs; ds4-rs/ds4_eg2vq_graph.inc + ds4_eg2vq_bind.inc + tests/parity/eg2vq_embd_c_oracle.c (the CPU reference forward and its oracle); tools/eg2_tok_check.sh, tools/eg2_phase4_gate.sh, docs/text-tower-gate4.txt |
+| The tokenizer's own oracle (phase 4; the family has no C splitter by design) | /data/llama.cpp at the pin, run through the anchor build | `llama-embedding ... --verbose-prompt` prints the reference's per-item token ids; tools/eg2_tok_check.sh regenerates that dump (out/tok-anchor-verbose.log) and diffs it against the Rust host's, id for id |
 | The model | /data/embeddinggemma2/.models/EmbeddingGemma-2-914f7f8 (1.5 GB, 15 files, gitignored) | config.json, per_layer_config, config_sentence_transformers.json, 1_Pooling/config.json, modules.json, tokenizer.{json,model}, tokenizer_config.json, README.md |
 | Counter-example only | /data/llama-prism @ b10743 | not needed; read only to avoid copying its 1/sqrt(head_dim) attention scale |
 
@@ -250,8 +251,9 @@ be needed.
 
 6. Project facts a fresh session cannot re-derive
 
-- Workspace layout: RECIPE.md (the artifact recipe: sections 4 commands, 5 quality, 6 what the port must implement, 7 identity); RECIPE-deepseek41-vq.md (the ds4 VQ recipe we mirror); docs/ds4-gemma-port-phases.md (row list); docs/ds4-gemma-port-reference.md (the port map and the four-leg verification); docs/tensor-inventory.tsv and docs/encode-plan.tsv (the per-tensor truth); docs/artifact-verify-summary.txt; docs/ladder-embeddinggemma2.txt (the measured tier ladder); docs/{baseline-gguf-gate1a,anchor-gate2,artifact-gguf-gate1b,loader-gate3}.txt (the evidence, one per unit); tools/{eg2_vq.c,eg2_pack.c,eg2_gpuprobe.cu,eg2_gguf.c} and tools/{eg2_gguf_check,eg2_artifact_check,eg2_loader_check,eg2_anchor,eg2_anchor_cmp}.sh with bin/ (their binaries); out/ (all artifacts and logs, gitignored); AGENTS.md (project guardrails).
+- Workspace layout: RECIPE.md (the artifact recipe: sections 4 commands, 5 quality, 6 what the port must implement, 7 identity); RECIPE-deepseek41-vq.md (the ds4 VQ recipe we mirror); docs/ds4-gemma-port-phases.md (row list); docs/ds4-gemma-port-reference.md (the port map and the four-leg verification); docs/tensor-inventory.tsv and docs/encode-plan.tsv (the per-tensor truth); docs/artifact-verify-summary.txt; docs/ladder-embeddinggemma2.txt (the measured tier ladder); docs/{baseline-gguf-gate1a,anchor-gate2,artifact-gguf-gate1b,loader-gate3,text-tower-gate4}.txt (the evidence, one per unit); tools/{eg2_vq.c,eg2_pack.c,eg2_gpuprobe.cu,eg2_gguf.c} and tools/{eg2_gguf_check,eg2_artifact_check,eg2_loader_check,eg2_tok_check,eg2_phase4_gate,eg2_anchor,eg2_anchor_cmp}.sh with bin/ (their binaries); out/ (all artifacts and logs, gitignored); AGENTS.md (project guardrails).
 - The loader (phase 3): crates/ds4-core/src/gemma_vq.rs is the family (the arch and `gemma_vq.format_version` gate, `validate_part` from `tensors.rs::parse_one`, the per-payload validator, `validate_metadata`), gemma_vq/layout.rs is the shape authority for all 1376 tensors, and ds4-rs/ds4.c holds `DS4_SHAPE_GEMMA_VQ` with its third copy in tests/parity/shape_c_oracle.c. The file's rank census is 1354 rank 1 / 7 rank 2 / 13 rank 3 / 2 rank 4; a VQ payload's single dimension is its byte length, and the layout computes the same number from the tower architecture through `vq_payload_bytes`.
+- The tower (phase 4): the tokenizer lives host-side in crates/ds4-core/src/tok/gemma_vq.rs (a `gemma4` pre-tokenizer: partition on the CONTROL/USER_DEFINED/UNKNOWN token set plus `</s>`, escape spaces to U+2581, split on newline runs, then the merge queue with the `<0xXX>` byte fallback; two named limits: invalid UTF-8 and `ignore_merges`). The arithmetic lives in ds4-rs/ds4_eg2vq_graph.inc with ds4_eg2vq_bind.inc: every type-42 payload is decoded once into a 520 MiB f32 cache (`ds4vq_dequant_f32`, geometry from the payload's own header, checked against the architecture), and `ds4_eg2vq_ref_embed(m, w, ids, n_ids, out768)` is the pool-and-normalize entry. The bind carries TWO weight legs by name — the artifact's HF names and the baseline's llama.cpp names — because the anchor's vectors came from the baseline; that is what makes the declared floor and the container report separable numbers. The oracle is CPU-only: `tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>` (its binary is gitignored, built by `make tests/parity/eg2vq_embd_c_oracle`), and it consumes the host's id dump from `cargo run -p ds4-core --release --example gemma_vq_tok -- <gguf> <items.tsv> <prompt-map.json>`.
 - The artifact's quantizer: nocal VQ (codebooks solved on weights alone), dim 4, nc 4096, text-tower mean cosine 0.9859; the ladder's measured comparison is dim 4/nc 4096 at cos 0.9869 versus dim 8/nc 4096 at 0.9218 on the same representative tensor (docs/ladder-embeddinggemma2.txt).
 - Model shape to load: 24 layers, hidden 512, 4 heads, 2 KV heads, head_dim 256; layers 5/11/17/23 full attention with head_dim 512 and 1 KV head; intermediate 2048; rms eps 1e-6; vocab 262,144; embedding dim 768; sliding window 512 in the checkpoint's one-sided sense — the FILE carries 1024 (`gemma_vq.attention.sliding_window`, the converter's doubling), and the symmetric mask is ±512; mean pool then L2 normalize.
 - Machine: RTX 4070 SUPER (12,282 MiB, sm_89), CUDA 13.3, 28 CPUs. The Rust side is built with `cargo` plus `--features native` (every ds4-cli binary needs that feature) and the C side through the tree's Makefile — measured this unit: `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses the binaries (`target ds4-agent-rs in package ds4-cli requires the features: native`), so rule 5's documented iterative-development exception is what applies here. `make ds4.o` takes 39 s and `make ds4_cpu.o` 11 s; the CUDA object and the C binaries are a separate story (section 7).
@@ -265,8 +267,9 @@ be needed.
 - OPEN (owner): whether the dim-4 VQ device kernel (phase 7) is in scope now or the device path waits for a dim-8 sibling artifact. OPEN (owner): whether the vision/audio towers (phase 8) are wanted. OPEN: whether KV checkpoints mean anything for an embeddings family.
 - OPEN (phase 1b): none — done, and its gate is reproducible (`tools/eg2_artifact_check.sh`). If a payload ever fails it, the fallback is a re-encode, never a hand-repaired byte.
 - OPEN (phase 3): none — done, and its gate is reproducible (`tools/eg2_loader_check.sh`). Residual notes rather than open work: an out-of-range index cannot be encoded at this tier (12-bit indices exactly cover nc 4096), so a future tier whose codebook is not a power of two is the only case that would need an index scan; and the C shape is verified as a table by `test-catalog-parity`, but nothing consumes it until phase 4 builds the graph.
-- OPEN (environment, both pre-existing and measured this unit, neither caused by this project's changes): (a) `make ds4-c ds4-server` cannot relink here — ds4_cuda.o (2026-10-14) is older than the CUDA sources it depends on (2026-10-18), and rebuilding it fails in ptxas with `Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher` because the tree's `.ds4-cuda-config.mk` pins `CUDA_ARCH := native` (sm_89 here); ds4.o and ds4_cpu.o build fine; (b) the canonical builder cannot build this tree at all until it can pass `--features native`. Both matter to phases 4 and 7.
-- OPEN (phase 4): the anchor's token counts are per item in the anchor file, so the tokenizer port can be checked before any matmul is written; use the three long items for the mask, and hold the declared C-vs-anchor mean-cosine gate at 0.9999 (the anchor's own batch-shape spread is 3.4e-4 per element, three orders inside that). The tokenizer is the first thing to port: `llama-vocab.cpp:528-536` pins the `gemma4` pre-tokenizer (newline split over raw UTF-8 with escaped spaces and no GPT-2 byte encoding), and `:2787` forces `add_bos` true for it.
+- OPEN (environment, both pre-existing and measured this unit, neither caused by this project's changes): (a) `make ds4-c ds4-server` cannot relink here — ds4_cuda.o (2026-10-14) is older than the CUDA sources it depends on (2026-10-18), and rebuilding it fails in ptxas with `Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher` because the tree's `.ds4-cuda-config.mk` pins `CUDA_ARCH := native` (sm_89 here); ds4.o and ds4_cpu.o build fine, which is all the phase-4 gate needs; (b) the canonical builder cannot build this tree at all until it can pass `--features native`. Both are phase 6/7 currency: the Rust host binary (`ds4`) links the CUDA objects, so a GPU-less host binary cannot be built here either — which is why phase 4's host leg is the tokenizer plus the `cargo test` that drives the CPU oracle, and phase 6 must resolve this before the CLI verb can exist.
+- OPEN (phase 4): none — done, and its gate is reproducible (`tools/eg2_phase4_gate.sh`, about 20 minutes: four tower runs at the oracle's -O0; `EG2_TOK_REF_LOG=out/tok-anchor-verbose.log` reuses a reference token dump instead of regenerating it). Residual notes rather than open work: the tokenizer has no C counterpart by design (the C path consumes ids, and the reference's own dump is its oracle); the oracle binary is built by its Makefile target and ignored by git; and the C reference is not a second independent implementation — the anchor is the only foreign one, which is why the declared floor is measured against it on baseline weights.
+- OPEN (phase 5, next unit): the frozen labelled retrieval set does not exist yet; the engine to measure it with does (`ds4_eg2vq_ref_embed` plus the oracle, both CPU-only). Report recall@k/MRR and the cosine agreement distribution for baseline-vs-artifact at 768 and at each MRL width, with the artifact hashes the runs were measured on, and keep the prompt-prefix convention identical to the anchor's (the prefix is part of the pooled text: phase 2 measured that dropping it moves the vectors by mean cosine 0.87).
 - OPEN before any push: rule 12 graphify, rule 19 QA evidence, rule 10 OSV scan for ds4-rs (it carries a Cargo.lock); the outer repo has no remote, so publishing is an offer.
 
 8. Progress and staleness check (run this first, every session)
@@ -283,21 +286,32 @@ be needed.
         out/artifact-manifest.tsv
     sha256sum -c SHA256SUMS
     jq -e . tests/expected/anchor-embeddinggemma2.jsonl > /dev/null && echo "anchor parses"
+    # gate 4 (about 20 minutes; the token dump is reused, not regenerated)
+    cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null && cd ..
+    EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
+        out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+        tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json \
+        | tail -25
     git -C ds4-rs log --oneline -1 && git -C ds4-rs status --short
     open-grok inspect | sed -n '/Project Instructions/,/^$/p'
 
 Trust git over this document's headings: continue with the first phase whose work is
 not in the diff. Staleness check at the time of writing: after this unit's commit
 only plan and evidence documents are expected in the outer repo — this handoff, the
-gate-3 evidence, and the phase-doc, contract, RECIPE and AGENTS corrections committed
-with it, plus the new tools/eg2_loader_check.sh. In ds4-rs, this unit's commit is the
-loader: crates/ds4-core/src/gemma_vq.rs and gemma_vq/layout.rs, the family arms in
-identify/shape/layout/bind/lib/validate/serving/serving_host/tok/tensors, the
-`gguf_inventory --family` leg, tests/parity/shape_c_oracle.c, ds4.c's family identity,
-ds4_eg2vq.h and ds4_eg2vq_bind.inc, and the Makefile deps. Anything else in the diff
-must be read before sections 2-6 are trusted. Note that the artifact and its manifest
+gate-4 evidence, the phase-doc P1 rows and its P1.8 correction, the contract and
+RECIPE notes, the AGENTS pointer, and the new tools/eg2_tok_check.sh and
+tools/eg2_phase4_gate.sh. In ds4-rs, this unit's commit is the tower: the tokenizer
+(crates/ds4-core/src/tok/gemma_vq.rs, its dispatch arms in tok.rs, the gemma_vq
+chat refusal, the synthetic-vocabulary unit tests), the host's drivers
+(crates/ds4-core/examples/gemma_vq_tok.rs, crates/ds4-core/tests/eg2vq_ref.rs), the
+C tower (ds4_eg2vq_graph.inc new, ds4_eg2vq_bind.inc and ds4_eg2vq.h extended, the
+two struct tags and the include in ds4.c, tests/parity/eg2vq_embd_c_oracle.c new,
+the Makefile deps and the oracle rule, .gitignore). Anything else in the diff must
+be read before sections 2-6 are trusted. Note that the artifact and its manifest
 live in the gitignored out/, so they are not in the diff: they are identified by the
-digests in SHA256SUMS and section 2.
+digests in SHA256SUMS and section 2; the same is true of every out/phase4-* file the
+gate writes.
 
 This document is COMPLETE and self-contained: a new session can execute the project
 end to end from this file alone. It carries the plan ahead, the exact reference

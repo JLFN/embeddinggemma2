@@ -260,6 +260,19 @@ tools/eg2_loader_check.sh $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_
 #     are compared by the existing parity test
 cd ds4-rs && make ds4.o tests/parity/shape_c_oracle && \
    cargo test -q -p ds4-core --test shape && cd ..
+
+# 22. The text tower, three ways (gate 4): the host's tokenizer against the
+#     reference's own ids, the C reference forward over the frozen 113-item set on
+#     both weight sources, and the anchor. The declared floor (768 mean cosine
+#     >= 0.9999) is measured on the BASELINE weights, because the anchor was
+#     produced on the baseline: the artifact's own distance from it is the
+#     quantization of section 5, not the port. Writes out/phase4-{ids,baseline-*
+#     ,artifact-*}.{tsv,txt,log,jsonl}
+cd ds4-rs && make tests/parity/eg2vq_embd_c_oracle && cd ..
+tools/eg2_phase4_gate.sh \
+   $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+   $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+   tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json
 ```
 
 Two deliberate properties of the file. First, its hparams carry the `gemma_vq.`
@@ -344,16 +357,25 @@ the rest are single-element scalars, where cosine is meaningless).
    DONE 2026-10-19: `crates/ds4-core/src/gemma_vq.rs` with its layout module, the
    `ModelFamily::GemmaVq` family, the C identity and the family arms. The reader
    identifies the file, checks its hparams, resolves all 1376 bind names and
-   validates every payload (`docs/loader-gate3.txt`); decoding a payload and the
-   tower's arithmetic are the next unit.
+   validates every payload (`docs/loader-gate3.txt`).
+   DONE 2026-10-19 (unit 14): the tokenizer (`crates/ds4-core/src/tok/gemma_vq.rs`:
+   the `gemma4` pre-tokenizer, the BPE queue and the special-token partition, with
+   its ids equal to llama.cpp's own over all 113 items) and the text tower itself as
+   the C reference forward (`ds4-rs/ds4_eg2vq_graph.inc` with its bind, the
+   `ds4_eg2vq_matrix` dense decode of every type-42 payload, and the oracle
+   `ds4-rs/tests/parity/eg2vq_embd_c_oracle`). Evidence: `docs/text-tower-gate4.txt`.
+   The device path is phase 7.
 3. An embedding API. The repository has no `v1/embeddings` route today; the composition
    the checkpoint expects is mean pooling over the last hidden state followed by L2
-   normalization (`1_Pooling/config.json`, `2_Normalize`).
+   normalization (`1_Pooling/config.json`, `2_Normalize`). The C reference path does
+   exactly that composition today (`ds4_eg2vq_ref_embed`); the route itself is phase 6.
 
-Until that port exists, the artifact is verifiable but not runnable in `ds4-dfm-rs`.
-As of 2026-10-19 it is loadable and validated: the family refuses at the tokenizer
-and the bind by name rather than running the file through another family's
-mathematics.
+As of 2026-10-19 the artifact is loadable, validated and runnable on the CPU
+reference path in `ds4-rs`: `tests/parity/eg2vq_embd_c_oracle` prints a 768-dim
+vector per item for the frozen set, and the same graph reproduced the anchor's
+baseline vectors at 768 mean cosine 0.99999681. What is still missing is the device
+path (phase 7), the serving route (phase 6) and the two tower encoders (phase 8);
+the C bind, not the Rust host, is what refuses those by name.
 
 ## 7. Identity and verification
 
@@ -374,6 +396,8 @@ means reproducibility and byte accounting:
 | Source coverage | the plan's source bytes sum to 1,488,743,984 B, exactly the checkpoint's tensor total; no tensor is dropped or double-counted |
 | Payload lengths | every slot's length reproduced from the reference's own byte accounts — `vq_payload_bytes` (`vq_qc_bytes.h:20`) for VQ, 34 B per 32 values for `q8_0`, element count times dtype size for verbatim |
 | Round trip | every VQ matrix's decode-versus-encode `maxabs` is 0 (the payload decodes to exactly what the encoder wrote) |
+| Tokenizer (gate 4, 2026-10-19) | the Rust host's ids equal llama.cpp's own over the frozen set, element for element: 113 items, 7088 tokens, 0 count and 0 id mismatches (`tools/eg2_tok_check.sh`) |
+| Text tower (gate 4, 2026-10-19) | the C reference forward of the same graph on the BASELINE weights reproduces the anchor at 768 mean cosine 0.99999681 / min 0.99998727 (declared floor 0.9999), 6.3e-4 worst element; the same graph on this artifact is reported separately at mean 0.96007 / min 0.82945 — that gap is the codec, which this section's ladder measures as a 0.9859 weight cosine (`docs/text-tower-gate4.txt`) |
 | Determinism | 14 parallel `verify` runs covering all 1376 slots re-encoded each payload from the checkpoint and compared it byte for byte with the file: all identical |
 | Encode cost | 14 shard encodes 19:42:39Z to 20:02:16Z, merge 1.4 s, 14 parallel verifies to 20:21:45Z; 39 minutes wall for the whole pipeline on 14 cores |
 | Re-wrap cost | 0.94 s wall for the whole artifact GGUF (a copy of the container's bytes, no re-encode) |

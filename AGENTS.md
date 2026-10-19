@@ -157,10 +157,19 @@ Read these before doing port work in this workspace:
    encoded at this tier's 12-bit index width, and the two pre-existing environment
    findings (the stale CUDA object and the canonical builder's missing `native`
    feature). Gate script: `tools/eg2_loader_check.sh`.
-8. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+8. `docs/text-tower-gate4.txt` — the phase-4 evidence: the tokenizer (the `gemma4`
+   pre-tokenizer and its BPE, with its ids equal to the reference's own over all
+   113 items), the text tower as the C reference forward (`ds4-rs/ds4_eg2vq_graph.inc`
+   with its bind and the dense decode of every type-42 payload), gate 4's legs —
+   the host's ids, the C reference on the baseline weights against the anchor at
+   the declared 768 mean cosine >= 0.9999, and the same graph on the VQ artifact
+   with the quantization's own gap reported as phase 5's subject — and what the
+   unit does not claim (no device path, no route, no tower encoders). Gate script:
+   `tools/eg2_phase4_gate.sh` (with `tools/eg2_tok_check.sh` as its first leg).
+9. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-9. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
+10. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-10. Cross-session memory for this workspace lives under
+11. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.
