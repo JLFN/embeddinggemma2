@@ -118,10 +118,16 @@ Read these before doing port work in this workspace:
    document, it wins; correct the other document in the same commit.
 2. `docs/ds4-gemma-port-phases.md` — the row-by-row work list behind the handoff
    (P0..P4 plus the X rows), each row with its authority citation and its gate.
-3. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+3. `docs/ds4-gemma-payload-contract.md` — the `gemma_vq` contract the writer and
+   the reader are both written against: the metadata keys with their GGUF types,
+   the tensor naming and types, the payload byte layout, the recipe string, where
+   shape and rank live, and the host/device split. It also settles, by
+   measurement, that the encoder's payloads are DQVQ payloads byte for byte and
+   that the artifact GGUF step is a re-wrap rather than a re-encode.
+4. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-4. `RECIPE.md` — how the artifact in `out/` was made, and its measured quality;
+5. `RECIPE.md` — how the artifact in `out/` was made, and its measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-5. Cross-session memory for this workspace lives under
+6. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.

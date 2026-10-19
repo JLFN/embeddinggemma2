@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: cada4bdc3d372b0dcbba855ffe098903f81e6e2b
+last_updated_commit: 50a4a3bd97b82b29638a9e4ad6558a6b4c16e10b
 branch: dev
 remote: 
-handoff_written_at_context_usage: 17%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T07:56:53+02:00
+handoff_written_at_context_usage: 12%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T08:34:41+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -79,20 +79,21 @@ Commit convention: each unit's final commit carries the trailer
 "Unit: <N> complete" as its last body line, so unit boundaries are recoverable
 with `git log --grep`.
 
-PHASE 0 — the `gemma_vq` payload contract (phase-doc row X.8). No code is written in this phase.
+PHASE 0 — the `gemma_vq` payload contract (phase-doc row X.8). DONE 2026-10-19, reading only: no reader, writer or encoder code was written for it.
 
+- Landed: docs/ds4-gemma-payload-contract.md — the metadata keys, their GGUF types, the tensor naming, the payload byte layout, the recipe string, where shape and rank live, and the host/device split, each with a file:line citation.
 - Read (all paths relative to /data/embeddinggemma2/ds4-rs unless another root is given):
   - crates/ds4-core/src/glm_vq.rs:276 (`glm_vq.codebooks`), :353 and :366 (`glm_vq.logical_shapes`, the mechanism that carries rank), :435 (`glm_vq.format_version`), :466 (`glm_vq.native_policy`).
   - crates/ds4-core/src/glm_vq/layout.rs and crates/ds4-core/src/glm_vq/release.rs (how a VQ release is described and validated).
-  - crates/ds4-core/src/ling31_vq.rs:23-29 (ARCH / VARIANT / SOURCE_MODEL / RECIPE / RECIPE_V2) and crates/ds4-core/src/ling31_vq/release.rs:139.
+  - crates/ds4-core/src/ling31_vq.rs:23-29 (ARCH / VARIANT / SOURCE_MODEL / RECIPE / RECIPE_V2) and its release module.
   - crates/ds4-core/src/identify.rs:183-186 (the metadata gate that makes a family self-identifying in GGUF).
   - ds4_glmvq_bind.inc:1-3 (the stated host/device split) and ds4_glmvq.h (the C-side types).
-  - The payload carrier itself: /data/YoungAi/vq_fmt.h (DQVL blob v2.2 and the DQVQ matrix payload), our vendored copy ds41_vq_fmt.h:1-30 and its dim-generic decoder :72-104, and /data/YoungAi/gguf-tools/quantize/v41_to_gguf.c (493 lines: the only shipping example of a ds4 VQ family being written into a GGUF, and the mapping of VQ bytes to GGUF tensor types).
-  - The writer helper that existing tool uses: /data/YoungAi/src/common/ds4_gguf_write.h (127 lines, header-only).
-- Land: docs/ds4-gemma-payload-contract.md — the metadata keys, their GGUF types, the tensor-name convention, the payload byte layout, the recipe string, where rank lives, and the exact host/device split.
-- Gate: every key, type, offset and magic in that document cites a file:line from a shipping family or the writer precedent. Two determinations must be settled here, not assumed:
-  1. Whether our kind-0 payload bytes are already exactly a DQVQ payload (`ds41_vq_fmt.h:7-12` layout: magic, u16 dim, u16 nc, u32 rows, u32 cols, codebook, row gains, index stream) — settle it by hashing the first payload of a slot in the DQVD container against a freshly packed one.
-  2. If they are identical, phase 1's artifact step is a re-wrap (fast, byte-preserving) instead of a re-encode (~14.5 min shard wall time, out/encode-run.txt) — and the plan states which of the two was measured and why.
+  - The payload carrier itself: /data/YoungAi/vq_fmt.h, our vendored copy ds41_vq_fmt.h:4-12 and its dim-generic decoder :73-105, and /data/YoungAi/gguf-tools/quantize/v41_to_gguf.c (the only shipping example of a ds4 VQ family being written into a GGUF, and the mapping of VQ bytes to GGUF tensor types).
+  - The writer helper that existing tool uses: /data/YoungAi/src/common/ds4_gguf_write.h.
+- Gate, both determinations settled by measurement, not assumed:
+  1. Our kind-0 payload bytes ARE a DQVQ payload byte for byte. The 16 bytes at file offset 139664 of the artifact read `44 51 56 51 | 04 00 | 00 10 | 00 10 00 00 | 00 04 00 00` (`DQVQ`, dim 4, nc 4096, rows 4096, cols 1024), the length closes `vq_payload_bytes` exactly (1613841 B), and a fresh pack of the same tensor by the same binary produced the same payload digest, sha256 d9c02751e1757834af34a8235ea00a1a9af7db92ee7266541d62746068ed62bd. The artifact's own verify run reports all 1376 slots bit-identical to a fresh encode (docs/artifact-verify-summary.txt).
+  2. Therefore phase 1b's artifact step is a re-wrap (I/O bound, byte-preserving), not a re-encode (measured at ~14.5 min of shard wall time plus the merge). A re-encode remains the fallback and was not needed.
+- One correction found here and fixed in the same commit: the decoder is at ds41_vq_fmt.h:73-105, not :72-104 (this file and the phase doc cited it one line early).
 
 PHASE 1 — the writer, and the baseline GGUF (phase-doc rows X.5, X.6, plus the encoder change)
 
@@ -115,7 +116,7 @@ PHASE 3 — the loader: identity, payload reader, layouts, registration (phase-d
 
 - Read: the two shipping families end to end, as the pattern — crates/ds4-core/src/identify.rs:169-207 (routing) and :183-186 (the family gate), crates/ds4-core/src/shape.rs (ModelFamily values through Glm53Vq = 14 at :35 and Ling31Vq = 15, Ling31FlashVq = 18 at :104, name arms :49 and :71), crates/ds4-core/src/layout.rs (LayoutSpec :119, family layouts() :3791), crates/ds4-core/src/bind.rs:993, crates/ds4-core/src/lib.rs (the Glm53Vq arms :1248, :1274, :1528), crates/ds4-core/src/tensors.rs (TensorInfo / ShardPlan / TensorInventory and the error variants), C side ds4.c:382-383 (family enum), :657-660 (shape catalog), :10240-10250 (bind dispatch), with ds4_glmvq_bind.inc / ds4_glmvq.h as the `.inc` shape to mirror.
 - Land: crates/ds4-core/src/gemma_vq.rs (payload reader + validator + TensorInfo fill, the contract from phase 0), its error variant in tensors.rs, the gemma arms in identify.rs / shape.rs / layout.rs / bind.rs / lib.rs, the C identity + new ds4_eg2vq_bind.inc with ds4_eg2vq.h, and the family arms in crates/ds4-cli/src/lib.rs (:184 parse_args, family arms :451, :491).
-- Host decode for the CPU path is mostly free: `ds4vq_dequant_f32` (ds41_vq_fmt.h:72-104) is dim- and width-generic and already handles dim 4; check its magic whitelist against what our encoder writes before relying on it.
+- Host decode for the CPU path is mostly free: `ds4vq_dequant_f32` (ds41_vq_fmt.h:73-105) is dim- and width-generic and already handles dim 4; check its magic whitelist against what our encoder writes before relying on it.
 - Gate: the ds4-side dump of all 1376 tensors equals the encoder's verify output line for line, and loading the artifact twice is deterministic (same dump, same hashes).
 
 PHASE 4 — the text tower on the CPU reference path (phase-doc rows P1.1-P1.20)
@@ -148,8 +149,8 @@ PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owne
 
 Order of work, and the first command of the next session:
 
-0 → 1 (baseline GGUF) → 2 (anchor freeze) → 1 (artifact GGUF) → 3 → 4 → 5 → 6 → 7 → 8 if wanted.
-First command: `./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin` (prints the 1376-slot verdict the phase 3 gate compares against), then open the phase-0 reading list.
+0 (done) → 1a (baseline GGUF) → 2 (anchor freeze) → 1b (artifact GGUF, re-wrap) → 3 → 4 → 5 → 6 → 7 → 8 if wanted.
+First command of the next unit (phase 1a): `./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin` (re-prints the 1376-slot verdict, which is both the artifact's denominator and the re-wrap's input manifest), then open the two writer sources side by side — /data/YoungAi/src/common/ds4_gguf_write.h with /data/YoungAi/gguf-tools/quantize/v41_to_gguf.c — and emit metadata plus one tensor of the baseline GGUF, with the key and tensor tables of docs/ds4-gemma-payload-contract.md sections 5 and 7 as the whole specification.
 
 4. Reference map — the exact repos and files (pinned; verified in this session)
 
