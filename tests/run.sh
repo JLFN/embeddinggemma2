@@ -12,12 +12,15 @@
 #   3. the retrieval scorer's self-test (8 hand-checked cases)
 #   4. loader gate 3: 1376 tensors agree with the writer's manifest, 8 tampered
 #      copies are refused by name
-#   5. tests/qa-gate.sh (rule 19)
+#   5. gate 22: the vision oracle (phase 8) — the writer is deterministic, the
+#      pin's own mtmd accepts the mmproj it writes (211 tensors), and the frozen
+#      image reference reproduces for both fixtures
+#   6. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
-#   6. the artifact gate 1b (byte-identical to the container, metadata read back)
-#   7. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
-#   8. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
+#   7. the artifact gate 1b (byte-identical to the container, metadata read back)
+#   8. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
+#   9. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
 #
 # Usage: tests/run.sh [--deep]
 set -eu
@@ -49,7 +52,10 @@ tools/eg2_retrieval_score_selftest.sh
 step "4. loader gate 3"
 tools/eg2_loader_check.sh "$ART" "$MANIFEST"
 
-step "5. rule 19 QA gate"
+step "5. gate 22: the vision oracle (phase 8)"
+bash tools/eg2_mmproj_check.sh
+
+step "6. rule 19 QA gate"
 bash tests/qa-gate.sh
 
 if [ "$DEEP" -eq 0 ]; then
@@ -57,14 +63,14 @@ if [ "$DEEP" -eq 0 ]; then
     exit 0
 fi
 
-step "6. artifact gate 1b"
+step "7. artifact gate 1b"
 tools/eg2_artifact_check.sh "$ART" "$MANIFEST" "$DQVD" \
     "${EG2_MODEL_DIR:-.models/EmbeddingGemma-2-914f7f8}" out/artifact-inventory.txt
 
-step "7. the Rust suite (ds4-core)"
+step "8. the Rust suite (ds4-core)"
 (cd ds4-rs && cargo test -q -p ds4-core)
 
-step "8. gate 4: the CPU reference tower against the frozen anchor"
+step "9. gate 4: the CPU reference tower against the frozen anchor"
 (cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null)
 EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
     "$ART" "$BASELINE" tests/anchor/anchor-items.tsv \

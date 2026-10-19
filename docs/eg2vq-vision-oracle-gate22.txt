@@ -1,0 +1,223 @@
+The vision oracle — phase 8, unit 22 evidence (2026-10-19)
+
+What this records, and why the instrument had to be built
+
+Phase 8 ports EmbeddingGemma-2's VISION tower: image -> vision tower -> 3x3
+average pool -> sqrt(n_embd) -> weightless RMS -> the 768-to-512 tie-in
+projection -> soft tokens spliced into the text tower at its image-token spans ->
+the same 768-dim embedding the text path produces.  This project gates every
+ported tower against a frozen reference, and for TEXT that reference was a
+shipped binary (llama-embedding at the pin, docs/anchor-gate2.txt).  For images
+none exists: examples/embedding/embedding.cpp has no mtmd, mmproj or image
+support at all, and tools/mtmd/mtmd-cli.cpp has no embedding or pooling mode
+(grepped at the pin, both empty).  The Python ML stack is gone by owner
+instruction, so the pin's own converter cannot run here either.  The reference is
+therefore an instrument this project builds, exactly as the baseline text GGUF
+was: OUR OWN WRITER emits an mmproj, and a harness linked against the pin's own
+mtmd runs one image through it and dumps what comes out.
+
+Everything below was run in this session; every number was printed by the command
+recorded beside it.
+
+The instrument, in three files
+
+  tools/eg2_mmproj.c                 the writer: the checkpoint's vision tensors ->
+                                     the mmproj the pin's clip loader resolves
+  tests/parity/eg2vq_vision_oracle.cpp  the harness: the pin's mtmd + llama, one
+                                     image in, the soft tokens and the pooled
+                                     embedding out
+  tools/eg2_mmproj_check.sh          the gate: rebuild both, write the file twice,
+                                     read it back with the reference's own loader,
+                                     reproduce the frozen dumps, prove the two
+                                     fixtures differ
+
+The mmproj contract — every item read, none invented
+
+Keys (tools/mtmd/clip-impl.h:31-74 read by clip.cpp:1342-1352 and :1719-1736;
+the required ones are those the loader reads with no default):
+
+  general.architecture                     "mmproj"   (MODEL_ARCH.MMPROJ, the
+                                            converter's own arch string)
+  clip.has_vision_encoder                  true       (clip-impl.h:36; read at
+                                            clip.cpp:1258, which is what makes
+                                            clip_init build the vision context)
+  clip.has_audio_encoder                   false      (the audio tower is out of
+                                            scope: the owner asked for vision)
+  clip.projector_type                      "gemma4v"  (clip-impl.h:557; the
+                                            variant is P4.4's answer, below)
+  clip.vision.embedding_length             768        config.json vision_config
+  clip.vision.feed_forward_length          3072
+  clip.vision.block_count                  16
+  clip.vision.attention.head_count         12
+  clip.vision.attention.head_count_kv      12
+  clip.vision.attention.head_dim           64
+  clip.vision.attention.layer_norm_epsilon 1e-6
+  clip.vision.patch_size                   16
+  clip.vision.projection_dim               512        = text_config.hidden_size;
+                                            mtmd REFUSES a mmproj whose n_embd
+                                            disagrees with the text model's
+                                            (mtmd.cpp:652-659)
+  clip.vision.projector.scale_factor       3          -> hparams.n_merge, the
+                                            pooling kernel
+  clip.vision.image_size                   224        required by the loader
+                                            (clip.cpp:1356) and unused by this
+                                            projector; the converter writes 224
+                                            for the same reason
+                                            (conversion/gemma.py:984-985)
+  clip.vision.image_mean / image_std       [0,0,0] / [1,1,1]  read from the
+                                            checkpoint's own processor_config.json
+                                            (image_processor.image_mean/_std);
+                                            conversion/base.py:2926-2929 reads
+                                            them from the same place
+
+Tensors (names from the loader's own templates, tools/mtmd/clip-impl.h:112-158,
+cross-read against the converter's name map, gguf-py/gguf/constants.py:1817-1876
+and gguf-py/gguf/tensor_mapping.py:1783-2124; the "v" prefix is clip.cpp:2273).
+211 tensors, and the four norms' roles are the graph's own, not a naming guess:
+clip.cpp:376 uses ln_1 for the pre-attention norm, :496 attn_post_norm after the
+attention, :513 ln_2 before the FFN, :527 ff_post_norm after it.
+
+  mmproj name                  checkpoint name                                    dims (GGUF)      type
+  v.patch_embd.weight          vision_tower.patch_embedder.input_proj.weight      [16,16,3,768]    bf16
+  v.position_embd.weight       ...patch_embedder.position_embedding_table         [768,10240,2]    f32
+  mm.input_projection.weight   embed_vision.embedding_projection.weight           [768,512]        bf16
+  v.blk.N.ln1.weight           ...layers.N.input_layernorm.weight                 [768]            f32
+  v.blk.N.attn_post_norm.weight ...layers.N.post_attention_layernorm.weight       [768]            f32
+  v.blk.N.ln2.weight           ...layers.N.pre_feedforward_layernorm.weight       [768]            f32
+  v.blk.N.ffn_post_norm.weight ...layers.N.post_feedforward_layernorm.weight      [768]            f32
+  v.blk.N.attn_q_norm.weight   ...layers.N.self_attn.q_norm.weight                 [64]             f32
+  v.blk.N.attn_k_norm.weight   ...layers.N.self_attn.k_norm.weight                 [64]             f32
+  v.blk.N.attn_q.weight        ...layers.N.self_attn.q_proj.linear.weight         [768,768]        bf16
+  v.blk.N.attn_k.weight        ...layers.N.self_attn.k_proj.linear.weight         [768,768]        bf16
+  v.blk.N.attn_v.weight        ...layers.N.self_attn.v_proj.linear.weight         [768,768]        bf16
+  v.blk.N.attn_out.weight      ...layers.N.self_attn.o_proj.linear.weight         [768,768]        bf16
+  v.blk.N.ffn_gate.weight      ...layers.N.mlp.gate_proj.linear.weight             [768,3072]       bf16
+  v.blk.N.ffn_up.weight        ...layers.N.mlp.up_proj.linear.weight               [768,3072]       bf16
+  v.blk.N.ffn_down.weight      ...layers.N.mlp.down_proj.linear.weight             [3072,768]       bf16
+  (N = 0..15; 13 per layer + the three above = 211)
+
+Two transforms, both the converter's own:
+  - the patch embedder is a linear [768][3*16*16] in the checkpoint and a CONV in
+    the mmproj, so its bytes are permuted exactly as conversion/gemma.py:1046-1050
+    does it: dst[c*P*P + y*P + x] = src[(y*P + x)*3 + c], P = 16.
+  - every other 2-D weight is the checkpoint's with its dims reversed (HF [out][in]
+    -> GGUF ne [in, out]); the 1-D norms and the position table keep their order.
+
+Two dtypes, and the second one is forced rather than chosen: the matmul operands
+keep the checkpoint's bf16, while the six norms and the position table are widened
+to f32 because the reference's OWN graph refuses the alternative — measured this
+session, the first attempt aborted with
+    binary_op: unsupported types: dst: f32, src0: f32, src1: bf16
+(ggml-cpu/binary-ops.cpp:135, inside ggml_compute_forward_mul) from the norm
+multiply, and the position table's rows are ADDED to the patch embeddings
+(gemma4v.cpp:46-47).  The converter agrees on both (conversion/gemma.py:1015-1018
+forces the position table to F32; gguf-py writes the 1-D norms as F32).
+
+The preprocessing, measured rather than assumed
+
+The reference's own preprocessor ran and reported it:
+  clip_encode: copying image 1/1 to input buffer (nx=528, ny=384)
+  clip_encode: output embedding shape [512, 88, 1]
+which is the arithmetic read from the source beforehand — mtmd's dyn_size
+preprocessor (tools/mtmd/mtmd.cpp:953-959) resizing with calc_size_preserved_ratio
+(mtmd-image.cpp:122-156) at align_size patch * n_merge = 48, bicubic, between
+image_min_pixels 161,280 and image_max_pixels 2,580,480 (= 70 and 1120 tokens'
+worth of pixels, clip-model.h:204-211 with the limits set at clip.cpp:1734), and
+the image-token count ((nx/16)*(ny/16))/9 (clip.cpp:4419-4428): 512x384 -> 528x384
+-> 33x24 = 792 patches -> 88 soft tokens.  The loader's own hparams dump printed
+n_merge 3, image_min_pixels 161280, image_max_pixels 2580480, matching to the
+digit.  Our port's preprocessing must reproduce this exactly, and the fixture
+bytes are frozen (below) so it can be checked.
+
+The splice, and how the reference builds it
+
+The input is mtmd's own sequence for one image: the leading text chunk (BOS + the
+begin marker "<|image>" = 2 tokens), the image span (88 soft tokens), the trailing
+text chunk ("<image|>" + EOS = 2 tokens) — 92 positions in all.  The reference
+carries the image span as EMBEDDINGS in one batch with the text tokens, which is
+the one thing about this path that is not obvious:
+
+  - mtmd_helper_eval_chunks does NOT do it: it evaluates chunk by chunk, and for
+    an embeddings model the pooling is per batch, so the pooled vector it leaves
+    behind describes the last text chunk alone.  MEASURED: with the helper, two
+    visibly different images produced byte-identical pooled vectors (their soft
+    tokens differed, sum of squares 69219.02 vs 65827.22, while the pooled dumps
+    were identical to the last byte).  The gate now proves the opposite.
+  - the public llama_batch cannot carry the mixed batch either: this version's
+    compat conversion (src/llama-batch.cpp:1410-1484) stores embeddings only when
+    the batch has NO token array, so a batch built that way loses the image rows
+    and SEGFAULTS — measured: exit 139 inside the first encode.
+  - what works is the reference's own llama_batch_ext, which its image path uses
+    (mtmd-helper.cpp's decode_embd_batch): token entries for the text, embedding
+    entries for the image span, each with its own position, all in sequence 0, and
+    one llama_process over the lot.
+
+The frozen reference, and its digests
+
+  fixture (committed)                                    sha256
+  tests/vision/eg2-vision-gradient-512x384.png           3bb5cfac9c56cd8b4c15252cb5822de2e647b9dcc3d1b3ab8250b2cb559215c6
+  tests/vision/eg2-vision-pattern-512x384.png            5ad2ee40f109f8ff4faaf5982851e14a3e39354c8d32f9841229128b2483f2bf
+  reference/eg2-vision-gradient.soft.tsv                 a18495afe1f9d04e6616affe70784618f7c67bac2f3238706d94b2c676f2c5d0
+  reference/eg2-vision-gradient.text.tsv                 feab5af772f4b58c7781c2d5d44be9314aa88355b29547a1dccf8be25d93fd6a
+  reference/eg2-vision-pattern.soft.tsv                  41d18ba25dc3ba8a280f01e973cd7d46d6560e1318eb43dd0261ce0d5e8a34fb
+  reference/eg2-vision-pattern.text.tsv                  20d3e3eb11ccc9b237b6565fd80369748c2d651b13f1d83f9db7c41efdb5530f
+  out/EmbeddingGemma-2-914f7f8-vision-mmproj.gguf        9ffb86e3eeb5834095e0bd42b6f5fc0505f02b8e208a6037d01db448e6566838
+  out/mmproj-manifest.tsv                                68f1724f112c6992201d96e866f9dfc68f15efec9d3fa1b3c300430eb486675f
+
+  The fixtures are generated by ffmpeg from lavfi sources and are reproducible
+  (regenerating either one produced the same digest twice this session):
+    ffmpeg -f lavfi -i "gradients=s=512x384:c0=0x1e3a8a:c1=0xf59e0b:x0=0:y0=0:x1=511:y1=383" -frames:v 1 -pix_fmt rgb24 eg2-vision-gradient-512x384.png
+    ffmpeg -f lavfi -i "testsrc2=s=512x384:r=1:d=1" -frames:v 1 -pix_fmt rgb24 eg2-vision-pattern-512x384.png
+
+  The dumps are 7-decimal text, one row per soft token (88 rows x 512 values) and
+  two rows for the pooled vector (raw and L2-normalised, 768 values each).  Both
+  were re-run and compared byte for byte: identical across runs, and identical to
+  the committed files, which is what the gate checks.  The two fixtures are
+  different answers, as they must be: cosine(pooled) 0.7864652, and the FIRST
+  soft token alone differs at cosine 0.1459474.
+
+Cost, measured on this machine (CPU, no GPU): the whole oracle run — text model
+load, mmproj load, preprocessing, the vision encode and the 92-position splice —
+is 2.2 s wall, of which the vision encode is 776 ms and the splice's encode 92 ms.
+The gate itself, including both builds and two runs, is 6.0 s.
+
+What the gate does and what it prints
+
+  $ tools/eg2_mmproj_check.sh
+  MMPROJ GATE: the reference accepted the mmproj (211/211 tensors agree with the writer's manifest),
+  MMPROJ GATE: the writer is deterministic (sha256 9ffb86e3...), the frozen reference reproduces for both
+  MMPROJ GATE: fixtures, and the two fixtures differ (cosine 0.786465)
+  EG2VQ_VISION_ORACLE_PASS
+
+  The tensor check is deliberately two-sided: the writer's manifest against the
+  reference's OWN per-tensor readout of the file it just loaded (211 lines, name,
+  rank, dims, byte count and type).  A file only this project can read would be
+  worthless as a reference, so the check is the reference's acceptance, not ours.
+  Log: out/eg2vq-vision-oracle-gate22.log.
+
+What this does NOT prove
+
+  - Nothing about the port.  No ds4-rs code computes anything here yet; unit 23
+    (the CPU vision tower) and unit 24 (the device path) are what this reference
+    exists to gate.  The oracle is the denominator, not the result.
+  - Nothing about bf16 vs f32 in the norms as OUR port will read them: the port
+    reads the artifact, where the vision tower is the checkpoint's bf16 verbatim
+    (class `keep`), while this oracle's norms are f32 because the reference graph
+    demands it.  That difference is real, it is one rounding of a few hundred
+    values, and unit 23's gate must declare a tolerance that contains it — it has
+    NOT been measured yet.
+  - Nothing about other images: two fixtures is a first gate, not coverage.  A
+    real photograph, a wide aspect, and an image whose patch grid does not divide
+    by 3 along one axis are all still unmeasured.
+  - Nothing about the audio tower, the video processor, or the 280-soft-token
+    default the checkpoint's processor_config.json declares (our fixtures land on
+    88 because mtmd's own limits, not the checkpoint's default, drive the grid).
+
+Rule 19, stated rather than assumed: `bash tests/qa-gate.sh` prints
+`QA GATE: overall PASS` for this unit, and the honest reason is that this unit adds
+no RUNTIME surface at all — the gate's patterns track C engine entry points
+(`ds4_*` definitions), HTTP endpoints and Rust `pub fn`s, and unit 22's new files
+are a C writer, a C++ harness and a shell gate, none of which is an interface the
+gate models. Its only reported surface is `embed_caps`, unit 20's, still covered by
+qa-evidence/qa-report.md. Unit 23, which does add an engine entry point, WILL trip
+the gate and must carry its own QA pass before any push offer.
