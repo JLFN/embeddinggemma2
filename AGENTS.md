@@ -65,9 +65,10 @@ must come back with zero hits:
     find ds4-rs/crates/*/src ds4-rs/native -name '*.py'
     grep -rin 'onnx\|ort-sys' ds4-rs/crates/*/src ds4-rs/native ds4-rs/Cargo.toml ds4-rs/Cargo.lock
 
-All five returned zero on 2026-10-19 (measured in this workspace; ds4-rs has no
-built binary here yet, so the ldd check is vacuous until the port produces one —
-it becomes meaningful from P0 onward). A hit means
+All five returned zero on 2026-10-19, measured in this workspace. The ldd check is
+not vacuous: `ds4-rs/ds4-server` is a built 76 MB ELF linked against
+`libcudart.so.13` and `libcublas.so.13`, and `ldd` on it reports no python and no
+torch. A hit means
 the change is rejected before merge and before any push, and it is not a style
 preference: global rule 0 makes an owner instruction binding, and this check is
 how a fresh session proves the rule still holds.
@@ -106,3 +107,21 @@ kernels. Everything else is evidence:
 Verification: any quality or parity number in a commit, evidence file or
 handoff must name the artifact and revision that produced it, and the runtime
 tree must still pass the five P-1 checks.
+
+## Where the plan and the record live (rule 9 pointers)
+
+Read these before doing port work in this workspace:
+
+1. `embeddinggemma2-handoff.md` — the plan of record: the phased work spec with the
+   exact reference files per phase, the pinned repos, the routes removed, the
+   guardrails and the staleness check. Where it disagrees with any other plan
+   document, it wins; correct the other document in the same commit.
+2. `docs/ds4-gemma-port-phases.md` — the row-by-row work list behind the handoff
+   (P0..P4 plus the X rows), each row with its authority citation and its gate.
+3. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+   arithmetic, and the four-leg native verification method.
+4. `RECIPE.md` — how the artifact in `out/` was made, and its measured quality;
+   `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
+5. Cross-session memory for this workspace lives under
+   `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
+   memory_search for "embeddinggemma2" must surface it.
