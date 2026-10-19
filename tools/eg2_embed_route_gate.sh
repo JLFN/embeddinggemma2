@@ -161,6 +161,59 @@ if [ "$code" != "400" ] || ! grep -q '"invalid_request_error"' "$WORK/badtask.js
 fi
 
 echo
+echo "== 4b. the embedding caps /health advertises (phase 6 row P2.3) =="
+# The caps must be the family's own numbers (crate::gemma_vq::ITEM_TOKENS_MAX /
+# BATCH_ROWS_MAX, held equal to the C macro and the CUDA enum by
+# crates/ds4-core/tests/eg2vq_serving_caps.rs), because a caller learns the two
+# limits from this body alone.
+note "embed: $(sed 's/.*"embed":\([^}]*}\).*/\1/' "$WORK/health.json")"
+if ! grep -q '"embed":{"item_tokens_max":2048,"batch_rows_max":8192}' "$WORK/health.json"; then
+    note "FAIL: /health does not advertise the family's embedding caps"
+    fail=1
+fi
+
+echo
+echo "== 4c. a request past an advertised cap -> 400, naming the cap =="
+LONG=$(awk 'BEGIN{for(i=0;i<3000;i++) printf "word "}')
+code=$(curl -s -m 60 -o "$WORK/too_long.json" -w '%{http_code}' \
+    -X POST "http://$HOST:$USED_PORT/v1/embeddings" \
+    -H 'Content-Type: application/json' \
+    -d "{\"input\":\"$LONG\"}")
+note "one 3000-word item: HTTP $code"
+note "body: $(cat "$WORK/too_long.json")"
+if [ "$code" != "400" ] || ! grep -q 'item_tokens_max' "$WORK/too_long.json"; then
+    note "FAIL: an item past the item ceiling was not refused by name"
+    fail=1
+fi
+ITEM=$(awk 'BEGIN{for(i=0;i<1400;i++) printf "word "}')
+ARR=$(awk -v it="$ITEM" 'BEGIN{printf "\"" it "\""; for(i=1;i<8;i++) printf ",\"" it "\""}')
+code=$(curl -s -m 120 -o "$WORK/too_many.json" -w '%{http_code}' \
+    -X POST "http://$HOST:$USED_PORT/v1/embeddings" \
+    -H 'Content-Type: application/json' \
+    -d "{\"input\":[$ARR]}")
+note "eight 1400-word items (11200+ tokens): HTTP $code"
+note "body: $(cat "$WORK/too_many.json")"
+if [ "$code" != "400" ] || ! grep -q 'batch_rows_max' "$WORK/too_many.json"; then
+    note "FAIL: a request past the row budget was not refused by name"
+    fail=1
+fi
+# The cap must not refuse what it covers: three such items is 4200 rows.
+ARR3=$(awk -v it="$ITEM" 'BEGIN{printf "\"" it "\""; for(i=1;i<3;i++) printf ",\"" it "\""}')
+code=$(curl -s -m 300 -o "$WORK/under_budget.json" -w '%{http_code}' \
+    -X POST "http://$HOST:$USED_PORT/v1/embeddings" \
+    -H 'Content-Type: application/json' \
+    -d "{\"input\":[$ARR3],\"dimensions\":128}")
+note "three 1400-word items at 128 dims (inside the budget): HTTP $code"
+if [ "$code" != "200" ]; then
+    note "FAIL: a request inside the advertised caps was refused"
+    fail=1
+else
+    note "vectors returned: $(grep -o '"object":"embedding"' "$WORK/under_budget.json" | wc -l)"
+    [ "$(grep -o '"object":"embedding"' "$WORK/under_budget.json" | wc -l)" -eq 3 ] ||
+        { note "FAIL: expected three vectors"; fail=1; }
+fi
+
+echo
 echo "== stopping ds4-server =="
 kill "$SRV" 2>/dev/null || true
 SRV=""
