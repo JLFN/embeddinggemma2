@@ -1,5 +1,16 @@
 Baseline GGUF — phase 1a evidence (2026-10-19)
 
+SUPERSEDED IN ONE RESPECT, same day (phase 2): the file was re-emitted after a
+tokenizer correction — three keys the reference's own SpecialVocab writes were
+missing (mask_token_id, add_eos_token, add_sep_token). The corrected file is
+sha256 0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201 (557,949,600 B,
+n_kv 41); the pre-correction file is kept at out/baseline-noeos-variant.gguf
+(sha256 a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725) and is the
+no-eos leg of phase 2's measurement. This gate was re-run on the corrected file and
+passes unchanged (see docs/anchor-gate2.txt section 1); the digests and the writer
+report line quoted below are the pre-correction ones, kept as the record of what
+was measured here.
+
 What this records: the pinned checkpoint re-expressed as a GGUF the reference
 loader resolves, the two-sided check that it carries the checkpoint's own bytes,
 and the reference's own acceptance of the file. Everything below was run in this
@@ -116,8 +127,11 @@ Findings that changed the plan (each measured, not assumed)
    (gguf-py/gguf/vocab.py:659-662), and the types are BYTE for <0xNN>, CONTROL for a
    special id, NORMAL otherwise (gguf-py/gguf/vocab.py:651-657).
 
-Open, for phase 2
+Open, for phase 2 — both settled in phase 2, see docs/anchor-gate2.txt
   The anchor's prompt construction: the checkpoint's config_sentence_transformers.json
   carries the task prompts, and whether the file should set tokenizer.ggml.add_eos_token
-  is undecided (the converter does not write it; llama.cpp warns). Neither affects
-  this gate — the file loads and computes.
+  was undecided here (the converter does not write it; llama.cpp warns). Neither
+  affected this gate — the file loads and computes. Phase 2 ran the reference's own
+  SpecialVocab over the checkpoint, found it writes add_eos_token=true (this
+  checkpoint's tokenizer appends <eos>), corrected the writer, and re-emitted the
+  baseline; the anchor carries the prefix in the text and the EOS in the tokens.

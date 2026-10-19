@@ -1,4 +1,4 @@
-# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a)
+# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a, and phase 2, row X.5)
 
 Derived 2026-10-19 in `/data/embeddinggemma2`, reading only: no reader, writer or
 encoder code was written for this document. Phase 1a then wrote the baseline GGUF
@@ -290,8 +290,10 @@ Key set, every name read from the loader that consumes it:
 | `tokenizer.ggml.scores` | array f32 | -1000.0 throughout | `llama-vocab.cpp:2609`; `gguf-py/gguf/vocab.py:659-662` |
 | `tokenizer.ggml.token_type` | array i32 | BYTE for `<0xNN>`, CONTROL for a special id, else NORMAL | `llama-vocab.cpp:2629`; `gguf-py/gguf/vocab.py:651-657` |
 | `tokenizer.ggml.merges` | array str (514906) | the checkpoint's `model.merges`, pairs joined with one space (parts containing a space escaped as U+0101 — inert for this vocabulary) | `llama-vocab.cpp:2239-2269`; `gguf-py/gguf/vocab.py:197-220` |
-| `tokenizer.ggml.bos_token_id` / `.eos_token_id` / `.unknown_token_id` / `.padding_token_id` | u32 | 2 / 1 / 3 / 0 | `llama-vocab.cpp:2734-2738`; from `tokenizer_config.json` by name |
-| `tokenizer.ggml.add_bos_token` | bool | true | `conversion/gemma.py:675` |
+| `tokenizer.ggml.bos_token_id` / `.eos_token_id` / `.unknown_token_id` / `.padding_token_id` / `.mask_token_id` | u32 | 2 / 1 / 3 / 0 / 4 | `llama-vocab.cpp:2734-2738`; resolved by `SpecialVocab` from `tokenizer_config.json` by name against the `added_tokens` entries (`gguf-py/gguf/vocab.py:358-368`) |
+| `tokenizer.ggml.add_bos_token` | bool | true | `conversion/gemma.py:675`, and `SpecialVocab` agrees (`gguf-py/gguf/vocab.py:274-286`) |
+| `tokenizer.ggml.add_eos_token` | bool | true | `SpecialVocab` derives it from `tokenizer.json`'s `post_processor` — `TemplateProcessing<single>` is `[<bos>, A, <eos>]` here, so `add_special_token['eos'] = true` (`gguf-py/gguf/vocab.py:191-330`); the loader appends EOS on that flag (`llama-vocab.cpp:3625`). Measured 2026-10-19 by running that reference code: `tools/ref_vocab_probe.py` |
+| `tokenizer.ggml.add_sep_token` | bool | false | same source; `add_special_token['sep'] = false` for this template (llama.cpp's default is also false, so the key is fidelity rather than behaviour) |
 | `tokenizer.ggml.add_space_prefix` | bool | false | `conversion/gemma.py:674` |
 | `tokenizer.chat_template` | str | the checkpoint's `chat_template.jinja` | `gguf-py/gguf/vocab.py:107-110` |
 | `tokenizer.ggml.pre` | — | **not written**: the loader pins `"gemma4"` for this model type itself (`llama-vocab.cpp:2275`) | — |
@@ -372,7 +374,8 @@ string and the byte account.
 | form authority (read-only) | `/data/llama.cpp` | `31288c9c` |
 | writer and payload precedent | `/data/YoungAi` | `a4e6d31` for the quantizer sources cited by the packer, `3946dbc` for the vendored `vq_fmt.h` |
 | our artifact and its evidence | `out/`, `docs/artifact-verify-summary.txt`, `docs/encode-plan.tsv`, `docs/tensor-inventory.tsv` | artifact sha256 `8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe` |
-| the baseline and its evidence (phase 1a) | `out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`, `docs/baseline-gguf-gate1a.txt` | baseline sha256 `a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725` |
+| the baseline and its evidence (phase 1a, re-emitted in phase 2) | `out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`, `docs/baseline-gguf-gate1a.txt`, `docs/anchor-gate2.txt` | baseline sha256 `0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201` |
+| the anchor: the frozen set and the reference's vectors (phase 2) | `tests/anchor/anchor-items.tsv`, `tests/expected/anchor-embeddinggemma2.jsonl` | anchor sha256 `7561254c85591521716ec801336e3cbc2bf47e7f00c945c4f97cb643d0d4961d` |
 | the anchor build (phase 2) | `/data/llama-anchor-build` (built from the pin above, never inside its tree) | llama-embedding, CPU backend |
 
 ## 9. Open items this document does not decide
@@ -381,10 +384,15 @@ string and the byte account.
 2. Whether the vision and audio towers (row P4) are ported at all — owner. The
    artifact carries their payloads either way, since the DQVD container does.
 3. Whether KV checkpoints mean anything for an embeddings family (row X.3).
-4. Phase 2's prompt construction: whether the file should set
-   `tokenizer.ggml.add_eos_token` (the converter does not write it and llama.cpp
-   warns), and how the checkpoint's task prompts
-   (`config_sentence_transformers.json`) are applied. Phase 1a did not need either.
+4. Phase 2's prompt construction: RESOLVED 2026-10-19 by measurement. The file
+   sets `tokenizer.ggml.add_eos_token` true and `add_sep_token` false, because the
+   reference's own `SpecialVocab` derives exactly that from this checkpoint's
+   tokenizer (section 7's key table, and `docs/anchor-gate2.txt` section 1). The
+   checkpoint's task prompts are prepended to the text and pooled with it
+   (`1_Pooling/config.json` `include_prompt` true; model card `README.md:128-151`),
+   which is what the frozen anchor carries. Both choices were measured against
+   their alternatives over the same 113 items: dropping EOS moves the vectors by
+   mean cosine 0.96, dropping the prefix by 0.87.
 
 Gate for phase 1: the writer may be written only against sections 4 to 7, and no
 key or type may enter it that is not in those tables. Gate 1a is one tensor
@@ -392,9 +400,16 @@ round-tripped through our own reader and then loaded by the reference; gate 1b i
 all 1376 tensors dumped and compared with `bin/eg2_pack_cpu check` plus the
 per-payload hashes.
 
-Gate 1a: PASSED 2026-10-19. One tensor round-tripped first
+Gate 1a: PASSED 2026-10-19, and re-passed the same day on the re-emitted baseline
+(three tokenizer keys corrected, see `docs/anchor-gate2.txt` section 1). One tensor
+round-tripped first
 (`output_norm.weight`, abs 15765504, byte-identical to the checkpoint), then all
 413: the writer's manifest and the ds4-rs reader's own dump agree on every tensor's
 name, type, rank, dims, byte count and offset, 219 tensors are byte-for-byte the
 checkpoint's and 194 are its exact BF16->F32 widening; and llama.cpp at the pin
 loads the file and prints a 768-dimensional embedding for a prompt.
+
+Gate 2: PASSED 2026-10-19. 113 frozen items, one model invocation each, all four
+MRL widths stored, the file bit-reproducible on a from-scratch re-run, and both
+open decisions settled by measurement against their alternatives (EOS, prefix).
+`docs/anchor-gate2.txt` holds the numbers.

@@ -1,2 +1,4 @@
-a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725  out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
+0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201  out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
+a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725  out/baseline-noeos-variant.gguf
 8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+7561254c85591521716ec801336e3cbc2bf47e7f00c945c4f97cb643d0d4961d  tests/expected/anchor-embeddinggemma2.jsonl

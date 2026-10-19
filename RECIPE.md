@@ -164,6 +164,46 @@ the checkpoint's own `model.vocab` as the token list, `-1000.0` scores, and the
 ships the token table in BF16, not `q8_0`, so the baseline is the unquantized
 original and phase 5's delta against it is the whole cost of the recipe.
 
+Three tokenizer keys come from the reference's `SpecialVocab` rather than from the
+converter, and were corrected into the writer in phase 2 after running that
+reference code (`tools/ref_vocab_probe.py`): `mask_token_id` (4), `add_eos_token`
+(true), `add_sep_token` (false). The `add_*` flags are derived from the
+checkpoint's `tokenizer.json` `post_processor` — `TemplateProcessing<single>` is
+`[<bos>, A, <eos>]` here, so the checkpoint's own tokenizer appends `<eos>` to
+every sequence, and without the flag llama.cpp tokenizes without it. That is not
+cosmetic: the same 113 frozen items differ by mean cosine 0.96 with the token
+present or absent (`docs/anchor-gate2.txt` section 4).
+
+### 4c. The frozen anchor (phase 2) — the reference's own vectors over a frozen set
+
+The anchor is llama.cpp at the pin over a frozen input set, with the baseline GGUF.
+It is a second opinion beside this project's own C reference path, never it.
+
+```sh
+# 12. The frozen input set is committed: 113 items, TSV, id/prompt_name/text.
+#     The model input is prompts[prompt_name] + text, where the prefix strings are
+#     the checkpoint's own task prompts (config_sentence_transformers.json).
+#     tests/anchor/anchor-items.tsv is the authored source; # lines are comments.
+
+# 13. Produce the anchor (one item per model invocation, ~116 s for 113 items)
+tools/eg2_anchor.sh
+
+# 14. Check it against another anchor file (per MRL width: cosine and element
+#     deltas, plus the worst items)
+tools/eg2_anchor_cmp.sh tests/expected/anchor-embeddinggemma2.jsonl out/legB-noeos.jsonl
+
+# 15. Re-run and confirm the digest is reproducible (it is, bit for bit)
+tools/eg2_anchor.sh --out /tmp/rerun.jsonl --tag rerun && \
+    sha256sum tests/expected/anchor-embeddinggemma2.jsonl /tmp/rerun.jsonl
+```
+
+The file carries its own provenance as its first line (reference revision, the
+model's sha256, the items' sha256, the exact command) and then one line per item:
+the input string, the reference's token count for it, its sha256, and four vectors
+(768 and the three Matryoshka widths, each L2-renormalized after truncation). The
+three long items (1,175 / 1,221 / 1,398 tokens) exist to exceed the file's
+512-token mask half-window, so phase 4's symmetric mask is actually exercised.
+
 ## 5. Quality, measured
 
 The bar is the DeepSeek V4.1 recipe's own reported number, produced the same way (the

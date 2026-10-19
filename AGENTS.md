@@ -65,11 +65,14 @@ must come back with zero hits:
     find ds4-rs/crates/*/src ds4-rs/native -name '*.py'
     grep -rin 'onnx\|ort-sys' ds4-rs/crates/*/src ds4-rs/native ds4-rs/Cargo.toml ds4-rs/Cargo.lock
 
-This project's own tooling needs no Python and carries none: the writer, the
-encoder and the checkers are C and shell (`tools/*.c`, `tools/eg2_gguf_check.sh`),
-which is the faster and more durable choice when awk, sed, jq, od and dd already
-do the job. Python would be allowed here as a test or one-off measurement script
-under `tools/`, per the list above — it is simply not needed.
+This project's own tooling is C and shell — the writer, the encoder, the checkers
+and the anchor generator (`tools/*.c`, `tools/eg2_*.sh`), which is the faster and
+more durable choice when awk, sed, jq, od and dd already do the job. There is
+exactly one Python file in the tree, `tools/ref_vocab_probe.py`, and it is the
+kind the allowed list names: a one-off evidence producer that runs the pinned
+reference's own `SpecialVocab` over the checkpoint to print the GGUF keys it would
+write, whose output is frozen into `docs/anchor-gate2.txt`. Nothing in the runtime
+reads, imports or invokes it, and nothing else here needs Python.
 
 All five returned zero on 2026-10-19, measured in this workspace. The ldd check is
 not vacuous: `ds4-rs/ds4-server` is a built 76 MB ELF linked against
@@ -134,10 +137,15 @@ Read these before doing port work in this workspace:
    identity, the two-sided check (writer's manifest vs the port's own reader, then
    every tensor's bytes against the checkpoint) and the reference's own acceptance
    of the file, with the four measured corrections to the contract.
-5. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+5. `docs/anchor-gate2.txt` — the phase-2 evidence: the fifth correction (the three
+   tokenizer keys the reference's own `SpecialVocab` writes and our writer was
+   missing, found by running that reference code), the frozen 113-item input set,
+   the anchor's provenance and digests, and the measurements that settle the eos
+   and prompt-prefix decisions against their alternatives.
+6. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-6. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
+7. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-7. Cross-session memory for this workspace lives under
+8. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.

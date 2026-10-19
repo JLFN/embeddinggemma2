@@ -41,6 +41,11 @@
  *     conversion/gemma.py:641-676             Gemma4Model.set_vocab: model "gemma4",
  *                                             token list + scores + types, merges,
  *                                             add_space_prefix(false), add_bos(true)
+ *     gguf-py/gguf/vocab.py:191-330           SpecialVocab: the special ids by
+ *                                             content, the chat template, and the
+ *                                             add_bos/eos/sep flags derived from
+ *                                             tokenizer.json's post_processor
+ *                                             (TemplateProcessing<single> here)
  *     gguf-py/gguf/vocab.py:563-684           LlamaHfVocab: tokens are the model.vocab
  *                                             keys by id, score -1000.0, type BYTE for
  *                                             <0xNN>, CONTROL for a special id, else
@@ -465,7 +470,7 @@ typedef struct {
     char  **tok; size_t *toklen;
     float *score; int32_t *type;
     char **merge; uint32_t n_merge;
-    uint32_t bos, eos, unk, pad; int have_bos, have_eos, have_unk, have_pad;
+    uint32_t bos, eos, unk, pad, mask; int have_bos, have_eos, have_unk, have_pad, have_mask;
     char *chat_template;
 } tok_t;
 
@@ -607,16 +612,16 @@ static void tok_load(const char *hfdir, tok_t *T) {
     }
 
     /* the specials the loader needs by id, from tokenizer_config.json */
-    T->have_bos = T->have_eos = T->have_unk = T->have_pad = 0;
+    T->have_bos = T->have_eos = T->have_unk = T->have_pad = T->have_mask = 0;
     {
         char tp[4300];
         snprintf(tp, sizeof tp, "%s/tokenizer_config.json", hfdir);
         size_t tl; char *t2 = read_file(tp, &tl);
         const char *tend = t2 + tl;
-        static const char *names[4] = { "bos_token", "eos_token", "unk_token", "pad_token" };
-        uint32_t *slot[4] = { &T->bos, &T->eos, &T->unk, &T->pad };
-        int *have[4] = { &T->have_bos, &T->have_eos, &T->have_unk, &T->have_pad };
-        for (int i = 0; i < 4; i++) {
+        static const char *names[5] = { "bos_token", "eos_token", "unk_token", "pad_token", "mask_token" };
+        uint32_t *slot[5] = { &T->bos, &T->eos, &T->unk, &T->pad, &T->mask };
+        int *have[5] = { &T->have_bos, &T->have_eos, &T->have_unk, &T->have_pad, &T->have_mask };
+        for (int i = 0; i < 5; i++) {
             const char *ss, *se;
             if (!jget(t2, tend, names[i], &ss, &se) || *ss != '"') continue;
             size_t sl; char *s = jstr_dec(ss, se, &sl);
@@ -638,9 +643,10 @@ static void tok_load(const char *hfdir, tok_t *T) {
         free(t2);
     }
     free(txt);
-    fprintf(stderr, "[tokenizer] %u tokens (%u merges), bos %d eos %d unk %d pad %d%s\n",
+    fprintf(stderr, "[tokenizer] %u tokens (%u merges), bos %d eos %d unk %d pad %d mask %d%s\n",
             T->n, T->n_merge, T->have_bos ? (int)T->bos : -1, T->have_eos ? (int)T->eos : -1,
             T->have_unk ? (int)T->unk : -1, T->have_pad ? (int)T->pad : -1,
+            T->have_mask ? (int)T->mask : -1,
             T->chat_template ? ", chat template" : "");
 }
 
@@ -768,7 +774,19 @@ int main(int argc, char **argv) {
         if (T.have_eos) ds4gw_kv_u32(&W, "tokenizer.ggml.eos_token_id", T.eos);
         if (T.have_unk) ds4gw_kv_u32(&W, "tokenizer.ggml.unknown_token_id", T.unk);
         if (T.have_pad) ds4gw_kv_u32(&W, "tokenizer.ggml.padding_token_id", T.pad);
+        if (T.have_mask) ds4gw_kv_u32(&W, "tokenizer.ggml.mask_token_id", T.mask);
+        /* The add_* flags are SpecialVocab's, not the converter's: it derives them
+         * from tokenizer.json's post_processor (vocab.py:191-330). This
+         * checkpoint's post_processor is TemplateProcessing<single> =
+         * [<bos>, A, <eos>], so add_special_token = {bos: true, eos: true,
+         * sep: false} — measured, not assumed: tools/ref_vocab_probe.py runs the
+         * reference's own SpecialVocab over this checkpoint and prints exactly
+         * that (out/ref-specialvocab.gguf carries the keys it writes). Without
+         * add_eos the reference tokenizer drops the trailing <eos> the
+         * checkpoint's own tokenizer appends (src/llama-vocab.cpp:3625). */
         ds4gw_kv_bool(&W, "tokenizer.ggml.add_bos_token", 1);
+        ds4gw_kv_bool(&W, "tokenizer.ggml.add_eos_token", 1);
+        ds4gw_kv_bool(&W, "tokenizer.ggml.add_sep_token", 0);
         ds4gw_kv_bool(&W, "tokenizer.ggml.add_space_prefix", 0);
         if (T.chat_template) ds4gw_kv_str(&W, "tokenizer.chat_template", T.chat_template);
     }

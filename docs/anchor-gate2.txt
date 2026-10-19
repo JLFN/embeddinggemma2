@@ -1,0 +1,248 @@
+Phase 2 — the frozen anchor, and the tokenizer correction that had to come first
+(2026-10-19)
+
+What this records: (1) a measured correction to the baseline GGUF's tokenizer
+metadata, (2) the frozen sentence set, (3) the anchor vectors the reference
+produces from it, (4) the measurements that justify both open decisions phase 1a
+left to phase 2 — the eos flag and the prompt prefix — and (5) what this anchor
+can and cannot prove. Every number below was printed by the command shown beside
+it, in this session.
+
+1. The correction: three tokenizer keys were missing (contract correction 5)
+
+  Phase 1a left one open question: the converter writes no
+  tokenizer.ggml.add_eos_token, llama.cpp warns that it should be true, and the
+  choice changes the numbers. Settled by running the reference's own code rather
+  than reasoning about it.
+
+  $ python3 tools/ref_vocab_probe.py .models/EmbeddingGemma-2-914f7f8 out/ref-specialvocab.gguf
+  repr             : <SpecialVocab with 514906 merges, special tokens
+                     {'bos': 2, 'eos': 1, 'unk': 3, 'pad': 0, 'mask': 4},
+                     add special tokens {'bos': True, 'eos': True, 'sep': False}>
+  n_merges         : 514906
+  chat_template    : 1016 chars
+  normalizer       : nfc None, lowercase None, strip_accents None
+
+  That probe is gguf-py's SpecialVocab from the pinned tree, run over this
+  checkpoint by tools/ref_vocab_probe.py (a one-off evidence producer under
+  tools/, never a runtime dependency; the file it writes, out/ref-specialvocab.gguf,
+  contains only what SpecialVocab.add_to_gguf emits). Dumped with our own reader,
+  the key set it writes is exactly:
+
+    general.architecture, tokenizer.ggml.merges,
+    tokenizer.ggml.bos_token_id / eos_token_id / unknown_token_id /
+        padding_token_id / mask_token_id,
+    tokenizer.ggml.add_bos_token / add_eos_token / add_sep_token,
+    tokenizer.chat_template
+
+  Where the flags come from: SpecialVocab reads the post_processor out of
+  tokenizer.json (gguf-py/gguf/vocab.py:191-330). This checkpoint's post_processor
+  is TemplateProcessing<single> = [<bos>, A, <eos>], so the reference sets
+  add_special_token = {bos: true, eos: true, sep: false} — three booleans that the
+  checkpoint's own tokenizer needs to reproduce itself, since transformers appends
+  <eos> to every single sequence here.
+
+  Our writer emitted add_bos_token (from conversion/gemma.py:669) and
+  add_space_prefix, but none of the three SpecialVocab flags, and no mask id. The
+  measured gap against out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf was:
+
+    missing  tokenizer.ggml.mask_token_id   (reference value 4)
+    missing  tokenizer.ggml.add_eos_token   (reference value true)
+    missing  tokenizer.ggml.add_sep_token   (reference value false)
+
+  Fixed in tools/eg2_gguf.c at the source citations (vocab.py:191-330,
+  src/llama-vocab.cpp:3625 for what add_eos does); the writer's report line now
+  reads "bos 2 eos 1 unk 3 pad 0 mask 4" where it read "bos 2 eos 1 unk 3 pad 0".
+
+  The file was re-emitted, and gate 1a re-run on it, unchanged in every other
+  respect:
+    $ ./bin/eg2_gguf baseline .models/EmbeddingGemma-2-914f7f8 \
+          out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf --manifest out/baseline-manifest.tsv
+      [tokenizer] 262144 tokens (514906 merges), bos 2 eos 1 unk 3 pad 0 mask 4, chat template
+      [done] 413 tensors, 0.542 GB                            (2.6 s wall)
+    $ tools/eg2_gguf_check.sh out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+          out/baseline-manifest.tsv .models/EmbeddingGemma-2-914f7f8 out/baseline-inventory.txt
+      checked 413 tensors: writer and ds4-rs reader agree on
+      name/type/rank/dims/bytes/offset; 219 copied byte-for-byte, 194 widened
+      BF16->F32 with every element's high half equal to the source     (0.67 s)
+
+  Identity of the two baselines:
+    corrected (committed as the baseline)
+      out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf  557,949,600 B, n_kv 41
+      sha256 0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201
+    pre-correction (kept, it is the no-eos leg of section 4)
+      out/baseline-noeos-variant.gguf                  557,949,472 B, n_kv 38
+      sha256 a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725
+
+  The reference's own load, before and after (llama-embedding from
+  /data/llama-anchor-build, -p "hello world"):
+    before  W main: last token in the prompt is not SEP or EOS
+            W main: 'tokenizer.ggml.add_eos_token' should be set to 'true'
+            batch_decode: n_tokens = 3
+    after   (no eos warning, one more token)
+            batch_decode: n_tokens = 4
+  Both files print, on load, the same two Gemma-vocabulary lines — "control-looking
+  token: 212 '</s>' was not control-type ... its type will be overridden" and
+  "'</s>' is a normal token here, removing it from EOG list". These are expected:
+  212 '</s>' is in the checkpoint's model.vocab as a regular entry and is not in
+  added_tokens with special=true, and the converter's rule marks CONTROL only for
+  an id in all_special_ids (gguf-py/gguf/vocab.py:651-657), so the real conversion
+  prints the same two lines. Phase 1a's evidence listed the first one and missed
+  the second; both are recorded here.
+
+2. The frozen input set: tests/anchor/anchor-items.tsv
+
+  113 items, TSV, id / prompt_name / text, with '#' lines as comments. The string
+  the model is given is prompts[prompt_name] + text, where prompts is the
+  checkpoint's config_sentence_transformers.json map, written out verbatim in the
+  generator and used as a hard error for any unknown name. 91 items carry a task
+  prefix, 22 are "Raw" (no prefix — the unprefixed code path, and the control group
+  for section 4's prompt measurement). sha256 0e746c6c424e3cc6f5b5842a5d5db5a3df780bfb429990e461b8aa3cb4396763.
+
+  Composition: 12 retrieval query/document pairs, 5 question-answering pairs, 4
+  fact-checking pairs, 4 code-retrieval pairs, 13 classification, 11 clustering,
+  13 sentence-similarity, 10 raw technical statements, and 14 edge cases (empty
+  input, a single space, one character, a full stop, digits only, Swedish, Chinese,
+  Arabic, Vietnamese, a URL, doubled spaces, a 34-character single word, a one-word
+  fragment, a pangram).
+
+  Three items are deliberately long, sourced from the checkpoint's own README
+  (Apache-2.0, pinned revision) with paragraph breaks collapsed to single spaces:
+    lg01  README:48-100    1,175 tokens
+    lg02  README:124-202   1,221 tokens
+    lg03  README:255-335   1,398 tokens
+  plus lq01, a query aimed at them. Their token counts are the reference's own
+  (from --verbose-prompt, section 3). They exist because every other item is far
+  under the sliding window: with the file's n_swa of 1024 and the symmetric mask
+  |p1 - p0| > 512 (src/llama-hparams.h:524-533), an input shorter than 513 tokens
+  cannot show whether a mask is right — a port that ignored the window entirely
+  would agree on every short item and diverge only past 512. These three are the
+  items with teeth for phase 4's mask.
+
+3. The anchor: tests/expected/anchor-embeddinggemma2.jsonl
+
+  Produced by tools/eg2_anchor.sh, one item per model invocation around a fixed
+  item file, then the same run batched for the token counts. Provenance is the
+  first line of the file; the 113 items follow.
+
+    model      out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
+               sha256 0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201
+    reference  llama.cpp 31288c9c6, "version: 0.7.0-dev (build 11723, commit 31288c9c6)",
+               built with GNU 14.2.0, CPU backend, /data/llama-anchor-build
+    command    llama-embedding -m <model> -f <one input per invocation>
+                 --pooling mean --embd-normalize 2 --embd-output-format raw --no-warmup
+    file       114 lines, 2,029,551 B
+               sha256 7561254c85591521716ec801336e3cbc2bf47e7f00c945c4f97cb643d0d4961d
+
+  Each item line carries: id, prompt_name, the prefix string used, the exact input
+  string, the reference's own token count for it, the input's sha256, and four
+  vectors — 768 (the reference's normalized output) and 512/256/128, which are
+  that vector truncated to its leading dimensions and L2-renormalized, i.e.
+  Matryoshka truncation as the model card requires (README:166-185; skipping the
+  renormalization produces plausible-looking wrong cosines).
+
+  Invariants checked on the committed file (jq over the file itself):
+    - every line parses; 113 items;
+    - all four widths are unit vectors: norms within 1.0 +/- 1.1e-7, the accuracy
+      of the reference's own %1.7f print;
+    - the two items with byte-identical inputs (rw01, rw02) are bit-identical:
+      maximum element difference 0, cosine 1.000000000;
+    - every stored shorter vector equals the renormalized leading part of the
+      stored 768 vector to within 2e-7 (the print precision), for all 113 items at
+      all three widths;
+    - the pairwise structure is sane: paraphrase 0.9375, unrelated 0.7680,
+      query against its own document 0.8598, against a wrong document 0.6333.
+
+  Why one item per invocation. Measured, not assumed: the reference's output for a
+  given input depends on the batch it sits in. The same input encoded alone and
+  inside the 113-item batch differs by up to 3.374e-04 per element (cosine
+  0.999996181), because a different ubatch shape changes the reduction order of
+  every multiply. With one item per run each vector is a function of its own input
+  only: identical inputs become bit-identical (above, versus 0.999997 for the same
+  pair inside the big batch), and a later edit to the item file cannot move the
+  other vectors. --batched gives the whole file in one 13.0 s invocation and is
+  itself bit-reproducible, but every vector then depends on the set. Per-item costs
+  116 s for 113 items; peak RSS 1.1 GB; the longest item takes 1.7-1.9 s.
+
+4. The two open decisions, measured both ways
+
+  The anchor carries: the task prefix in the text (91 of 113 items), and the eos
+  token appended by the file's tokenizer flag. Both were checked against the
+  alternative, over the same items, at all four widths, with
+  tools/eg2_anchor_cmp.sh.
+
+  leg C — the cross-check that the flag is what appends eos. Same items and same
+  files, but with the pre-correction file (no add_eos_token) and the string
+  "<eos>" typed into each text, where the reference tokenizer parses it as the
+  special token (src/llama-vocab.cpp:3625, common_tokenize with parse_special):
+    width   items       mincos      meancos      maxdelt
+    768       113  1.000000000  1.000000000    0.000e+00
+    512       113  1.000000000  1.000000000    0.000e+00
+    256       113  1.000000000  1.000000000    0.000e+00
+    128       113  1.000000000  1.000000000    0.000e+00
+  Bit-identical to the anchor, so the flag provably does exactly what the literal
+  special token does, and the anchor is a pure function of the token sequence.
+
+  leg B — eos dropped (the pre-correction file, plain text), all 113 items:
+    width   items       mincos      meancos      maxdelt   worst item
+    768       113  0.837710407  0.959861553    1.796e-01   e05
+    512       113  0.838421680  0.960277022    2.018e-01   e05
+    256       113  0.853502826  0.962049279    2.478e-01   e05
+    128       113  0.872665566  0.967583908    2.511e-01   e08
+  and over the 91 prefixed items only (the 22 raw items dilute the mean):
+    768        91  0.916926588  0.973499592    1.043e-01   e13
+    128        91  0.943855868  0.976879545    1.645e-01   e13
+  One token, up to 0.18 of a unit vector, mean cosine 0.96. The short inputs are
+  the most affected (e05 is "1234567890", where eos is a large share of the pooled
+  mean) — exactly the regime where a tokenizer mismatch would silently cost
+  quality. This is why the correction was not cosmetic.
+
+  leg D — the task prefix dropped (the corrected file, no prefix at all):
+    width   items       mincos      meancos      maxdelt   worst item
+    768       113  0.742308094  0.899134854    2.982e-01   e13
+    512       113  0.745487033  0.899857173    3.479e-01   e13
+    256       113  0.757985716  0.906854064    4.402e-01   e13
+    128       113  0.786751304  0.901182903    4.949e-01   e13
+  and over the 91 prefixed items only:
+    768        91  0.742308094  0.874749874    2.982e-01   e13
+    128        91  0.786751304  0.877293056    4.949e-01   e13
+  The prefix is the larger effect of the two (mean 0.87 over the items that have
+  one), which matches the model card: the prefixes are trained in, and omitting one
+  costs precision rather than breaking the model.
+
+  Task level, so the numbers have a meaning beyond themselves. Over the 12
+  retrieval query/document pairs in the set, ranking the 12 documents by cosine and
+  reading off the position of each query's own document:
+    anchor, leg B (no eos), leg D (no prefix) — all three, at 768 and at 128:
+      MRR 1.0000, the paired document ranked first for 12 of 12 queries.
+  So on this set the cosine differences are real but do not change the outcome: 12
+  easy pairs are not a hard enough test to separate them. A labelled, adversarial
+  retrieval set belongs to phase 5, where recall@k and MRR are the deliverable; this
+  line is the sanity check that the anchor's own pairs behave.
+
+5. What the anchor is, and what it is not
+
+  - The committed file is bit-reproducible: a from-scratch re-run of
+    tools/eg2_anchor.sh reproduces sha256 7561254c... exactly.
+  - The reference's single-item output is independent of the thread count here:
+    -t 1, 4, 8 and 28 give the same digest for a short item, and -t 1, 8, 28 the
+    same digest for the 1,398-token item (llama.cpp's CPU path partitions these
+    kernels deterministically).
+  - It is NOT a bit-exact oracle for another implementation. The reference's own
+    output moves by up to 3.4e-4 per element with batch shape (section 3). The
+    phase-4 gate as declared — C-versus-anchor mean cosine >= 0.9999 — has about
+    three orders of margin over the largest deviation this anchor itself exhibits
+    (1 - cos = 3.8e-6 versus the gate's 1e-4), so the gate stands; but a claim
+    tighter than "1e-3 per element" is a claim about the reference's batching, not
+    about the port.
+  - It is a second opinion beside this project's own chain, never it: the port's C
+    reference path stays the oracle for the Rust host and the CUDA kernels, exactly
+    as /data/ds4-dfm-rs/AGENTS.md states for its retained -c oracles.
+
+Open, carried forward
+  - Phase 1b must carry the same three tokenizer keys in the artifact GGUF (the
+    writer path is shared, so it does now); the artifact's token table is q8_0
+    where the baseline's is bf16.
+  - Phase 4 must reproduce both the token counts (per item, in the anchor's "ntok")
+    and the vectors, and use the three long items to exercise the symmetric mask.
+  - Phase 5 owns the labelled retrieval set and the recall@k / MRR numbers.
