@@ -90,6 +90,16 @@ the same convention the file uses for attention.key_length (512) and
 key_length_swa (256).  The shape's own n_rot is 256, the sliding value, exactly
 as its n_head_dim is.  The expectation was corrected to the file.
 
+With the arm in place the C binary gets past open and stops one step later, at
+the legacy vocab loader, which is the separate gap section 1d closes on:
+./ds4-c -m ART -p hello -n 1 prints only "ds4: required tokenizer token is
+missing: <｜begin▁of▁sentence｜>" (the literal the loader asks for,
+ds4.c:39561) and exits 1, on both backends, with no core dump
+(out/phase6-guard-c.log, out/phase6-guard-c-cpu.log).  ds4-c therefore never
+reaches the family refusal -- that message is what the shipped Rust binaries
+print -- and it does not crash in either state: an unknown arch is refused at
+open, and a validated one is refused at the loader.
+
 ds4-c still cannot embed TEXT, and the reason is a separate gap, not a guard: its
 legacy vocab loader requires DeepSeek's <|begin of sentence|> token
 (ds4.c:39561) and the family's gemma4 BPE encoder is Rust-side

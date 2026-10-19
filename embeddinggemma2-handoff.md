@@ -1,13 +1,13 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: 8ddd0575f9c88b0ce921ad0b7c8a6c5b405d6888
+last_updated_commit: b58503a242a5aee8770e778087a9a33f3be41689
 branch: dev
 remote: https://github.com/JLFN/embeddinggemma2
-handoff_written_at_context_usage: 35%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T19:43:15+02:00
+handoff_written_at_context_usage: 31%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T20:37:33+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
-boundary_state: dirty
+boundary_state: clean
 ---
 
 Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rewritten 2026-10-19: the plan exact, the dropped routes named)
