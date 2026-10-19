@@ -67,7 +67,7 @@ configured on the outer repo).
 
 3. Next unit plan — run EmbeddingGemma-2 in ds4-rs, phase by phase (2026-10-19)
 
-Status: 1a done and 2 done (both 2026-10-19), 1b/3..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
+Status: 1a, 2 and 1b done (all 2026-10-19); 3..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
 `gemma_vq` payload, per the owner's container decision) and emits the 768-dim
 embeddings this model exists for, on the GPU, with the measurements that show the
 port matches the pinned original. Runtime is Rust + C + CUDA; no Python anywhere,
