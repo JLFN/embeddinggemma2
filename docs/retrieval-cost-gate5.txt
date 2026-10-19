@@ -28,6 +28,12 @@ Created by this unit:
   tests/retrieval/scifact-test-qrels.tsv     339 labelled pairs, frozen
   docs/retrieval-cost-gate5.txt               this document
 
+Extended when this unit restarted the gate: `tools/eg2_phase5_gate.sh` gained the
+`EG2_PHASE5_ORACLE` selector (section 7a) and its header's thread claim was
+corrected, and `out/phase5-oracle-o0-vs-o3.log` records the equivalence measurement
+that justifies the build the tables were measured with (gitignored, like every other
+`out/` file, and identified by its content in section 7a).
+
 Nothing in the port changed: phase 5 is a measurement over the code phase 4
 landed (ds4-rs/ds4_eg2vq_graph.inc, ds4_eg2vq_bind.inc, the oracle, and the Rust
 host's tokenizer). The gate uses the same oracle binary gate 4 used, at the same
@@ -142,21 +148,30 @@ because the README's titled-document rule puts the whole instruction in the text
 One ids file drives both legs, so the tokenization cannot be a difference between
 them, and the ids come from the artifact's own vocabulary through the Rust host
 (the phase-4 driver, `crates/ds4-core/examples/gemma_vq_tok.rs`, whose ids are the
-reference's own id for id — gate 4). Each leg runs the tree's oracle over the same
-ids:
+reference's own id for id — gate 4). Each leg runs the SAME oracle binary over the
+same ids:
 
-    ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> out/phase5-ids.tsv
+    EG2_PHASE5_ORACLE=$PWD/out/eg2vq_embd_c_oracle_o3 tools/eg2_phase5_gate.sh \
+        out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
 
+    set:    the builder reproduced all three frozen files byte for byte from out/beir/scifact
     ids:    out/phase5-ids.tsv sha256 9464c27272399e21895b49b6e031f7a2c1e626ba0d842d5bb4e1f49fb67d5b4c (583 items, 107029 tokens)
     items:  out/phase5-items.tsv sha256 66b956ad1fab62b2996343ae9578b9e66d3dddfba9735f11a936cb47c8bfca03
-    oracle: ds4-rs/tests/parity/eg2vq_embd_c_oracle sha256 d214f2172351ad9ba2c8b84e8cc1f820fd99070345e9386fc1df3e1a48762ce4
+    oracle: out/eg2vq_embd_c_oracle_o3 sha256 a9f74d0b7a66920abba7a82de7eee022ede301b61e78bb9692f952db8fbe7940
 
-Flags, declared rather than implied: the oracle is the tree's own -O0 entry — the
-same binary gate 4 used — with the tree's default thread count (min(12, online
-cpus) = 12 here, ds4.c:2238-2249), and the two legs ran concurrently (two
-processes, ~8 cores each on this 28-core host). The per-leg `secs=` in their logs
-are therefore contended wall time, not a latency claim; section 7 records what the
-same entry costs at -O2 and how far its arithmetic moves.
+Flags, declared rather than implied. The oracle is the tower's own source compiled
+at the tree's CFLAGS (-O3 -ffast-math -march=native) rather than through the
+Makefile's -O0 entry; section 7 measures what that choice costs (nothing at the
+print precision: min cos 1.000000000, max rel_rms 9.0e-07 over 24 items) and what
+it saves (~16 minutes per leg instead of ~80). Both legs use the SAME binary, so
+the build cannot bias the artifact-versus-baseline delta in either direction, and
+each leg's .meta records the binary's sha256, so a reused leg is bound to it. The
+oracle is multi-threaded through the tree's persistent pool (n_threads = min(12,
+online cpus), ds4.c:2238-2241; measured 716% CPU on a four-item run), and the two
+legs ran concurrently, about 15 cores of the 28-core host: the per-leg `secs=` in
+their logs (977.48 s baseline, 967.81 s artifact, 109.5 and 110.6 tokens/s) are
+contended wall time, not a latency claim.
 
 5. The numbers
 --------------
@@ -201,9 +216,88 @@ about queries versus documents; that is what 5b and 5c are for. Values in the js
 pair are the port's -O0 output, and the -O2 build differs only at the print
 precision (section 7), so width is the only variable in these rows.
 
-5b. The codec's cost on the frozen retrieval set, and 5c the retrieval tables
+5b. The codec's cost on the frozen retrieval set
 
-PENDING-RUNS
+    log:     out/phase5-gate.log            (16.7 minutes wall: both legs concurrent, then the score)
+    baseline out/phase5-baseline-raw.txt sha256 acbc0f692f083b6339ecf7c83d806e9d0c8d0cc83e0c3f90817d2fcaeac4ff01 (583 items, 977.48 s, 109.5 tokens/s)
+    artifact out/phase5-artifact-raw.txt sha256 3e9ace37211450750911ff9df808c27fa1371e49588b57067ac649434856bb06 (583 items, 967.81 s, 110.6 tokens/s)
+
+The agreement distribution over all 583 items (300 queries plus 283 documents),
+baseline against artifact, one row per MRL width:
+
+    width   items      meancos       mincos           p1           p5          p25          p50          p75   worst_item
+    768       583  0.956039571  0.898186175  0.922665454  0.937516751  0.951416471  0.957530714  0.962775245      6421792
+    512       583  0.957415231  0.894496569  0.923061948  0.937843771  0.952724217  0.958691147  0.963859384      6421792
+    256       583  0.961213625  0.895425143  0.928893863  0.942355672  0.956671936  0.962601925  0.968004414      6421792
+    128       583  0.972493258  0.931666167  0.949227508  0.958647926  0.968759788  0.973662159  0.977207436      1215116
+
+The same agreement split by side, and how deep the tail runs:
+
+    width      query side  document side     n<0.99     n<0.95     n<0.90
+    768       0.958537658    0.953391422        583        124          1
+    512       0.959989560    0.954686261        583        104          1
+    256       0.963793855    0.958478400        583         72          1
+    128       0.973980059    0.970917143        583          7          0
+
+Cross-checked by the project's second instrument, which recomputes from the two
+raw dumps instead of reading the scorer's output (out/phase5-parity-check.txt):
+
+    items cpu=583 device=583  min cos 0.898186179 (item 6421792)  max rel_rms 4.513e-01 (item 6421792)  malformed 0
+
+That instrument's two numbers are one measurement rather than two: both vectors are
+unit-length, so rel_rms = sqrt(2(1 - cos)) exactly, and 0.898186179 gives 0.45125.
+It agrees with the scorer's min to the eighth decimal (0.898186175), the difference
+being the scorer's input of the printed %.7f values.
+
+Read against the two earlier tables: the agreement is 0.9560 here, 0.9601 on the
+sentence set (5a) and 0.9859 on the weights themselves (RECIPE.md section 5), and it
+falls as the measurement moves from the weights to a task. Within this set the two
+sides agree almost equally (query 0.9585, document 0.9534 at 768), so nothing here
+attributes the drop to document length; separating length from domain would need a
+third set and no such run exists.
+
+The worst item is a document (6421792) at 0.8982 (768) and the best tail is at 128,
+where the mean rises to 0.9725 because truncation to 128 dims had already thrown
+away much of what the codec perturbed. The tail is thin in one direction and total
+in another: at 768 all 583 items sit below 0.99 (the codec moves every vector), 124
+sit below 0.95, and exactly one sits below 0.90; at 128, seven are below 0.95 and
+none is below 0.90.
+
+5c. The retrieval tables
+
+Ranking by cosine over the 283-document pool, ties broken by document id ascending,
+on the 339 labelled pairs (recall counts the relevant documents retrieved in the top
+k over the query's own number of relevant documents; MRR@10 is the rank of the first
+relevant document):
+
+    width  leg         recall@1   recall@5  recall@10     MRR@10   delta MRR
+    768    baseline    0.888278   0.979333   0.983333   0.951778           -
+    768    vq          0.861611   0.975333   0.990000   0.935819   -0.015959
+    512    baseline    0.886611   0.979333   0.986667   0.949861           -
+    512    vq          0.864944   0.975333   0.986667   0.936944   -0.012917
+    256    baseline    0.872611   0.968667   0.980000   0.935167           -
+    256    vq          0.833278   0.965333   0.980000   0.914671   -0.020496
+    128    baseline    0.829278   0.954667   0.976667   0.908902           -
+    128    vq          0.805944   0.915889   0.951000   0.879488   -0.029414
+
+How close the calls the codec could have changed were, so a delta can be read against
+the margin it had to overcome:
+
+    width   top-1 changed   mean top1-top2
+    768                23         0.085722
+    512                22         0.085825
+    256                29         0.081908
+    128                37         0.050978
+
+The invariants the scorer asserts, all satisfied (each would have made the numbers
+wrong rather than bad): items 583, item_width_rows 2332 (583 x 4), query_items 300,
+document_items 283, queries_in_labels 300, documents_in_labels 283,
+documents_ranked 283, labelled_pairs 339, unit_norm_max_dev_baseline 1.144e-07,
+unit_norm_max_dev_artifact 1.430e-07, trunc_consistency_max_dev 5.000e-08.
+
+The same scorer, re-run over gate 4's sentence pair in this unit (the gate does it
+on every run and it is section 5a above), reproduces phase 4's table to the printed
+digit, which is what says the scorer is being fed the pair phase 4 gated.
 
 6. Corrections this unit made
 -----------------------------
@@ -270,28 +364,79 @@ printed at %.7f, and the largest single-element difference anywhere is 3e-07, th
 rounding of that print), with wall times of 310.29 s and 88.64 s on the baseline
 leg — 3.5x. `diff` on the two raw dumps does report them as different files, which
 is why the numbers above exist instead of a one-word "identical": the difference is
-real but sits at the print precision. The phase-5 tables below are therefore
-computed at -O0, the tree's own entry, and the same flags gate 4 used; a later unit
-may take -O2 knowing exactly what it costs, and should re-check rather than trust
-this file, since a compiler change could move it.
+real but sits at the print precision.
 
-7b. Environment unchanged
--------------------------
+7a. The build the tables in this document were actually measured with
 
-The legs ran on the same host and the same build as phase 4: 28 cores, 31 GiB of
-RAM, the tree's own oracle binary (sha256 d214f217…), -O0, the default thread count
-(min(12, online cpus) = 12), and the CUDA object still does not build in this
-working copy (a pre-existing condition, docs/loader-gate3.txt), so nothing here is a
-device-path result. The two legs' peak memory is the 520.0 MiB dense decode plus the
-GGUF's own 437 MiB (artifact) or 558 MiB (baseline) in page cache; the host reported
-no pressure.
+The -O2 aside above is what a later unit was told to take if it needed the wall time,
+and unit 15 took it one step further when it restarted the gate: at -O0 the frozen
+set costs about 80 minutes per leg, so the two legs ran with the same source at -O3,
+the tree's own CFLAGS. That substitution was measured on this set's own items before
+it was used, with both builds rebuilt from the current tree in this unit:
+
+    cc -O3 -ffast-math -march=native -Wall -Wextra -std=c99 -D_GNU_SOURCE \
+       -fno-finite-math-only -DDS4_NO_GPU -ffunction-sections -fdata-sections \
+       -Wno-unused-function -I ds4-rs -o out/eg2vq_embd_c_oracle_o3 \
+       ds4-rs/tests/parity/eg2vq_embd_c_oracle.c -Wl,--gc-sections -lm -pthread
+
+    subset: the first 22 queries plus the 2 longest documents of out/phase5-ids.tsv
+            (24 items, 3297 tokens), artifact weights, the two builds run one after
+            the other (out/phase5-oracle-o0-vs-o3.log)
+      -O0    149.17 s   22.1 tokens/s   the Makefile's own entry
+      -O3     21.87 s  150.7 tokens/s   6.8x
+      agreement, the independent instrument: min cos 1.000000000, max rel_rms 9.0e-07
+      agreement, the scorer (which reads the printed %.7f values):
+                min cos 0.999999926, mean 1.000000022, 0 of 24 items below 0.99
+
+Both legs of the run in section 5 used that one binary, so the optimisation level
+cannot bias the artifact-versus-baseline delta; what it could move is the absolute
+level of each leg's own vectors, and the subset above bounds that movement at the
+print precision. The two builds are the same source, and the -O0 entry's own
+arithmetic is what gate 4 validated against the anchor (section 8, item 2).
+
+Two corrections to the gate script's header, both measured in this unit and both
+fixed in the same commit: the oracle is NOT single-threaded (716% CPU on a four-item
+run; the tower uses the tree's persistent pool, n_threads = min(12, online cpus),
+ds4.c:2238-2241), and the gate is no longer fixed to the -O0 entry —
+EG2_PHASE5_ORACLE selects the build, with each leg's .meta recording the binary's
+own sha256, so a reused leg is bound to the exact build that produced it.
+
+7b. Environment
+---------------
+
+The legs ran on the same host as phase 4's and phase 7's measurements: 28 cores, 31
+GiB of RAM, this card (RTX 4070 SUPER — not used here, both legs are CPU), the
+tree's default thread count (min(12, online cpus) = 12), and the oracle build named
+in section 7a (sha256 a9f74d0b…), rebuilt from the current tree in this unit. The
+gate's set-build check ran before either leg: the frozen files came back byte for
+byte from out/beir/scifact. The two legs' peak memory is the 520.0 MiB dense f32
+decode per process plus the GGUF's own 437 MiB (artifact) or 558 MiB (baseline) in
+page cache; the host reported no memory pressure. One thing an earlier draft of this
+section named as a live condition is no longer one: the CUDA object does build for
+this card now (row X.9, unit 16) and the device tower is measured (phase 7, units
+17-18). Neither enters these tables.
 
 8. What this proves, and what it does not
 -----------------------------------------
 
-PENDING-RESULT — the one paragraph that states what the codec cost on the task is
-written last, on purpose, so that the prose describes the numbers rather than the
-numbers being read to fit the prose.
+The answer, stated last and from the tables above rather than the other way round.
+On the frozen SciFact test split the codec costs 1.6 MRR points at 768 (baseline
+0.951778, artifact 0.935819) and 2.7 points of recall@1 (0.888278 to 0.861611),
+while recall@10 does not fall (0.983333 to 0.990000: the artifact's ranking finds the
+labelled evidence slightly more often inside ten). 23 of the 300 queries changed
+their top-1 document against a baseline mean top1-top2 margin of 0.085722, so the
+changed calls are not all near-ties. The pattern holds at every width and is deepest
+at 128 (MRR -0.029414, recall@5 0.954667 to 0.915889), where MRL truncation and the
+codec compound.
+
+Read beside the other two tables: 461 VQ payloads reconstructing the text tower at a
+0.9859 mean weight cosine (RECIPE.md section 5), a task-level vector agreement of
+0.9560 (768) on this set, and one item at 0.8982. So "not less smart" has a number in
+both directions — the labelled evidence is still retrieved within the top ten at the
+same rate or better, and the very top of the ranking is a few percent looser. No
+threshold is declared, here or in the plan of record, so what that trade is worth is
+the owner's call; what this document fixes is that the call can be made on labelled
+data rather than on a weight cosine.
 
 What it proves:
 
@@ -326,12 +471,16 @@ What it does not prove:
    SciFact corpus, and no nDCG@10 (the benchmark's own headline) is computed —
    the plan of record declares recall@k and MRR. These numbers answer "did the
    codec change the ranking", not "how good is EmbeddingGemma-2 on BEIR".
-2. No device-path result. The CUDA object does not build in this working copy, a
-   pre-existing condition (docs/loader-gate3.txt), so both legs are CPU. Whether the
-   GPU agrees is a phase-7 question, and the kernels that would answer it do not
-   exist yet.
-3. No serving claim. Phase 6 (the entry point that exposes the tower to a client) is
-   not done, so nothing here says the model can be reached over ds4's own surface.
+2. No device-path result, and none is needed for this answer. Both legs here are CPU.
+   The device path exists as of units 17-18 and agrees with the CPU path at min cos
+   0.999999950 over 300 items (docs/eg2vq-device-gate7.txt), which is a parity
+   result on the same tower and not a retrieval one; the ranking question is settled
+   by the container, not by where the arithmetic runs.
+3. No serving claim. The entry point landed in unit 19 (the `--embed` verb and the
+   POST /v1/embeddings route, docs/eg2vq-embed-entry-gate6.txt), so the vectors in
+   these tables can now also be produced over ds4's own surface; nothing here
+   measures that surface, and one P2.3 item (an embedding-shaped serving cap plus
+   batching several items into one tower call) is still open.
 4. No latency claim. The two legs ran concurrently on a contended host, so their
    secs= are wall time under contention, not throughput, and latency is not part of
    this gate.

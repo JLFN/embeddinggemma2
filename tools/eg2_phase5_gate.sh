@@ -23,17 +23,29 @@
 # split, 300 queries / 283 documents / 339 labelled pairs, taken whole).
 #
 # Flags, declared: the oracle is the tree's own -O0 entry, the same binary gate 4
-# used, with the tree default thread count (min(12, cpus)); a measured aside says
-# the same entry at -O2 runs 3.5x faster and moves the printed vectors by at most
-# 3e-07, so a later unit that needs the wall time may take it. The legs run
-# concurrently by default (two processes, 12 threads each, on a 28-core host; the
-# per-leg secs are therefore contended wall time, not a latency claim): set
-# EG2_PHASE5_SERIAL=1 to force them one after the other.
+# used, with the tree default thread count (min(12, online cpus), ds4.c:2238-2241)
+# — measured in unit 15 at 716% CPU on 4 items, so about seven cores of work in
+# flight per leg. A measured aside says the same entry at -O2 runs 3.5x faster and
+# moves the printed vectors by at most 3e-07.
+#
+# EG2_PHASE5_ORACLE runs the legs with another build of the SAME source instead
+# (both legs use it, so the choice cannot bias the artifact-versus-baseline delta).
+# Unit 15 measured the -O3 build — out/eg2vq_embd_c_oracle_o3, the tree's own
+# CFLAGS -O3 -ffast-math -march=native — against the -O0 entry over 24 items (22
+# queries plus the 2 longest documents) / 3297 tokens: min cos 1.000000000 and max
+# rel_rms 9.0e-07 on the independent instrument, min cos 0.999999926 and no item
+# below 0.99 on the scorer, at 21.87 s against 149.17 s, i.e. ~12 minutes per leg
+# on the frozen set instead of ~80 (out/phase5-oracle-o0-vs-o3.log). Whichever
+# build is used, its sha256 goes into each leg's .meta.
+#
+# The legs run concurrently by default (two processes, up to 12 threads each, on a
+# 28-core host; the per-leg secs are therefore contended wall time, not a latency
+# claim): set EG2_PHASE5_SERIAL=1 to force them one after the other.
 #
 # Leg reuse: a leg is re-run unless its raw file exists AND the ids file and the
 # oracle binary are the same ones recorded in its .meta file AND the raw has the
-# expected number of items. That makes this gate resumable (the legs are ~78
-# minutes each at -O0) without letting a stale raw file stand in for a run.
+# expected number of items. That makes this gate resumable (~80 minutes per leg at
+# -O0, ~12 at -O3) without letting a stale raw file stand in for a run.
 #
 # Usage: tools/eg2_phase5_gate.sh <artifact.gguf> <baseline.gguf> \
 #          [queries.tsv] [pool.tsv] [qrels.tsv] [prompt-map.json]
@@ -47,7 +59,10 @@ POOL=${4:-$ROOT/tests/retrieval/scifact-test-pool.tsv}
 QRELS=${5:-$ROOT/tests/retrieval/scifact-test-qrels.tsv}
 PROMPTS=${6:-$ROOT/.models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json}
 
-ORACLE="$ROOT/ds4-rs/tests/parity/eg2vq_embd_c_oracle"
+# The tree's own -O0 oracle, or the equivalent build named by EG2_PHASE5_ORACLE
+# (see the header: the -O3 build of the same source, measured to agree at
+# float-rounding level and 6.8x faster).
+ORACLE=${EG2_PHASE5_ORACLE:-"$ROOT/ds4-rs/tests/parity/eg2vq_embd_c_oracle"}
 SCORE="$ROOT/tools/eg2_retrieval_score.sh"
 TOJSONL="$ROOT/tools/eg2_oracle_to_jsonl.sh"
 SETBUILD="$ROOT/tools/eg2_retrieval_set.sh"

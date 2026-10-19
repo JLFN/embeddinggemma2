@@ -310,12 +310,21 @@ tools/eg2_retrieval_set.sh $OUT/beir/scifact tests/retrieval
 #     runs the same CPU reference tower — baseline weights, then the artifact's VQ
 #     payloads — and the scorer reports the agreement distribution and recall@k /
 #     MRR@10 at 768 and at each MRL width, with the invariants that would make the
-#     numbers wrong. About 80 minutes at the oracle's -O0 with the two legs running
-#     concurrently (EG2_PHASE5_SERIAL=1 runs them one after the other); a re-run
-#     reuses a leg whose raw file, ids and oracle binary still match. Writes
-#     out/phase5-{ids.tsv,items.tsv,baseline-*,artifact-*}.{txt,log,jsonl,meta}
+#     numbers wrong. The oracle is the tree's own entry, -O0 by default (about 80
+#     minutes per leg on this set); EG2_PHASE5_ORACLE selects another build of the
+#     SAME source instead, which cannot bias the artifact-versus-baseline delta
+#     because both legs use it. The numbers in section 5 came from the -O3 build,
+#     measured equivalent before use (min cos 1.000000000, max rel_rms 9.0e-07 over
+#     24 items, ~12 minutes per leg instead of ~80; docs/retrieval-cost-gate5.txt
+#     section 7a). The legs run concurrently (EG2_PHASE5_SERIAL=1 runs them one after
+#     the other); a re-run reuses a leg whose raw file, ids and oracle binary still
+#     match. Writes out/phase5-{ids.tsv,items.tsv,baseline-*,artifact-*}.{txt,log,jsonl,meta}
 cd ds4-rs && make tests/parity/eg2vq_embd_c_oracle && cd ..
-tools/eg2_phase5_gate.sh \
+cc -O3 -ffast-math -march=native -Wall -Wextra -std=c99 -D_GNU_SOURCE \
+   -fno-finite-math-only -DDS4_NO_GPU -ffunction-sections -fdata-sections \
+   -Wno-unused-function -I ds4-rs -o $OUT/eg2vq_embd_c_oracle_o3 \
+   ds4-rs/tests/parity/eg2vq_embd_c_oracle.c -Wl,--gc-sections -lm -pthread
+EG2_PHASE5_ORACLE=$OUT/eg2vq_embd_c_oracle_o3 tools/eg2_phase5_gate.sh \
    $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
    $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
 
@@ -381,6 +390,38 @@ byte equality rather than by cosine: 914 slots are copied from the source unchan
 (the log's aggregate for that class counts only the 656 with a defined positive cosine;
 the rest are single-element scalars, where cosine is meaningless).
 
+### 5b. Quality on a retrieval task (gate 5)
+
+The rows above are weight-level: they say the codec reconstructs the weights closely.
+The owner's requirement was stated at the model level — "we should not make it less
+smart, just use the VQ to make it compact" — so gate 5 measures the same CPU
+reference tower over two weight sources — the baseline GGUF and the VQ artifact —
+over one shared ids file, on labels this project did not write: BEIR SciFact's test
+split, taken whole (300 labelled queries, 283 pooled documents, 339 labelled pairs).
+Ranking is by cosine over the pool, ties broken by document id:
+
+| width | leg | recall@1 | recall@5 | recall@10 | MRR@10 |
+|---|---|---|---|---|---|
+| 768 | baseline | 0.888278 | 0.979333 | 0.983333 | 0.951778 |
+| 768 | VQ artifact | 0.861611 | 0.975333 | 0.990000 | 0.935819 |
+| 512 | baseline | 0.886611 | 0.979333 | 0.986667 | 0.949861 |
+| 512 | VQ artifact | 0.864944 | 0.975333 | 0.986667 | 0.936944 |
+| 256 | baseline | 0.872611 | 0.968667 | 0.980000 | 0.935167 |
+| 256 | VQ artifact | 0.833278 | 0.965333 | 0.980000 | 0.914671 |
+| 128 | baseline | 0.829278 | 0.954667 | 0.976667 | 0.908902 |
+| 128 | VQ artifact | 0.805944 | 0.915889 | 0.951000 | 0.879488 |
+
+The vectors behind those rankings agree at mean cosine 0.956039571 over the 583 items
+at 768 (min 0.898186175, one item below 0.90 and 124 below 0.95) and 0.972493258 at
+128. So the task-level cost at 768 is 1.6 MRR points and 2.7 recall@1 points, with
+recall@10 marginally better for the artifact (0.990000 against 0.983333): the
+labelled evidence is still retrieved within the top ten at the same rate or better,
+while the very top of the ranking is a few percent looser. At 128 dims the two costs
+compound (MRR -0.029414, recall@5 0.954667 to 0.915889). No threshold is declared
+here or in the plan of record — the numbers and the hashes they were measured on are
+the deliverable, and the decision they inform is the owner's. Full evidence:
+docs/retrieval-cost-gate5.txt.
+
 ## 6. What the `ds4-dfm-rs` port has to implement
 
 1. A family entry for `embedding_gemma2` in the family list
@@ -408,17 +449,33 @@ the rest are single-element scalars, where cosine is meaningless).
    `ds4_eg2vq_matrix` dense decode of every type-42 payload, and the oracle
    `ds4-rs/tests/parity/eg2vq_embd_c_oracle`). Evidence: `docs/text-tower-gate4.txt`.
    The device path is phase 7.
-3. An embedding API. The repository has no `v1/embeddings` route today; the composition
-   the checkpoint expects is mean pooling over the last hidden state followed by L2
-   normalization (`1_Pooling/config.json`, `2_Normalize`). The C reference path does
-   exactly that composition today (`ds4_eg2vq_ref_embed`); the route itself is phase 6.
+3. An embedding API. The repository had no `v1/embeddings` route when this recipe was
+   written; the composition the checkpoint expects is mean pooling over the last hidden
+   state followed by L2 normalization (`1_Pooling/config.json`, `2_Normalize`). The C
+   reference path does exactly that composition (`ds4_eg2vq_ref_embed`).
+   DONE 2026-10-19 (unit 19, phase 6): the generation path now refuses this family by
+   name instead of segfaulting (one function, three C sites plus the Rust CLI), the C
+   engine entry `ds4_engine_embed_gemma_vq` binds the device plan once per engine and
+   drives the device tower on a graph backend, the Rust CLI grew `--embed TEXT
+   [--task NAME] [--dims N]` with JSON output (`--embed-file`, `--embed-stdin`,
+   `--prompt-map`), and the server serves `GET /health` and `POST /v1/embeddings`
+   (OpenAI shape: input string or array, model, task, dimensions 768/512/256/128,
+   `encoding_format` float). Both gates are committed: the verb against the phase-7
+   device raw (cos 1.000000000 on 12 items, rel_rms <= 5.745e-07) and the route against
+   the verb (cos 1.000000000000; 256 dims with L2 norm 1.000000045). Evidence:
+   `docs/eg2vq-embed-entry-gate6.txt`. What is still not done there: one P2.3 item
+   (an embedding-shaped serving cap, batching several items into one tower call) and
+   the C CLI's tokenizer gap (its legacy vocab loader wants DeepSeek's special tokens
+   while this family's gemma4 BPE is Rust-side, so `ds4-c` refuses the artifact by
+   name rather than decoding it).
 
-As of 2026-10-19 the artifact is loadable, validated and runnable on the CPU
-reference path in `ds4-rs`: `tests/parity/eg2vq_embd_c_oracle` prints a 768-dim
-vector per item for the frozen set, and the same graph reproduced the anchor's
-baseline vectors at 768 mean cosine 0.99999681. What is still missing is the device
-path (phase 7), the serving route (phase 6) and the two tower encoders (phase 8);
-the C bind, not the Rust host, is what refuses those by name.
+As of 2026-10-19 the artifact is loadable, validated and runnable in `ds4-rs` on the
+CPU reference path and on the GPU: `tests/parity/eg2vq_embd_c_oracle` prints a 768-dim
+vector per item for the frozen set, the same graph reproduced the anchor's baseline
+vectors at 768 mean cosine 0.99999681, the device tower matches the CPU tower at min
+cos 0.999999950 over 300 items (`docs/eg2vq-device-gate7.txt`), and the codec's
+task-level cost is measured and committed (section 5b). What is still missing is the
+two tower encoders (phase 8) and the P2.3 remainder above.
 
 ## 7. Identity and verification
 
@@ -449,6 +506,9 @@ means reproducibility and byte accounting:
 | Bind set | `BIND ok slots=1376`: every name the family's bind list declares is present |
 | Tamper refusal | 8 tampered copies refused by name — wrong payload magic, wrong `dim`, wrong `rows`, zero row gain, nonfinite codebook word, nonzero padding byte, truncated file, wrong metadata value — while two loads of the untouched file are identical (`tools/eg2_loader_check.sh`) |
 | C identity | `DS4_MODEL_FAMILY_GEMMA_VQ` 16 / `DS4_VARIANT_GEMMA_VQ` 19 / `DS4_SHAPE_GEMMA_VQ`; `ds4.o` builds in 38.9 s, `ds4_cpu.o` in 10.7 s, and `test-catalog-parity` compares the shape's three copies |
+| Retrieval (gate 5, 2026-10-19) | the codec's cost on a task, on labels this project did not write: BEIR SciFact's test split taken whole (300 queries / 283 documents / 339 pairs), the same CPU reference tower over both weight sources and one shared ids file. At 768 the vectors agree at mean cosine 0.956039571 / min 0.898186175 over 583 items, and the rankings move by MRR@10 0.951778 to 0.935819 with recall@10 0.983333 to 0.990000 (`docs/retrieval-cost-gate5.txt`) |
+| Device tower (phase 7, 2026-10-19) | the same tower on the GPU with the payloads consumed in-kernel: min cos(device, cpu) 0.999999950 over the 300-item query partition, max rel_rms 3.149e-04 against a declared 1e-03, 1494.8 to 2955.4 tokens/s and 414.0 MiB, against an -O3 CPU leg at 150.6 tokens/s (9.9x on short queries, 18.1x on retrieval-length documents; `docs/eg2vq-device-gate7.txt`) |
+| Entry point (phase 6, 2026-10-19) | `--embed` against the phase-7 device raw: cos 1.000000000 on 12 items, rel_rms <= 5.745e-07, token counts identical; `POST /v1/embeddings` against the verb: cos 1.000000000000; `ds4 -m <artifact> -p hello -n 1` refuses by name, exit 1, no core dump, on both backends (`docs/eg2vq-embed-entry-gate6.txt`) |
 
 ## 8. Build notes
 
