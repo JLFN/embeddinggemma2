@@ -63,7 +63,7 @@ keep working; do not push on your own initiative.
 - THE OBSTACLE, stated plainly: no shipped binary at the pin embeds an image (examples/embedding/embedding.cpp has no mtmd/mmproj/image support; tools/mtmd/mtmd-cli.cpp has no embedding or pooling mode) and the Python ML stack was removed by owner instruction, so the pin's own converter cannot run here either. The reference must therefore be an instrument we build, exactly as the baseline text GGUF was: our own writer emits an mmproj, and a small harness linked against the anchor tree's mtmd dumps mtmd_get_output_embd for a frozen image. Section 3 specifies it.
 - UNIT 22 IS DONE (phase 8): the vision oracle exists, is reference-accepted and is frozen. `tools/eg2_mmproj.c` writes an mmproj from the checkpoint (211 tensors: the patch conv with the converter's own permute, the two axial position tables, the 16 blocks, `mm.input_projection`); the norms and the position table are WIDENED to f32 because the reference's own graph refuses the mixed-type elementwise op (measured: `binary_op: unsupported types: dst: f32, src0: f32, src1: bf16`, ggml-cpu/binary-ops.cpp:135), everything else keeps the checkpoint's bf16. The pin's mtmd ACCEPTS it and reads back all 211 tensors in agreement with the writer's manifest; the preprocessing it performs is 528x384 -> 88 soft tokens (33x24 patches / 9), and its own dump of `mtmd_get_output_embd` is 88 x 512. `tests/parity/eg2vq_vision_oracle.cpp` dumps that plus the pooled 768-dim embedding of the spliced sequence (92 positions: 2 text + 88 image + 2 text) by ONE `llama_process` over a `llama_batch_ext` — and both defects it hit on the way are recorded because they are the unit-25 design constraints: `mtmd_helper_eval_chunks` pools PER CHUNK (two different images gave byte-identical pooled vectors), and the public `llama_batch` cannot carry a mixed token+embedding batch at all (it segfaults). Gate: `tools/eg2_mmproj_check.sh`, 6.0 s, `EG2VQ_VISION_ORACLE_PASS`, now step 5 of tests/run.sh's fast path, log out/eg2vq-vision-oracle-gate22.log, evidence docs/eg2vq-vision-oracle-gate22.txt. Frozen: two ffmpeg-generated fixtures plus their four dumps in tests/vision/reference/, all six digests in SHA256SUMS (twelve entries now).
 - LEARNED THE HARD WAY, for whoever writes the next llama.cpp-linking instrument: the library is `libllama`, so the link flag is `-lllama` and NOT `-llama` (the latter means `liblama.so`); link the anchor build's .so files by path. The mtmd library was not built in the anchor tree and had to be (`cmake --build /data/llama-anchor-build --target mtmd -j`); that is additive to the phase-2 reference build.
-- Workspace: /data/embeddinggemma2, branch dev, HEAD = the commit that carries this handoff (unit 22's writer, harness, gate, fixtures and frozen reference), tree CLEAN after it. The outer repo has no origin, only publish = https://github.com/JLFN/embeddinggemma2, whose dev is at d45394f — so EIGHT commits are unpushed (the five through 2f52c12, then d42fc8f, 8fde076 and the unit-22 commit). The push is an OFFER, recorded in section 7.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD = the commit that carries this handoff (unit 22's writer, harness, gate, fixtures and frozen reference), tree CLEAN after it. The outer repo has no origin, only publish = https://github.com/JLFN/embeddinggemma2, whose dev is at d45394f — so NINE commits are unpushed (the five through 2f52c12, then d42fc8f, 8fde076, the unit-22 commit and the step-0 answer). The push is an OFFER, recorded in section 7.
 - Nested ds4-rs: CLEAN at 70278c19 on feat/ds41-dsml-carriage, TWENTY commits ahead of fork/feat/ds41-dsml-carriage; its publish = https://github.com/JLFN/embeddinggemma2-ds4-rs stands at 29873445 (refs/heads/dev), so TWO ds4-rs commits are unpushed: 68837a53 (the caps) and 70278c19 (the QA corrections). Push with `git push publish feat/ds41-dsml-carriage:refs/heads/dev`; plain `git push publish dev` fails (the local dev tracks fork/dev and is behind).
 - Unit 20 (phase 6, row P2.3, slice 1) is DONE and merged: the family now has an EMBEDDING-SHAPED cap entry instead of a decode-shaped one. `ds4_core::embed_caps(ModelFamily::GemmaVq) = Some(EmbedCaps { item_tokens_max: 2048, batch_rows_max: 8192 })`, `None` for every decode family; reported as `controls.embed` in the plan JSON and as `embed` by GET /health; refused by name as 400 in `run_embed` and before the FFI call in `Model::embed_gemma_vq`; the item ceiling is held equal across Rust, ds4_eg2vq.h and cuda/eg2vq_attn.cuh by the new crates/ds4-core/tests/eg2vq_serving_caps.rs; `family_native_limit(GemmaVq)` is that ceiling and DS4_GEMMAVQ_PREFILL_CHUNK cannot lift it. Live: tools/eg2_embed_route_gate.sh sections 4b/4c, log out/eg2vq-route-gate-unit20b.log, exit 0, EG2VQ_EMBED_ROUTE_PASS. Evidence: docs/eg2vq-serving-caps-gate20.txt.
 - The owner's declared quality floor for this tier is RECORDED and MET (docs/retrieval-cost-gate5.txt section 9; RECIPE.md 5b): recall@10 >= 0.983333, MRR@10 >= 98% of baseline (0.932742), recall@1 >= 0.855, mean cosine >= 0.95 — margins 0.006667 / 0.003077 / 0.006611 / 0.006040, all PASS. In percentages at 768: vectors keep 95.60% agreement, MRR@10 98.32%, recall@1 97.00%, recall@5 99.59%, recall@10 100.68% (better), and 7.67% of queries change top-1. The floor covers the 768 width only; 512/256/128 have none.
@@ -86,16 +86,29 @@ tools/mtmd/models/gemma4v.cpp:5-117 is the graph, and unit 22's evidence doc
 behind (align 48 bicubic, 1/255 rescale with no normalize per the checkpoint's
 processor_config.json, patch grid from the aligned size, tokens = patches / 9).
 
-STEP 0, before any code: read how THIS tree already decodes an image. The shipping
-vision families take encoded image bytes (ds4_engine_vision_probe /
-vision_encode_memory take `const uint8_t *encoded`), so the decoder exists
-somewhere in ds4-rs — ds4_glm53_image.inc is the GLM-5.3 one, and Ling3VL and
-Step-3.7 have their own. Mirror that path; do not write a second image decoder and
-do not add a dependency the tree does not already have. If the sibling decoders
-live outside this repo (vendored from /data/ds4-dfm-rs), say so in the evidence and
-read the vendored source before using it (rule 0.2).
+STEP 0, ANSWERED at the unit-22 boundary (read this session, so do not re-read it
+blindly): the tree ALREADY decodes images and already resizes them, so nothing new
+is needed on either side.
+  - the decoder is stb_image, vendored at ds4-rs/vendor/stb_image.h with
+    STB_IMAGE_IMPLEMENTATION defined once in ds4.c:51-56; the call is
+    `stbi_load_from_memory(encoded, len, &w, &h, &ch, 3)` (ds4.c:273 for the Qwen
+    pixel-hash probe, ds4.c:26902 in glm53_vision_host_prepare) and a failure is
+    reported through stbi_failure_reason().
+  - JPEG EXIF orientation is applied by the sibling families, not by stb:
+    ds4_glm53_image.inc (91 lines) parses the APP1/TIFF IFD itself
+    (glm53_jpeg_orientation) and rotates the RGB (glm53_orient_rgb).  Whether the
+    REFERENCE's path does the same is a question for unit 23's preprocessing to
+    answer from the source (mtmd decodes through its own helper) — if it does not,
+    mirroring the reference means NOT applying it.
+  - the resizer is already in the tree: qwen4exp_resize_rgb_pillow (used by
+    glm53_vision_host_prepare at ds4.c:26913), a Pillow-compatible resampler, which
+    is the same algorithm family mtmd uses (mtmd-image.cpp's resize_pillow).  Unit
+    23 must compare its filter support and rounding against mtmd's bicubic path
+    (mtmd-image.cpp:204-231, filter_support 2.0, and the note there that Pillow uses
+    a = -0.5 while GGML/PyTorch use a = -0.75) before trusting it for this tower,
+    and must say in the evidence which one it used.
 
-Then, in the order the change has to land:
+The rest of the unit, in the order the change has to land:
 
  1. ds4_eg2vq_vision.h (new): the tower's shape constants and the entry points, in
     the grain of ds4_eg2vq.h — vision hidden 768, 16 layers, 12 heads / 12 KV,
@@ -246,7 +259,7 @@ graph's own sequence in gemma4v.cpp + clip.cpp, and the tree's existing decoders
   reference reading already done for it, is parked at docs/eg2vq-batch21-plan.txt.
   No code was written for it.
 - OPEN (environment): the canonical builder cannot build this tree until it can pass `--features native`; fixing it changes a builder shared by every project on this machine, so it is PROPOSED, not done.
-- OPEN (owner, NEW): the two pushes. Outer: `git push publish dev`, range d45394f..HEAD (EIGHT commits: docs/tests/tools/C plus the vision fixtures and their frozen reference — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates), target publish = https://github.com/JLFN/embeddinggemma2 (PUBLIC with dev as default, verified when it was created; rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..70278c19. Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (both roots, this boundary), rule 19 QA fresh and PASS for unit 20, rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
+- OPEN (owner, NEW): the two pushes. Outer: `git push publish dev`, range d45394f..HEAD (NINE commits: docs/tests/tools/C plus the vision fixtures and their frozen reference — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates), target publish = https://github.com/JLFN/embeddinggemma2 (PUBLIC with dev as default, verified when it was created; rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..70278c19. Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (both roots, this boundary), rule 19 QA fresh and PASS for unit 20, rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
 - STANDING (owner, 2026-10-19): the owner is AFK and wants automatic continuation after each handoff and compaction; pushes stay offers. Recorded in section 1.
 - The unit-20 QA findings are all closed (four corrections committed, one recorded as informational).
 - Nothing is in flight in either repository. The outer repo's only changes since the
