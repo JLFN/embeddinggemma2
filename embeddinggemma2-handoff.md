@@ -1,16 +1,16 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: d6da36680643c48c144536caf658e360b6d30d82
+last_updated_commit: 36719eb273b83d459183a969651eac350f9dae45
 branch: dev
 remote: 
-handoff_written_at_context_usage: 12%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T06:50:22+02:00
+handoff_written_at_context_usage: 11%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T06:54:18+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-19, after the reference was pinned)
+Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-19, after the phase doc was written)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -89,11 +89,16 @@ Goal: a runtime that loads our DQVD artifact and produces the 768-dim embeddings
 this model exists for, with the measurement that shows the port matches the
 original.
 
-The port template is the work spec: https://github.com/... is not needed — read
-docs/deepseek41-port-plan.md and docs/deepseek41-port-inventory.md in ds4-rs
-(the plan + inventory pair every prior family followed), plus the GLM VQ family
-as the closest analog in shape (a VQ release artifact: Rust release reader, C
-bind record table, C graph, CUDA kernels consuming the payload in-kernel).
+THE WORK LIST: docs/ds4-gemma-port-phases.md (the phase doc, written 2026-10-19).
+It carries one row per item that must be ported, grouped P0..P4 plus a
+cross-cutting X section, each row with its authority citation (llama.cpp
+file:line, or our own checkpoint/tool artefact), where it lands in ds4-rs, and
+its status. The phases and gates below are that document's spine; read the phase
+doc before writing any code, and close a row only when its gate passes. The
+per-family precedent for its shape is the ds4-rs pair docs/deepseek41-port-plan.md
++ docs/deepseek41-port-inventory.md, and the GLM VQ family is the closest analog
+in code shape (a VQ release artefact: Rust release reader, C bind record table, C
+graph, CUDA kernels consuming the payload in-kernel).
 
 Phases, each ending in a gate:
 
@@ -118,9 +123,15 @@ registered through the five Rust dispatch tables and the C dispatch. The route
 takes the task prompt (defaults from config_sentence_transformers.json). Gate: the
 route returns the same vector as the CLI, byte for byte.
 P3 — device path: a dim-4 VQ kernel (cuda/ds41_vq_row.cuh:55 refuses anything but
-dim 8; ds4_cuda.cu:42201 is the existing bidirectional attention kernel but it is
-scalar and capped at 256 rows at :42207, and it has no sliding window), then the
-text tower on the GPU. Gate: GPU embeddings equal CPU embeddings within a stated
+dim 8; crates/ds4-core/src/vq.rs VQ_DIM = 8, and our text-tower VQ tier is dim 4
+throughout), then the text tower on the GPU. CORRECTION to an earlier revision of
+this section: the existing bidirectional attention kernel DOES implement a sliding
+window and non-causal attention — the window arrives as a parameter (public API
+ds4_gpu.h:3658, kernel ds4_cuda.cu:42201, window applied at :42217-42219, a
+caller already passes one at ds4.c:48259). What it cannot do is serve traffic:
+one scalar thread per (query, head), rows > 256 refused (ds4_cuda.cu:42208) and a
+float score[256] stack buffer (:42211). So P3 needs a production kernel, not a
+"add the window" patch. Gate: GPU embeddings equal CPU embeddings within a stated
 tolerance, plus a latency and a VRAM number.
 P4 — vision and audio towers (16 and 12 layers; their graphs live in llama.cpp's
 gemma4 code, and our inventory already carries embed_vision/embed_audio
@@ -145,8 +156,10 @@ original is.
 - What exists in this repo: .models/EmbeddingGemma-2-914f7f8 (pinned checkpoint,
   1.5 GB, gitignored); tools/eg2_vq.c + bin/eg2_vq (single-matrix ladder tool);
   tools/eg2_pack.c + bin/eg2_pack_cpu + bin/eg2_pack (plan/encode/verify/check/
-  merge); tools/eg2_gpuprobe.cu + bin/eg2_gpuprobe; docs/ds4-gemma-port-reference.md
-  (the port map, unit 5); AGENTS.md (the project guardrails, unit 5).
+  merge); tools/eg2_gpuprobe.cu + bin/eg2_gpuprobe; docs/ds4-gemma-port-phases.md
+  (THE WORK LIST: every item to port, by phase, with its reference — unit 6);
+  docs/ds4-gemma-port-reference.md (the port map, unit 5); AGENTS.md (the project
+  guardrails, unit 5).
 - The two llama.cpp trees: /data/llama.cpp is upstream ggml-org/llama.cpp at
   b11723 (commit 31288c9c66e59377f7788d920678a565bb89dd37, 2026-10-18, 616 MB) and
   is THE reference — src/models/gemma-embedding2.cpp, arch "gemma-embedding2"
@@ -233,8 +246,9 @@ original is.
 Trust git over this document's headings: continue with the first unit whose work
 is not in the diff.
 
-Staleness check at the time of writing: nothing but this handoff's own commit is
-expected after d6da366 (the reference commit). Anything else must be read before
+Staleness check at the time of writing: after d6da366 (the reference commit) only
+plan artefacts are expected — this handoff and the phase doc
+(docs/ds4-gemma-port-phases.md, unit 6). Anything else must be read before
 sections 2-5 are trusted.
 
 This document is COMPLETE and self-contained: a new session can execute the
