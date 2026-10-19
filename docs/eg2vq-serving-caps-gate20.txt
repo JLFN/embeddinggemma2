@@ -23,9 +23,10 @@ batching is the next slice and section 6 below states exactly where it stands.
                             port: nothing in the artifact states a batch width.
                             At the layout's own charge of 108,548 B per row
                             (106.0 KiB; ds4_eg2vq_gpu.cuh:72-99 sums to 27,136
-                            f32 planes plus the 4-byte id) that is 848.0 MiB of
+                            f32 planes plus the 4-byte id) that is 848.03 MiB of
                             device workspace, four times the measured 212.01 MiB
-                            at 2048 rows (docs/eg2vq-device-gate7.txt:407-411).
+                            at 2048 rows (docs/eg2vq-device-gate7.txt:407-411);
+                            2048 x 108,548 B is exactly 212.0078 MiB.
 
 Neither number is the family's `ctx_max` (262144, the file's own
 `gemma_vq.context_length` = the checkpoint's max_position_embeddings). That field
@@ -93,10 +94,15 @@ log out/eg2vq-route-gate-unit20.log, sha256
     == 5. route vs CLI ==   dim=768 cos=1.000000000000  (declared >= 0.999999)
     EG2VQ_EMBED_ROUTE_PASS
 
-Note what the middle row measures: 1400 words tokenize to about 1057 tokens
-(8460/8), so the eight-item request was refused by the ROW budget and not by the
-per-item ceiling -- the three checks together show each cap firing on its own
-ground and neither firing on a request that respects them.
+Note what the middle row measures, corrected by the unit-20 QA pass (it drove the
+boundaries itself and measured a 1400-word item at 1410 tokens, and the crossing at
+the SIXTH item): a 1400-word item is 1410 tokens, so the eight-item request is
+11,280 tokens and the refusal fires when input[5] takes the running total to 8460,
+past 8192. The first version of this note read the refused message's own figure
+(8460, the partial sum) as if it were per-item and divided it by eight. The three
+checks together still show each cap firing on its own ground: the per-item check on
+a 3010-token item, the row budget on six 1410-token items, and neither on three of
+them (4230 rows).
 
 Rust-side verification: `cargo test -p ds4-core --lib serving` 212 passed;
 `cargo test -p ds4-core --test eg2vq_serving_caps` 3 passed;
@@ -139,3 +145,52 @@ gemma_vq_native_arm` 2 passed; `cargo check -p ds4-server --all-targets` clean.
   5. The refusal checks are one live run on this card over the CUDA backend; the
      CPU backend reaches the same Rust refusal before the FFI call (and the C one
      behind it) but was not driven over HTTP in this unit.
+
+6. The rule 19 QA pass, and what it changed
+-------------------------------------------
+
+Model deepseek-v4.1-CC-flash (the model this project recorded for QA), report
+qa-evidence/qa-report.md, verdict `overall PASS`, run before the commit that
+carries this document's corrections. It re-derived the four floor verdicts and
+every percentage in RECIPE.md section 5b independently (all correct), falsified the
+new three-file parity test on COPIES of the tree (CUDA 2048 -> 4096, C macro
+2048u -> 1024u, and a renamed macro: each failing loudly, the last with "has no
+numeric value"), measured the boundaries this document only asserted -- 2048
+tokens accepted and 2049 refused, 8192 accepted and 8193 refused, precedence
+being the first boundary in input order within one item's own check -- reproduced
+tools/eg2_embed_route_gate.sh line for line against out/eg2vq-route-gate-unit20.log,
+and drove the QA gate itself in a sandbox (red before the report, trailing prose
+after the verdict turning it red, and the two-repo scan changing its surface list
+when the bases move).
+
+Five findings, none of which changes a verdict. Four were prose or wording errors in
+this unit's own files and were corrected in the follow-up commit (the ds4-rs one) and
+this document:
+
+  F1  "1400 words tokenize to about 1057 tokens (8460/8)" -- wrong: 1410 tokens,
+      and the crossing is at the sixth item. Corrected in this document and in the
+      route gate's own comment (4200 rows -> 4230). The nested commit 68837a53
+      carries the same figure in its message; it is unpushed but is NOT rewritten,
+      because the QA report cites it by hash.
+  F2  2048 x 108,548 B is 212.0078 MiB, not the 212.0086 the test comment and
+      this document first carried. Corrected in both.
+  F3  Section 9's pointer to "section 7" for the recall/MRR table: the tables are
+      in 5c (retrieval) and 5b (cosine). Corrected in docs/retrieval-cost-gate5.txt.
+  F4  The row-budget refusal read "the 8 inputs add up to 8460 tokens" -- the count
+      was the request's whole input list and the total was the partial sum at the
+      crossing. Corrected in ds4-server/src/serve.rs to name the input that crossed
+      the budget and how many inputs had been tokenized: "input[5] crosses this
+      model's 8192-token budget for one embedding call: the request's first 6
+      inputs already add up to 8460 tokens".
+  F5  Informational: the device path is not run-to-run bit-identical at the last
+      printed digit (the 256-dim L2 norm read 1.000000017 in the recorded run and
+      1.000000000 in the QA's rerun; three identical requests inside the QA pass
+      read 1.000000011 / 1.000000022 / 1.000000018, with byte-differing JSON).
+      Nothing in this unit claims bit-identity on the route, and the gate's
+      declared tolerance (1e-5) covers it; the fact is recorded here because the
+      gate's own line differs between runs and a later reader will notice.
+
+What the pass could NOT test, in its own words: the canonical /data/build builder
+(which refuses this tree by design), any other GPU or arch than this card's sm_89,
+and the batching half of row P2.3, which does not exist yet. A later session should
+read section 5 of the report before treating its coverage as complete for the row.

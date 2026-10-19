@@ -531,8 +531,10 @@ Sections 1-8 are unchanged and were written with no threshold in force: item 6 o
 "What it does not prove" says so explicitly. On 2026-10-19 the owner declared one,
 tier-tolerant by his own word, and it is now the plan of record's floor for THIS
 tier (dim 4 / nc 4096) rather than a taste. The percentages below are the
-arithmetic of the table at section 7 applied to the same two legs -- not a second
-measurement, and not a re-scoring.
+arithmetic of the recall/MRR table at section 5c and the cosine figure at 5b --
+applied to the same two legs: not a second measurement, and not a re-scoring.
+(The unit-20 QA pass corrected this sentence's first version, which pointed at a
+"section 7" that holds no table.)
 
     metric              baseline    artifact    change    floor             verdict
     MRR@10              0.951778    0.935819    -1.68%    98% of baseline   PASS  0.935819 >= 0.932742
@@ -585,6 +587,6 @@ it than is there:
      it ships, because none of the four numbers is derived from the others.
   4. The qualitative note stays qualitative: 23 of 300 queries (7.67%) changed their
      top-1 document. The floor permits that (it is what recall@10 >= baseline and
-     MRR@10 >= 98% of baseline jointly allow), and the margin table in section 7
+     MRR@10 >= 98% of baseline jointly allow), and the margin table in section 5c
      (mean top1-top2 margin 0.085722 at 768) is the reason the changed calls are not
      all near-ties. No floor is declared on the top-1 change count itself.

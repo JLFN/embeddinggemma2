@@ -191,13 +191,15 @@ code=$(curl -s -m 120 -o "$WORK/too_many.json" -w '%{http_code}' \
     -X POST "http://$HOST:$USED_PORT/v1/embeddings" \
     -H 'Content-Type: application/json' \
     -d "{\"input\":[$ARR]}")
-note "eight 1400-word items (11200+ tokens): HTTP $code"
+note "eight 1400-word items (11280 tokens): HTTP $code"
 note "body: $(cat "$WORK/too_many.json")"
 if [ "$code" != "400" ] || ! grep -q 'batch_rows_max' "$WORK/too_many.json"; then
     note "FAIL: a request past the row budget was not refused by name"
     fail=1
 fi
-# The cap must not refuse what it covers: three such items is 4200 rows.
+# The cap must not refuse what it covers: three such items is 4230 rows (1410
+# tokens each, measured by the unit-20 QA pass -- the first version of this
+# comment said 4200, from a 1400 x 3 estimate that ignored the special tokens).
 ARR3=$(awk -v it="$ITEM" 'BEGIN{printf "\"" it "\""; for(i=1;i<3;i++) printf ",\"" it "\""}')
 code=$(curl -s -m 300 -o "$WORK/under_budget.json" -w '%{http_code}' \
     -X POST "http://$HOST:$USED_PORT/v1/embeddings" \
