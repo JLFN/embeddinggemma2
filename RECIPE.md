@@ -53,6 +53,12 @@ decisions taken from measurement, not defaulted.
 
 ## 3. Container
 
+The shipping artifact is the `gemma_vq` GGUF of section 4d. The container described
+here is the one that produced it: the encoder's own output, whose payloads the GGUF
+step copies unchanged (phase 0 measured them byte-identical to a fresh encode, and
+it is the byte-verified record of the quantization itself). It is not the form the
+runtime loads.
+
 `DQVD` v1: a 64-byte little-endian header (magic, version, kind, slot count, recipe
 string offset/length, name blob offset/length, slot table offset, payload offset and
 length), then the recipe string, the NUL-terminated name blob, a 48-byte slot table
@@ -204,6 +210,55 @@ the input string, the reference's token count for it, its sha256, and four vecto
 three long items (1,175 / 1,221 / 1,398 tokens) exist to exceed the file's
 512-token mask half-window, so phase 4's symmetric mask is actually exercised.
 
+### 4d. The artifact GGUF (phase 1b) — the container re-wrapped, `gemma_vq`
+
+The runnable artifact is a GGUF of the `gemma_vq` family, not the DQVD container:
+the container's 1376 slots are copied into one GGUF under the family's own arch,
+metadata and tensor types (`docs/ds4-gemma-payload-contract.md` section 4), which
+is the form the ds4 port loads. Phase 0 measured the container's payloads
+byte-identical to a fresh encode, so this step re-wraps bytes — it re-encodes
+nothing and needs neither the kmeans nor the GPU. Shapes and ranks come from the
+checkpoint, cross-checked against the container's slot table and against each
+payload's own header; every payload's byte account is the reference's
+(`vq_qc_bytes.h:20`).
+
+```sh
+# 16. Confirm phase 0's measurement still holds on the current inputs
+./bin/eg2_pack_cpu check $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+sha256sum -c SHA256SUMS
+
+# 17. Re-wrap the container as the artifact GGUF (~1 s; 461 vqblob + 1 q8_0 + 914 bf16)
+./bin/eg2_gguf artifact $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
+   $HF $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+   --manifest $OUT/artifact-manifest.tsv
+
+# 18. Read it back through the port's own reader, twice: the tensor table, and the
+#     metadata with values (--kv-values resolves every key through the reader)
+cd ds4-rs && cargo run -q -p ds4-core --release --example gguf_inventory -- \
+   ../out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf --no-kv \
+   > ../out/artifact-inventory.txt && \
+   cargo run -q -p ds4-core --release --example gguf_inventory -- \
+   ../out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf --kv-values \
+   > ../out/artifact-kv.txt && cd ..
+
+# 19. Gate 1b: writer vs reader field by field, every tensor's bytes against the
+#     container, the verbatim ones against the checkpoint, and every VQ tensor's
+#     payload magic (~1.7 s)
+tools/eg2_artifact_check.sh $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+   $OUT/artifact-manifest.tsv $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
+   $HF $OUT/artifact-inventory.txt
+```
+
+Two deliberate properties of the file. First, its hparams carry the `gemma_vq.`
+prefix and it writes no `general.file_type` — the VQ family's own convention
+(`v41_to_gguf.c:357-363`) — while the hparams and the tokenizer values come from
+the same two functions the baseline uses, so the two files cannot drift on a
+geometry value or a vocabulary entry. Second, it is a ds4 file and not a
+llama.cpp file: ds4's private type 42 is `vqblob` and llama.cpp's 42 is `q2_0`,
+so the reference loader refuses the artifact at its first VQ tensor while it
+loads the baseline (bf16/f32) happily — which is exactly why the anchor leg runs
+on the baseline.
+
 ## 5. Quality, measured
 
 The bar is the DeepSeek V4.1 recipe's own reported number, produced the same way (the
@@ -264,10 +319,14 @@ the rest are single-element scalars, where cosine is meaningless).
    hidden 512, the 12-layer audio tower at hidden 1024, the 16-layer vision tower at
    hidden 768, and the two attention variants (head_dim 256, and 512 on text layers 5,
    11, 17, 23).
-2. A `DQVD` reader: header validation per section 3, name-hash lookup, and the slot
-   kinds — `DQVQ` payloads through the value rule the repository already implements in
-   `crates/ds4-core/src/vq.rs`, `q8_0` blocks through the reference decoder
-   (`src/common/ds4_quantfmt.h:45`), verbatim bytes through the dtype in the slot.
+2. A `gemma_vq` loader over the artifact GGUF, not a DQVD reader: the family gate
+   (`gemma_vq.format_version`), the per-tensor payload validation the contract assigns
+   to Rust (`docs/ds4-gemma-payload-contract.md` section 6: magic, dim/nc/rows/cols
+   against the declared layout, the byte account, the index-stream bound, the row gains
+   and the codebook), and the three tensor classes — 461 `vqblob` payloads through the
+   value rule the repository already implements in `crates/ds4-core/src/vq.rs`, one
+   `q8_0` token table through the reference decoder (`src/common/ds4_quantfmt.h:45`),
+   914 `bf16` tensors at their true rank.
 3. An embedding API. The repository has no `v1/embeddings` route today; the composition
    the checkpoint expects is mean pooling over the last hidden state followed by L2
    normalization (`1_Pooling/config.json`, `2_Normalize`).
@@ -281,7 +340,13 @@ means reproducibility and byte accounting:
 
 | Check | Result |
 |---|---|
-| Artifact | `out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin`, 421,758,160 B (421,604,557 B of payload plus 153,603 B of header, names, slot table and 16-byte alignment) |
+| Artifact (runnable form) | `out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf`, 437,508,416 B: 421,604,557 B of tensor data plus 15,881,824 B of header, metadata, tensor table and 32-byte alignment |
+| `sha256sum` | `5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f` |
+| Tensors | 1376, one per source tensor, under the checkpoint's own names: 461 type 42 `vqblob` (nd 1, ne = payload bytes), 1 type 8 `q8_0` (512x262144), 914 type 30 `bf16` at the checkpoint's rank (a rank-0 scalar ships as rank 1, ne {1}: both readers refuse nd 0) |
+| Metadata | 42 keys: the family gate and recipe, the hparams under `gemma_vq.`, the gemma4 tokenizer with the checkpoint's own ids; read back value by value through the port's own reader, and 38 of them compared against the baseline's after mapping the arch prefix — 0 differing |
+| Payload identity | all 1376 GGUF tensors byte-identical to the container's payloads, all 914 verbatim tensors byte-identical to the checkpoint's own bytes, all 461 VQ payloads starting with the `DQVQ` magic |
+| Determinism | a second run produced the identical digest (0.94 s wall); the writer's baseline path is byte-transparent, re-emitted as the same sha256 as the committed baseline |
+| Container (the input) | `out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin`, 421,758,160 B (421,604,557 B of payload plus 153,603 B of header, names, slot table and 16-byte alignment) |
 | `sha256sum` | `8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe` |
 | Slots | 1376, one per source tensor; names, FNV-1a hashes, ascending order, 16-byte alignment and payload ranges all verified on read-back |
 | Source coverage | the plan's source bytes sum to 1,488,743,984 B, exactly the checkpoint's tensor total; no tensor is dropped or double-counted |
@@ -289,6 +354,7 @@ means reproducibility and byte accounting:
 | Round trip | every VQ matrix's decode-versus-encode `maxabs` is 0 (the payload decodes to exactly what the encoder wrote) |
 | Determinism | 14 parallel `verify` runs covering all 1376 slots re-encoded each payload from the checkpoint and compared it byte for byte with the file: all identical |
 | Encode cost | 14 shard encodes 19:42:39Z to 20:02:16Z, merge 1.4 s, 14 parallel verifies to 20:21:45Z; 39 minutes wall for the whole pipeline on 14 cores |
+| Re-wrap cost | 0.94 s wall for the whole artifact GGUF (a copy of the container's bytes, no re-encode) |
 
 ## 8. Build notes
 

@@ -1,0 +1,240 @@
+Artifact GGUF — phase 1b evidence (2026-10-19, unit 12)
+
+What this records: the DQVD container re-wrapped into one GGUF of the `gemma_vq`
+family — the file the ds4 port will load — and the gate that it carries exactly
+what the container carries, tied to the checkpoint on one side and to the port's
+own reader on the other. Everything below was run in this session; where a number
+is quoted it was printed by the command shown next to it.
+
+Files
+  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf   437,508,416 B
+    sha256 5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f
+  out/artifact-manifest.tsv      the writer's per-tensor map: name, type, rank,
+                                 dims, bytes, GGUF offset, role, the container
+                                 interval it was copied from, and the checkpoint
+                                 tensor it must equal
+  out/artifact-inventory.txt     the ds4-rs reader's own dump of the file
+  out/artifact-kv.txt            the same reader's metadata dump, with values
+  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin   the input, unchanged
+                                 (sha256 8902fb8a…, re-checked before this ran)
+  tools/eg2_gguf.c               the writer, extended with the `artifact` mode
+  tools/eg2_artifact_check.sh    gate 1b, the three-sided check
+  ds4-rs/crates/ds4-core/examples/gguf_inventory.rs   the port's own reader; it
+                                 gained `--kv-values`, which prints each metadata
+                                 key's value through the reader's getters
+  ds4-rs/crates/ds4-core/src/gguf.rs    `GgufFile::dump_kv_values`, beside the
+                                 existing `dump_header_kv`
+
+0. Phase 0's measurement still holds on the current inputs (run first)
+
+  $ ./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+  container ...: kind=0 slots=1376
+  recipe: towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+  layout: recipe=64 names=192(+73377) slots=73584 payloads=139632+421618528
+  structure OK: 1376 slots, names, hashes, alignment, payload ranges
+  $ sha256sum -c SHA256SUMS     (all four entries then: OK)
+
+So the re-wrap input is the same byte-verified container phase 0 measured
+bit-identical to a fresh encode; no payload was re-encoded here.
+
+1. The writer
+
+  $ ./bin/eg2_gguf artifact out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
+        .models/EmbeddingGemma-2-914f7f8 \
+        out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        --manifest out/artifact-manifest.tsv
+  [hparams] 24 layers, embd 512, heads 4 (kv 2 swa / 1 full), ff 2048, out 768,
+            per-layer 512, vocab 262144, head_dim 256 swa / 512 full,
+            swa window 512 (file 1024), ctx 262144
+  [tokenizer] 262144 tokens (514906 merges), bos 2 eos 1 unk 3 pad 0 mask 4, chat template
+  [container] ...: kind=0 slots=1376 payloads=139632+421618528
+  [plan] 1376 tensors, 0.422 GB of tensor data
+  [plan]   vq        461 tensors     237.289 MB
+  [plan]   q8_0        1 tensors     142.606 MB
+  [plan]   verbatim  914 tensors      41.709 MB
+  [done] ...: 1376 tensors, 0.422 GB of tensor data      (0.94 s wall)
+
+  Tensor census, from the manifest: 1354 rank 1, 7 rank 2, 13 rank 3, 2 rank 4;
+  by type 461 x 42 (vqblob), 1 x 8 (q8_0), 914 x 30 (bf16); no duplicate names.
+  The 1376 payload lengths sum to 421,604,557 B; the container's payload region is
+  421,618,528 B, the difference being the container's 16-byte per-payload padding.
+  Header, metadata, tensor table and 32-byte alignment occupy 15,881,824 B
+  (DATA_POS in the reader's dump below).
+
+  Per-slot checks the writer refuses to write without, every one of them a
+  comparison between two independent sources (container slot table, the payload's
+  own 16-byte header, the checkpoint's safetensors shape):
+
+  - a VQ slot: the payload's magic is `DQVQ` (ds41_vq_fmt.h:32), its dim/nc/rows/cols
+    equal the slot's recorded geometry AND the checkpoint's shape, and its length
+    closes the reference's own byte account `vq_payload_bytes(rows, cols, dim, nc)`
+    (vq_qc_bytes.h:20) — the same formula the container's checker used
+    (tools/eg2_pack.c:1044). Shipped as type 42, nd 1, ne = {payload bytes};
+  - the token table: cols a whole number of q8_0 blocks and
+    bytes = rows x cols/32 x 34 (ds4_quantfmt.c:17: 32 values in 34 bytes). Shipped
+    as type 8, nd 2, ne = {512, 262144};
+  - a verbatim slot: source dtype BF16 and bytes = the checkpoint's element count
+    x 2. Shipped as type 30 at the checkpoint's own rank;
+  - every slot's name exists in the checkpoint, the container's src_dtype equals
+    the checkpoint's dtype, and the container's slot count equals the checkpoint's
+    tensor count (1376) — a partial container cannot be wrapped into a whole-looking
+    file.
+
+2. Gate 1b — all 1376 present, and equal on all three sides
+
+  $ cargo run -q -p ds4-core --release --example gguf_inventory -- \
+        ../out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf --no-kv \
+        > ../out/artifact-inventory.txt
+  $ tools/eg2_artifact_check.sh out/...-gemma_vq.gguf out/artifact-manifest.tsv \
+        out/...-dqvd.bin .models/EmbeddingGemma-2-914f7f8 out/artifact-inventory.txt
+  checked 1376 tensors: writer and ds4-rs reader agree on name/type/rank/dims/bytes/offset;
+    1376 copied byte-for-byte from the container,
+    914 verbatim tensors equal the checkpoint's own bytes,
+    461 VQ tensors begin with the DQVQ payload magic
+
+  (1.7 s wall). The script also refuses to proceed on a duplicate name, on a
+  manifest/reader count mismatch, or on a name that matches only on one side — a
+  plain join would drop a mismatch silently.
+
+  The reader's own view of the file:
+    HEADER version=3 n_tensors=1376 n_kv=42 alignment=32
+    DATA_POS 15881824 ALIGN 32 PAGE 4096 SHARDS 1 N 1376
+    T audio_tower.layers.0.feed_forward1.ffw_layer_1.input_max ndim=1 dims=1
+      type=30(bf16) elems=1 bytes=2 rel=0 abs=15881824 shard=0
+    T audio_tower.layers.0.feed_forward1.ffw_layer_1.linear.weight ndim=1
+      dims=1613841 type=42(vqblob) elems=1613841 bytes=1613841 rel=64 ...
+    T language_model.embed_tokens.weight ndim=2 dims=512,262144 type=8(q8_0)
+      elems=134217728 bytes=142606336 rel=126062272 ...
+
+  The first VQ slot's declaration is the payload's own length (1,613,841 B) and not
+  the 8,388,608 elements of the 4096x1024 matrix it decodes to: type 42 is one byte
+  per element, and a DQVQ payload carries no size field, so the byte-exact
+  declaration is the only one a generic reader can check (contract section 4).
+  The geometry travels in the payload's header and in the family layout.
+
+3. The metadata, read back independently — values, not just keys
+
+  $ cargo run -q -p ds4-core --release --example gguf_inventory -- \
+        ../out/...-gemma_vq.gguf --kv-values > ../out/artifact-kv.txt
+  HEADER version=3 n_tensors=1376 n_kv=42 alignment=32
+  KV general.architecture STRING = gemma_vq
+  KV general.name STRING = EmbeddingGemma-2 VQ
+  KV general.alignment UINT32 = 32
+  KV gemma_vq.format_version UINT32 = 1
+  KV gemma_vq.recipe STRING = towers=vq4x4096  sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal encoder=cpu (eg2_pack) src=914f7f89142e
+  KV gemma_vq.block_count UINT32 = 24
+  KV gemma_vq.context_length UINT32 = 262144
+  KV gemma_vq.embedding_length UINT32 = 512
+  KV gemma_vq.embedding_length_out UINT32 = 768
+  KV gemma_vq.embedding_length_per_layer_input UINT32 = 512
+  KV gemma_vq.feed_forward_length UINT32 = 2048
+  KV gemma_vq.attention.head_count UINT32 = 4
+  KV gemma_vq.attention.key_length UINT32 = 512
+  KV gemma_vq.attention.value_length UINT32 = 512
+  KV gemma_vq.attention.key_length_swa UINT32 = 256
+  KV gemma_vq.attention.value_length_swa UINT32 = 256
+  KV gemma_vq.attention.layer_norm_rms_epsilon FLOAT32 = 1e-6
+  KV gemma_vq.attention.sliding_window UINT32 = 1024
+  KV gemma_vq.attention.sliding_window_pattern ARRAY = array<BOOL> len=24
+  KV gemma_vq.attention.causal BOOL = false
+  KV gemma_vq.rope.freq_base FLOAT32 = 1e6
+  KV gemma_vq.rope.freq_base_swa FLOAT32 = 1e4
+  KV gemma_vq.rope.dimension_count UINT32 = 512
+  KV gemma_vq.rope.dimension_count_swa UINT32 = 256
+  KV gemma_vq.vocab_size UINT32 = 262144
+  KV gemma_vq.attention.head_count_kv ARRAY = array<UINT32> len=24
+  KV gemma_vq.pooling_type UINT32 = 1
+  KV tokenizer.ggml.model STRING = gemma4
+  KV tokenizer.ggml.tokens ARRAY = array<STRING> len=262144
+  KV tokenizer.ggml.scores ARRAY = array<FLOAT32> len=262144
+  KV tokenizer.ggml.token_type ARRAY = array<INT32> len=262144
+  KV tokenizer.ggml.merges ARRAY = array<STRING> len=514906
+  KV tokenizer.ggml.bos_token_id UINT32 = 2
+  KV tokenizer.ggml.eos_token_id UINT32 = 1
+  KV tokenizer.ggml.unknown_token_id UINT32 = 3
+  KV tokenizer.ggml.padding_token_id UINT32 = 0
+  KV tokenizer.ggml.mask_token_id UINT32 = 4
+  KV tokenizer.ggml.add_bos_token BOOL = true
+  KV tokenizer.ggml.add_eos_token BOOL = true
+  KV tokenizer.ggml.add_sep_token BOOL = false
+  KV tokenizer.ggml.add_space_prefix BOOL = false
+  KV tokenizer.chat_template STRING = {%- for msg in messages if msg.get('role') == 'system' -%}...
+
+  Differential against the baseline's own metadata, read the same way
+  (out/baseline-kv.txt), mapping the arch prefix `gemma-embedding2.` -> `gemma_vq.`:
+
+    compared 38 keys present in both files (after mapping the arch prefix), differing 0
+    artifact keys the baseline does not carry: gemma_vq.format_version, gemma_vq.recipe
+    baseline keys the artifact does not carry: general.file_type
+
+  Both differences are deliberate: the contract's table (section 4) carries the
+  family gate and the recipe, and the one shipping VQ-to-GGUF tool writes no
+  general.file_type for a VQ family (v41_to_gguf.c:357-363). The hparams and the
+  tokenizer are emitted by one shared function per block, so the two files cannot
+  drift on a value; this differential is how that is checked rather than asserted.
+
+4. Determinism
+
+  A second run of the same command (to /tmp) produced the identical digest:
+  5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f, 0.94 s wall.
+  The re-wrap is a copy of a deterministic container through a writer whose
+  header depends only on its inputs, so the artifact is bit-reproducible.
+
+5. The writer refactor is byte-transparent for the baseline (regression)
+
+  The two metadata blocks moved into emit_hparams()/emit_tokenizer() so the
+  artifact cannot disagree with the baseline on a geometry value or a vocabulary
+  entry. The baseline path was re-run to prove the refactor changed no byte:
+
+  $ ./bin/eg2_gguf baseline .models/EmbeddingGemma-2-914f7f8 /tmp/eg2-baseline-recheck.gguf
+  sha256sum /tmp/eg2-baseline-recheck.gguf
+  0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201   (the committed baseline's)
+
+6. One correction to the contract, measured
+
+  The contract said the 914 verbatim tensors ship "nd 0..4 from the checkpoint".
+  They cannot: 480 of them are rank-0 scalars in the checkpoint (shape [], e.g.
+  audio_tower.layers.0.feed_forward1.ffw_layer_1.input_max, 2 bytes), and BOTH
+  readers of this file reject a rank-0 tensor —
+
+    ds4.c:3353   if (t->ndim == 0 || t->ndim > DS4_MAX_DIMS) ds4_die("tensor has an
+                 unsupported number of dimensions");
+    crates/ds4-core/src/tensors.rs:266   if ndim == 0 || ndim > MAX_DIMS { return
+                 Err(TensorError::BadDims) }
+    ggml.c:1786  GGML_ASSERT(n_dims >= 1 && n_dims <= GGML_MAX_DIMS);
+
+  — so a scalar ships as the one-element vector it is: rank 1, ne = {1}, which is
+  the same shape the baseline gives its 24 layer_output_scale tensors. The file's
+  rank census above (0 rank-0 tensors) is the result. Contract sections 4 and 5
+  are corrected in the same commit.
+
+7. What this file is, and what it is not
+
+  - It is ds4's file, not llama.cpp's. Our private type numbering (42 vqblob,
+    40/41/43/44 beside it) is ds4's own; llama.cpp assigns 42 to Q2_0 and refuses
+    the same tensor as a bad block size, and gguf-py refuses it identically:
+
+      E gguf_init_from_reader: tensor 'audio_tower.layers.0...linear.weight' of type
+        42 (q2_0) has 1613841 elements per row, not a multiple of block size (64)
+      ValueError: Quantized tensor row size (1613841) is not a multiple of Q2_0 block
+        size (64)
+
+    Both runs are expected and are the reason phase 2's anchor leg uses the
+    BASELINE GGUF (bf16/f32 only, which llama.cpp loads) and the artifact's
+    acceptance leg is the port's own reader. This is also why the family is
+    identified in the file itself (`gemma_vq.format_version`), not by guesswork.
+  - It does not prove the port's arithmetic: that is phase 4, against the frozen
+    anchor. It does not prove the payloads' quality: the encoder measured each
+    payload against its source matrix (docs/artifact-verify-summary.txt), and
+    phase 5 measures the whole model; the token table's own number, from the
+    encoder's log, is cos 1.0000 / relL2 0.5484% at q8_0
+    (out/encode-log.txt, language_model.embed_tokens.weight).
+  - It does not yet load: the Rust-side payload validation the contract assigns to
+    the loader (magic, geometry, byte account, index-stream bound, row gains,
+    codebook finiteness) is phase 3, and the runtime that reads this file does not
+    exist yet.
+
+Guardrail state at this commit: all five P-1 checks return zero (the interpreter,
+embedded-interpreter, torch/candle, `.py`-under-src and ONNX greps), `sha256sum -c
+SHA256SUMS` passes on all five entries, and this session's one-off Python was run
+inline against the pinned reference's own gguf-py — no file was added to the tree.

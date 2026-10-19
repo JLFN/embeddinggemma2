@@ -1,9 +1,10 @@
-# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a, and phase 2, row X.5)
+# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a, phase 2, row X.5, and phase 1b, row X.5b)
 
 Derived 2026-10-19 in `/data/embeddinggemma2`, reading only: no reader, writer or
 encoder code was written for this document. Phase 1a then wrote the baseline GGUF
-against it and corrected four of its rows by measurement (section 7 states each
-correction and the evidence). It is subordinate to `embeddinggemma2-handoff.md` —
+against it and corrected four of its rows by measurement; phase 1b wrote the
+artifact GGUF and corrected a sixth (section 4: the file's rank is never 0).
+Section 7 states each correction and the evidence. It is subordinate to `embeddinggemma2-handoff.md` —
 where the two disagree, the handoff wins and this file is corrected in the same
 commit.
 
@@ -161,6 +162,8 @@ Metadata, all values from the DQVD artifact's own header or the checkpoint:
 | `gemma_vq.format_version` | u32 | 1 — the family gate, in the shape of `glm_vq.format_version` |
 | `gemma_vq.recipe` | str | the DQVD recipe string verbatim (114 bytes, measured at offset 64 of the artifact) |
 | hparams | | `gemma_vq.*` with the same values as the baseline's `gemma-embedding2.*` (section 7), because the writer is parameterized by the arch prefix |
+| `general.file_type` | — | **not written**: the one shipping VQ-to-GGUF tool writes it only for the arch's own file types and omits it here (`v41_to_gguf.c:357-363`); the baseline carries 32 (MOSTLY_BF16) because it is an unquantized BF16 file |
+| the tokenizer block | | the same `tokenizer.ggml.*` keys as the baseline, including the three `SpecialVocab`-derived ones: the runtime tokenizes the artifact from this block, and phase 4's token port is checked against it |
 
 Tensors, one per checkpoint tensor (1376), named with the checkpoint's own names
 — the convention `glm_vq` uses for its matrices (`ds4_glmvq_bind.inc:4-9`, which
@@ -171,7 +174,20 @@ gate 1b a name-by-name diff against `bin/eg2_pack_cpu check`:
 | --- | --- | --- | --- | --- |
 | VQ payload | 461 | 42 `vqblob` | `nd = 1`, `ne = [payload_bytes]` | mirrors the precedent: `plan_vqblob` registers `ne[1] = {total}` with `DS4_GGT_VQBLOB` (`v41_to_gguf.c:137-142`), `gen_vqblob` fills the bytes (`:285-313`), and type 42's geometry is 1 element = 1 byte (`core_gguf.c:95`) |
 | token table | 1 | 8 `q8_0` | `nd = 2`, `ne = [512, 262144]` | the checkpoint row is 262144 x 512; 16 blocks of 32 per row at 34 B = 544 B, so 142,606,336 B, which is the account the encoder already produced |
-| kept verbatim | 914 | 30 `bf16` | `nd` 0..4 from the checkpoint, `ne` inner-dim-first | all 914 DQVD verbatim slots record src_dtype BF16 |
+| kept verbatim | 914 | 30 `bf16` | `nd` 1..4 from the checkpoint (a scalar ships rank 1 — see below), `ne` inner-dim-first | all 914 DQVD verbatim slots record src_dtype BF16 |
+
+CORRECTION (phase 1b, measured 2026-10-19): this table previously said the 914
+verbatim tensors ship "nd 0..4 from the checkpoint". They cannot. 480 of them are
+rank-0 scalars in the checkpoint (shape `[]`, for example
+`audio_tower.layers.0.feed_forward1.ffw_layer_1.input_max`, 2 bytes), and **both**
+readers of this file reject a rank-0 tensor: the engine dies "tensor has an
+unsupported number of dimensions" (`ds4.c:3353`, mirrored at
+`crates/ds4-core/src/tensors.rs:266`, `TensorError::BadDims`) and ggml asserts
+`n_dims >= 1` (`ggml.c:1786`). A scalar therefore ships as the one-element vector it
+is — rank 1, `ne = {1}` — which is the shape the baseline gives its 24
+`layer_output_scale` tensors. The written artifact's rank census is the check:
+1354 rank 1, 7 rank 2, 13 rank 3, 2 rank 4, and no rank 0. Evidence:
+`docs/artifact-gguf-gate1b.txt` section 6.
 
 A VQ tensor is **not** written 2-D. Type 42 is one byte per element, so a
 `[cols, rows]` declaration would make any generic reader compute `cols*rows`
@@ -201,8 +217,9 @@ never the container geometry. That is phase-doc row P0.7, and GGUF makes the
   writer's implementation of it at `ds4_gguf_write.h:73-105`).
 
 So the 15 rank>2 tensors keep their true rank in the tensor table, and no VQ
-tensor needs a shape override. Keys the two shipping families have that we
-deliberately do not carry, with the reason:
+tensor needs a shape override. Rank 0 does not occur in the file (section 4's
+correction): the 480 checkpoint scalars ship as rank 1, `ne = {1}`. Keys the two
+shipping families have that we deliberately do not carry, with the reason:
 
 | key | reason |
 | --- | --- |
@@ -374,6 +391,7 @@ string and the byte account.
 | form authority (read-only) | `/data/llama.cpp` | `31288c9c` |
 | writer and payload precedent | `/data/YoungAi` | `a4e6d31` for the quantizer sources cited by the packer, `3946dbc` for the vendored `vq_fmt.h` |
 | our artifact and its evidence | `out/`, `docs/artifact-verify-summary.txt`, `docs/encode-plan.tsv`, `docs/tensor-inventory.tsv` | artifact sha256 `8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe` |
+| the artifact GGUF, written in phase 1b (the runnable form) | `out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf`, `out/artifact-manifest.tsv`, `out/artifact-inventory.txt`, `out/artifact-kv.txt`, `tools/eg2_artifact_check.sh` | sha256 `5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f`; evidence `docs/artifact-gguf-gate1b.txt` |
 | the baseline and its evidence (phase 1a, re-emitted in phase 2) | `out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`, `docs/baseline-gguf-gate1a.txt`, `docs/anchor-gate2.txt` | baseline sha256 `0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201` |
 | the anchor: the frozen set and the reference's vectors (phase 2) | `tests/anchor/anchor-items.tsv`, `tests/expected/anchor-embeddinggemma2.jsonl` | anchor sha256 `7561254c85591521716ec801336e3cbc2bf47e7f00c945c4f97cb643d0d4961d` |
 | the anchor build (phase 2) | `/data/llama-anchor-build` (built from the pin above, never inside its tree) | llama-embedding, CPU backend |
@@ -413,3 +431,15 @@ Gate 2: PASSED 2026-10-19. 113 frozen items, one model invocation each, all four
 MRL widths stored, the file bit-reproducible on a from-scratch re-run, and both
 open decisions settled by measurement against their alternatives (EOS, prefix).
 `docs/anchor-gate2.txt` holds the numbers.
+
+Gate 1b: PASSED 2026-10-19. `tools/eg2_gguf.c`'s `artifact` mode wrote
+`out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf` (437,508,416 B,
+sha256 `5bcf2216…`) from the container, and `tools/eg2_artifact_check.sh` reports
+1376 tensors where the writer's manifest and the port's own reader agree on
+name/type/rank/dims/bytes/offset, 1376 copied byte-for-byte from the container, 914
+verbatim tensors equal to the checkpoint's own bytes, and 461 VQ tensors beginning
+with the `DQVQ` magic. The metadata was read back through the same reader with
+values and differed from the baseline's in exactly the two intended keys
+(section 4's table); the file is bit-reproducible; and the writer's baseline path
+was re-emitted byte-for-byte identical, so the shared metadata functions changed no
+existing byte. Evidence: `docs/artifact-gguf-gate1b.txt`.

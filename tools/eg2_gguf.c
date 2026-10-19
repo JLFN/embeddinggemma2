@@ -77,16 +77,47 @@
  * token=q8_0 and the VQ towers, so phase 5's delta against this file is the whole
  * cost of the recipe, and phase 2's anchor is the unquantized original.
  *
+ * The artifact mode writes the second file from the DQVD container
+ * (tools/eg2_pack.c) rather than from the checkpoint: phase 0 measured the
+ * container's payloads byte-identical to a fresh encode
+ * (docs/ds4-gemma-payload-contract.md section 2), so the artifact step is a
+ * re-wrap — the bytes are copied, only the addressing changes. Sources for it:
+ *
+ *   /data/YoungAi (the writer and payload precedent, revision a4e6d31)
+ *     gguf-tools/quantize/v41_to_gguf.c:137-142   plan_vqblob: the VQ tensor is
+ *         registered nd=1, ne={total bytes}, type DS4_GGT_VQBLOB
+ *     gguf-tools/quantize/v41_to_gguf.c:285-313   gen_vqblob: the tensor's bytes
+ *         ARE the payloads, each beginning with its own 'DQVQ' + dim/nc/rows/cols
+ *     gguf-tools/quantize/v41_to_gguf.c:357-363   the VQ family's own header:
+ *         architecture, name, alignment 32, recipe — and NO general.file_type
+ *     gguf-tools/quantize/vq_qc_bytes.h:15,20      the DQVQ byte account that the
+ *         writer and the size allocator share; the artifact checks it per slot
+ *     src/common/ds4_quantfmt.c:17                 q8_0 = 32 values in 34 bytes
+ *     src/core/core_gguf.c:94-97                   type 42 vqblob: 1 element = 1 byte
+ *   ds4-rs/ds41_vq_fmt.h:4-12 and :32               the payload layout, vendored
+ *     (the same bytes the container's checker validates, eg2_pack.c:1044)
+ *   ds4-rs/crates/ds4-core/src/tensors.rs:106-112   our own reader's type table:
+ *         42 vqblob (1 element / 1 byte), 8 q8_0 (32 / 34), 30 bf16 (1 / 2)
+ *   The container's own slot table (tools/eg2_pack.c:50-72 for the layout,
+ *   :575-577 for the rank convention rows/cols follow for rank 1 and rank 0).
+ *
+ * Shape and rank come from the checkpoint itself (the v41_st index the baseline
+ * already opens), cross-checked against the container's rows/cols: the file
+ * declares the checkpoint's true rank, and every payload's own 16-byte header is
+ * required to agree with both. Nothing is inferred from a name.
+ *
  * Usage:
- *   eg2_gguf baseline <hf-dir> <out.gguf> [--limit N] [--only SUBSTR] [--no-tokenizer]
- *   eg2_gguf dump     <out.gguf>          (reads its own header back, as a check)
+ *   eg2_gguf baseline <hf-dir> <out.gguf> [--limit N] [--only SUBSTR] [--no-tokenizer] [--manifest FILE]
+ *   eg2_gguf artifact <container.bin> <hf-dir> <out.gguf> [--manifest FILE]
  *
  * --limit and --only write a SMOKE file: general.name carries the marker, so a
- * partial artifact cannot be mistaken for the baseline.
+ * partial artifact cannot be mistaken for the baseline. The artifact mode takes
+ * the whole container and refuses a subset.
  *
- * Build (the reference toolchain's include path, as RECIPE.md section 4 does):
+ * Build (the reference toolchain's include paths, as RECIPE.md section 4 does):
  *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -Itools \
- *      -I/data/YoungAi/src/common -o bin/eg2_gguf tools/eg2_gguf.c -lm
+ *      -I/data/YoungAi/src/common -I/data/YoungAi/gguf-tools/quantize \
+ *      -o bin/eg2_gguf tools/eg2_gguf.c -lm
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -98,14 +129,21 @@
 
 #include "ds4_gguf_write.h"    /* vendored: the reference's own GGUF v3 writer */
 #include "ds4_st41.h"          /* the reference's safetensors index (locate only) */
+#include "vq_qc_bytes.h"       /* the reference's DQVQ byte account (one copy, shared) */
 
 /* GGUF tensor type numbers (ggml), the same table the engine uses
- * (/data/YoungAi/src/core/core_gguf.c:94-97, our crates/ds4-core/src/tensors.rs:60-92).
- * Only two appear in the baseline: f32 (0) and bf16 (30); q8_0 (8) is the
- * artifact's token table and is not written here. */
-#define GGT_F32  0u
-#define GGT_Q8_0 8u
-#define GGT_BF16 30u
+ * (/data/YoungAi/src/core/core_gguf.c:94-97, our crates/ds4-core/src/tensors.rs:60-112).
+ * The baseline writes f32 (0) and bf16 (30); the artifact adds q8_0 (8) for its
+ * token table and vqblob (42) for its 461 VQ payloads. */
+#define GGT_F32    0u
+#define GGT_Q8_0   8u
+#define GGT_BF16   30u
+#define GGT_VQBLOB 42u
+
+/* q8_0's geometry, from the reference's own table (ds4_quantfmt.c:17:
+ * DS4_GGT_Q8_0 blk 32, tsz 34). */
+#define Q8_0_BLK 32u
+#define Q8_0_TSZ 34u
 
 /* gguf-py/gguf/constants.py TokenType (the vocabulary's token_type values) */
 #define TKN_NORMAL       1
@@ -116,6 +154,10 @@
 
 /* the arch string the loader routes on (src/llama-arch.cpp:64) */
 static const char *const ARCH = "gemma-embedding2";
+
+/* the VQ family's own arch string (docs/ds4-gemma-payload-contract.md section 0:
+ * the family gate is gemma_vq.format_version, in the shape of glm_vq's) */
+static const char *const ARCH_VQ = "gemma_vq";
 
 static void die(const char *m) { fprintf(stderr, "eg2_gguf: %s\n", m); exit(1); }
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) die("out of memory"); return p; }
@@ -662,6 +704,180 @@ static void kv_arr_bool(ds4gw *W, const char *k, const uint8_t *v, uint64_t n) {
     W->nkv++;
 }
 
+/* ---- the two metadata blocks, written identically by both modes -------------
+ * The arch prefix is the only thing the artifact changes: the hparams and the
+ * tokenizer carry this model's geometry and vocabulary either way
+ * (docs/ds4-gemma-payload-contract.md section 4). Extracted so that the two
+ * files cannot drift in a key value; the emission order of the baseline is
+ * unchanged, which its digest still confirms. */
+
+static void emit_hparams(ds4gw *W, const char *arch, const hp_t *H) {
+    char k[128];
+#define KVK(name) (snprintf(k, sizeof k, "%s." name, arch), k)
+    ds4gw_kv_u32(W, KVK("block_count"), H->n_layer);
+    ds4gw_kv_u32(W, KVK("context_length"), H->n_ctx);
+    ds4gw_kv_u32(W, KVK("embedding_length"), H->n_embd);
+    ds4gw_kv_u32(W, KVK("embedding_length_out"), H->n_embd_out);
+    ds4gw_kv_u32(W, KVK("embedding_length_per_layer_input"), H->n_embd_pl);
+    ds4gw_kv_u32(W, KVK("feed_forward_length"), H->n_ff);
+    ds4gw_kv_u32(W, KVK("attention.head_count"), H->n_head);
+    ds4gw_kv_u32(W, KVK("attention.key_length"), H->head_dim_full);
+    ds4gw_kv_u32(W, KVK("attention.value_length"), H->head_dim_full);
+    ds4gw_kv_u32(W, KVK("attention.key_length_swa"), H->head_dim_swa);
+    ds4gw_kv_u32(W, KVK("attention.value_length_swa"), H->head_dim_swa);
+    ds4gw_kv_f32(W, KVK("attention.layer_norm_rms_epsilon"), H->rms_eps);
+    /* HF's sliding_window is one-sided; the converter doubles it so the loader's
+     * symmetric mask (llama-hparams.h:524-533, |p1-p0| > n_swa/2) reproduces it
+     * (conversion/gemma.py:824-825). */
+    ds4gw_kv_u32(W, KVK("attention.sliding_window"), 2 * H->n_swa_hf);
+    kv_arr_bool(W, KVK("attention.sliding_window_pattern"), H->is_swa, H->n_layer);
+    ds4gw_kv_bool(W, KVK("attention.causal"), 0);
+    ds4gw_kv_f32(W, KVK("rope.freq_base"), H->rope_base);
+    ds4gw_kv_f32(W, KVK("rope.freq_base_swa"), H->rope_base_swa);
+    ds4gw_kv_u32(W, KVK("rope.dimension_count"), H->head_dim_full);
+    ds4gw_kv_u32(W, KVK("rope.dimension_count_swa"), H->head_dim_swa);
+    ds4gw_kv_u32(W, KVK("vocab_size"), H->n_vocab);
+    { uint32_t *kvarr = xmalloc(sizeof(uint32_t) * H->n_layer);
+      for (uint32_t i = 0; i < H->n_layer; i++) kvarr[i] = H->is_swa[i] ? H->n_head_kv_swa : H->n_head_kv_full;
+      ds4gw_kv_arr_u32(W, KVK("attention.head_count_kv"), kvarr, H->n_layer);
+      free(kvarr); }
+    ds4gw_kv_u32(W, KVK("pooling_type"), 1);   /* PoolingType.MEAN */
+#undef KVK
+}
+
+static void emit_tokenizer(ds4gw *W, const tok_t *T) {
+    /* The converter's own key set for this arch (conversion/gemma.py:641-676):
+     * model "gemma4", the token list, scores and types, then merges and the
+     * special ids. It writes no tokenizer.ggml.pre — the loader pins
+     * tokenizer_pre = "gemma4" for this model type itself
+     * (src/llama-vocab.cpp:2275), so the file does not carry one. */
+    ds4gw_kv_str(W, "tokenizer.ggml.model", "gemma4");
+    ds4gw_kv_arr_str(W, "tokenizer.ggml.tokens", (const char *const *)T->tok, T->n);
+    ds4gw_kv_arr_f32(W, "tokenizer.ggml.scores", T->score, T->n);
+    ds4gw_kv_arr_i32(W, "tokenizer.ggml.token_type", T->type, T->n);
+    if (T->n_merge) ds4gw_kv_arr_str(W, "tokenizer.ggml.merges", (const char *const *)T->merge, T->n_merge);
+    if (T->have_bos) ds4gw_kv_u32(W, "tokenizer.ggml.bos_token_id", T->bos);
+    if (T->have_eos) ds4gw_kv_u32(W, "tokenizer.ggml.eos_token_id", T->eos);
+    if (T->have_unk) ds4gw_kv_u32(W, "tokenizer.ggml.unknown_token_id", T->unk);
+    if (T->have_pad) ds4gw_kv_u32(W, "tokenizer.ggml.padding_token_id", T->pad);
+    if (T->have_mask) ds4gw_kv_u32(W, "tokenizer.ggml.mask_token_id", T->mask);
+    /* The add_* flags are SpecialVocab's, not the converter's: it derives them
+     * from tokenizer.json's post_processor (vocab.py:191-330). This
+     * checkpoint's post_processor is TemplateProcessing<single> =
+     * [<bos>, A, <eos>], so add_special_token = {bos: true, eos: true,
+     * sep: false} — measured, not assumed: tools/ref_vocab_probe.py runs the
+     * reference's own SpecialVocab over this checkpoint and prints exactly
+     * that (out/ref-specialvocab.gguf carries the keys it writes). Without
+     * add_eos the reference tokenizer drops the trailing <eos> the
+     * checkpoint's own tokenizer appends (src/llama-vocab.cpp:3625). */
+    ds4gw_kv_bool(W, "tokenizer.ggml.add_bos_token", 1);
+    ds4gw_kv_bool(W, "tokenizer.ggml.add_eos_token", 1);
+    ds4gw_kv_bool(W, "tokenizer.ggml.add_sep_token", 0);
+    ds4gw_kv_bool(W, "tokenizer.ggml.add_space_prefix", 0);
+    if (T->chat_template) ds4gw_kv_str(W, "tokenizer.chat_template", T->chat_template);
+}
+
+/* ------------------------------------------------- the DQVD container (read) --
+ * Read-only, for the artifact re-wrap. The container's own structure — magic,
+ * version, kind, the name blob, the hashes, ordering, alignment, payload ranges
+ * and every byte account — is `bin/eg2_pack_cpu check`'s job (tools/eg2_pack.c:
+ * 980-1077), which phase 1b runs first; this reader does not re-implement it. It
+ * re-establishes only what the wrap itself stands on — a DQVD v1 kind-0 header,
+ * a file whose size the header accounts for, and per slot a name inside the name
+ * blob and a payload inside the region — and refuses to write anything if one of
+ * those fails. */
+
+enum { CT_VQ = 0, CT_Q4K = 1, CT_VERBATIM = 2, CT_Q8_0 = 3 };
+enum { CT_BF16 = 1, CT_F32 = 2, CT_F16 = 3 };
+
+/* the source-dtype code the container records per slot (tools/eg2_pack.c:410-416),
+ * derived from the checkpoint's own safetensors dtype */
+static int dtype_code(const char *d) {
+    if (!strcmp(d, "BF16")) return CT_BF16;
+    if (!strcmp(d, "F32"))  return CT_F32;
+    if (!strcmp(d, "F16"))  return CT_F16;
+    return 0;
+}
+
+#define DQVD_MAGIC      0x44565144u   /* 'DQVD' LE  (tools/eg2_pack.c:221) */
+#define DQVD_HDR_BYTES  64
+#define DQVD_SLOT_BYTES 48
+#define DQVQ_MAT_MAGIC  0x51565144u   /* 'DQVQ' LE  (ds4-rs/ds41_vq_fmt.h:32) */
+
+typedef struct {
+    char name[192];
+    uint32_t rows, cols, payload_len, payload_off;   /* payload_off: from the region start */
+    uint16_t dim, nc, flags;
+    uint8_t kind, src_dtype;
+} cont_slot;
+
+typedef struct {
+    FILE *f;
+    char path[4300];
+    char recipe[512];
+    uint64_t payload_off, payload_bytes;
+    uint32_t n;
+    cont_slot *slot;
+} cont_t;
+
+static uint16_t ct_u16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v; }
+static uint32_t ct_u32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static uint64_t ct_u64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+
+static void cont_open(const char *path, cont_t *C) {
+    memset(C, 0, sizeof *C);
+    snprintf(C->path, sizeof C->path, "%s", path);
+    C->f = fopen(path, "rb");
+    if (!C->f) { fprintf(stderr, "eg2_gguf: cannot read %s\n", path); exit(1); }
+    uint8_t h[DQVD_HDR_BYTES];
+    if (fread(h, 1, sizeof h, C->f) != sizeof h) die("container: short header");
+    if (ct_u32(h + 0) != DQVD_MAGIC) die("container: magic is not DQVD (hard stop)");
+    if (ct_u16(h + 4) != 1) die("container: version is not 1 (hard stop)");
+    if (ct_u16(h + 6) != 0) die("container: kind is not 0 (hard stop)");
+    C->n = ct_u32(h + 8);
+    const uint32_t recipe_len = ct_u32(h + 12);
+    const uint64_t recipe_off = ct_u64(h + 16), name_off = ct_u64(h + 24);
+    const uint64_t name_bytes = ct_u64(h + 32), slot_off = ct_u64(h + 40);
+    C->payload_off = ct_u64(h + 48);
+    C->payload_bytes = ct_u64(h + 56);
+    fseeko(C->f, 0, SEEK_END);
+    const off_t fsz = ftello(C->f);
+    if ((uint64_t)fsz != C->payload_off + C->payload_bytes)
+        die("container: the file size disagrees with the header");
+    if (recipe_len == 0 || recipe_len >= sizeof C->recipe) die("container: recipe length out of range");
+    fseeko(C->f, (off_t)recipe_off, SEEK_SET);
+    if (fread(C->recipe, 1, recipe_len, C->f) != recipe_len) die("container: short recipe read");
+    C->recipe[recipe_len] = 0;
+    char *blob = xmalloc((size_t)name_bytes + 1);
+    fseeko(C->f, (off_t)name_off, SEEK_SET);
+    if (fread(blob, 1, (size_t)name_bytes, C->f) != name_bytes) die("container: short name blob read");
+    blob[name_bytes] = 0;
+    uint8_t *raw = xmalloc((size_t)C->n * DQVD_SLOT_BYTES);
+    fseeko(C->f, (off_t)slot_off, SEEK_SET);
+    if (fread(raw, DQVD_SLOT_BYTES, C->n, C->f) != C->n) die("container: short slot table read");
+    C->slot = xmalloc(sizeof(cont_slot) * (C->n ? C->n : 1));
+    for (uint32_t i = 0; i < C->n; i++) {
+        const uint8_t *p = raw + (size_t)i * DQVD_SLOT_BYTES;
+        cont_slot *s = &C->slot[i];
+        const uint64_t noff = ct_u64(p + 8);
+        const uint32_t nlen = ct_u32(p + 16);
+        s->payload_off = ct_u32(p + 20); s->payload_len = ct_u32(p + 24);
+        s->rows = ct_u32(p + 28); s->cols = ct_u32(p + 32);
+        s->dim = ct_u16(p + 36);  s->nc = ct_u16(p + 38);
+        s->kind = p[40]; s->src_dtype = p[41]; s->flags = ct_u16(p + 42);
+        if (noff + nlen + 1 > name_bytes) die("container: a slot name lies outside the name blob");
+        if ((uint64_t)s->payload_off + s->payload_len > C->payload_bytes) die("container: a payload lies outside the region");
+        snprintf(s->name, sizeof s->name, "%s", blob + noff);
+        if (strlen(s->name) != nlen) die("container: a slot name does not match its recorded length");
+        if (s->kind > CT_Q8_0) die("container: unknown slot kind");
+        if (i && strcmp(C->slot[i - 1].name, s->name) >= 0) die("container: slot names are not in ascending order");
+    }
+    free(blob); free(raw);
+    fprintf(stderr, "[container] %s: kind=0 slots=%u payloads=%llu+%llu\n            recipe: %s\n",
+            path, C->n, (unsigned long long)C->payload_off,
+            (unsigned long long)C->payload_bytes, C->recipe);
+}
+
 /* the checkpoint name a scheduled GGUF tensor came from (the inverse of TMAP) */
 static int ckpt_name_for(const hp_t *H, const char *gguf, char *out) {
     (void)H;
@@ -688,14 +904,251 @@ static int ckpt_name_for(const hp_t *H, const char *gguf, char *out) {
     return 0;
 }
 
+/* ---------------------------------------------------- the artifact (phase 1b) */
+
+/* What a tensor is and where its bytes came from: the manifest's and gate 1b's
+ * per-tensor record (role, the container interval it was copied from, and the
+ * checkpoint tensor it came from, for the independent byte comparison). */
+enum { R_VQ = 0, R_Q8_0, R_VERBATIM, R_NROLE };
+static const char *const ROLE_NAME[R_NROLE] = { "vq", "q8_0", "verbatim" };
+
+typedef struct {
+    int role;
+    uint64_t cont_abs;
+    const char *st_file;
+    uint64_t st_abs;
+    const char *st_dtype;
+} art_rec;
+
+static int artifact_run(const char *container, const char *hfdir, const char *out, const char *manifest) {
+    hp_t H; load_hparams(hfdir, &H);
+    tok_t T; memset(&T, 0, sizeof T); tok_load(hfdir, &T);
+    cont_t C; cont_open(container, &C);
+
+    /* The checkpoint is opened for SHAPE and for the independent byte
+     * comparison, not for payload bytes: every byte the file ships comes from the
+     * container. Its tensor count must equal the container's slot count, so a
+     * partial container cannot be wrapped into something that looks whole. */
+    v41_st S;
+    if (v41_st_open(&S, hfdir)) return 1;
+    if ((uint64_t)S.ne != C.n) {
+        fprintf(stderr, "eg2_gguf: the checkpoint holds %d tensors and the container %u slots; "
+                        "the artifact is a re-wrap of the whole plan, never of a subset (hard stop)\n", S.ne, C.n);
+        return 1;
+    }
+
+    ds4gw W;
+    if (ds4gw_begin(&W, out)) return 1;
+
+    /* ---- metadata: docs/ds4-gemma-payload-contract.md section 4. The family
+     * writes its own arch, its gate key and its recipe, and writes NO
+     * general.file_type, mirroring the one shipping VQ-to-GGUF tool
+     * (v41_to_gguf.c:357-363). The hparams and the tokenizer are this model's and
+     * come from the same two functions the baseline uses, so the two files can
+     * never disagree on a geometry value or a vocabulary entry. ---- */
+    ds4gw_kv_str(&W, "general.architecture", ARCH_VQ);
+    ds4gw_kv_str(&W, "general.name", "EmbeddingGemma-2 VQ");
+    ds4gw_kv_u32(&W, "general.alignment", 32);
+    ds4gw_kv_u32(&W, "gemma_vq.format_version", 1);
+    ds4gw_kv_str(&W, "gemma_vq.recipe", C.recipe);
+    emit_hparams(&W, ARCH_VQ, &H);
+    emit_tokenizer(&W, &T);
+
+    /* ---- plan: one GGUF tensor per container slot, in the container's order ---- */
+    uint64_t total_bytes = 0, role_bytes[R_NROLE] = {0};
+    int role_n[R_NROLE] = {0};
+    int nt = 0, cap = 0;
+    art_rec *rec = NULL;
+    uint8_t ph[16];
+    for (uint32_t i = 0; i < C.n; i++) {
+        const cont_slot *s = &C.slot[i];
+        const v41_st_ent *e = v41_st_find(&S, s->name);
+        if (!e) {
+            fprintf(stderr, "eg2_gguf: the checkpoint holds no %s (is this container from another checkpoint?)\n", s->name);
+            return 1;
+        }
+        if (s->src_dtype != (uint8_t)dtype_code(e->dtype)) {
+            fprintf(stderr, "eg2_gguf: %s: the container records src_dtype %u, the checkpoint says %s\n",
+                    s->name, s->src_dtype, e->dtype);
+            return 1;
+        }
+        const uint32_t cnd = (uint32_t)e->nd;
+        uint64_t elems = 1;
+        for (uint32_t d = 0; d < cnd; d++) elems *= (uint64_t)e->shape[d];
+        /* the container's own rank convention (tools/eg2_pack.c:575-577): rank >= 2
+         * keeps shape[0] x shape[1], rank 1 is rows = count, cols = 1, rank 0 is 1x1 */
+        const uint64_t want_rows = cnd >= 2 ? (uint64_t)e->shape[0] : (cnd == 1 ? (uint64_t)e->shape[0] : 1);
+        const uint64_t want_cols = cnd >= 2 ? (uint64_t)e->shape[1] : 1;
+        if (s->rows != want_rows || s->cols != want_cols) {
+            fprintf(stderr, "eg2_gguf: %s: the container says %ux%u, the checkpoint's shape says %llux%llu\n",
+                    s->name, s->rows, s->cols, (unsigned long long)want_rows, (unsigned long long)want_cols);
+            return 1;
+        }
+
+        uint32_t type, ship_nd = cnd;
+        uint64_t ship_ne[4] = {1, 1, 1, 1};
+        int role;
+        if (s->kind == CT_VQ) {
+            if (cnd != 2) { fprintf(stderr, "eg2_gguf: %s: a VQ payload comes from a rank-%u tensor\n", s->name, cnd); return 1; }
+            fseeko(C.f, (off_t)(C.payload_off + s->payload_off), SEEK_SET);
+            if (fread(ph, 1, sizeof ph, C.f) != sizeof ph) die("short read of a payload header");
+            const uint16_t dim = ct_u16(ph + 4), nc = ct_u16(ph + 6);
+            const uint32_t rows = ct_u32(ph + 8), cols = ct_u32(ph + 12);
+            if (ct_u32(ph) != DQVQ_MAT_MAGIC) {
+                fprintf(stderr, "eg2_gguf: %s: the payload magic is not DQVQ\n", s->name);
+                return 1;
+            }
+            if (dim != s->dim || nc != s->nc || rows != s->rows || cols != s->cols) {
+                fprintf(stderr, "eg2_gguf: %s: the payload's own header (dim %u nc %u %ux%u) disagrees "
+                                "with the slot's (dim %u nc %u %ux%u)\n",
+                        s->name, dim, nc, rows, cols, s->dim, s->nc, s->rows, s->cols);
+                return 1;
+            }
+            /* the reference's own byte account, the single copy its writer and its
+             * size allocator share (vq_qc_bytes.h:20) */
+            const size_t want = vq_payload_bytes((int)s->rows, (int)s->cols, (int)dim, (int)nc);
+            if (want != s->payload_len) {
+                fprintf(stderr, "eg2_gguf: %s: payload_len %u, the DQVQ byte account says %zu\n",
+                        s->name, s->payload_len, want);
+                return 1;
+            }
+            /* A vqblob is opaque bytes and type 42 is one element per byte, so the
+             * declaration is nd 1, ne = {bytes} (contract section 4); the precedent
+             * registers ne[1] = {total} the same way (v41_to_gguf.c:137-142). The
+             * geometry is in the payload itself and in the family layout, never in
+             * the container's geometry — a [cols, rows] declaration would make a
+             * generic reader compute cols*rows bytes, which is not the payload. */
+            type = GGT_VQBLOB; ship_nd = 1; ship_ne[0] = s->payload_len;
+            role = R_VQ;
+        } else if (s->kind == CT_Q8_0) {
+            if (cnd != 2) { fprintf(stderr, "eg2_gguf: %s: a q8_0 token table comes from a rank-%u tensor\n", s->name, cnd); return 1; }
+            if (s->cols % Q8_0_BLK) { fprintf(stderr, "eg2_gguf: %s: %u columns are not a whole number of q8_0 blocks\n", s->name, s->cols); return 1; }
+            const uint64_t want = (uint64_t)s->rows * (s->cols / Q8_0_BLK) * Q8_0_TSZ;
+            if (want != s->payload_len) {
+                fprintf(stderr, "eg2_gguf: %s: payload_len %u, the q8_0 account says %llu\n",
+                        s->name, s->payload_len, (unsigned long long)want);
+                return 1;
+            }
+            type = GGT_Q8_0;
+            for (uint32_t d = 0; d < cnd; d++) ship_ne[cnd - 1 - d] = (uint64_t)e->shape[d];
+            role = R_Q8_0;
+        } else if (s->kind == CT_VERBATIM) {
+            /* Verbatim slots carry the checkpoint's own bytes, and every one of the
+             * 914 is BF16 (contract section 4, re-measured on this container): two
+             * bytes per element, so the shape is the byte count. */
+            if (s->src_dtype != CT_BF16) {
+                fprintf(stderr, "eg2_gguf: %s: verbatim slots ship BF16, this one is dtype %u\n", s->name, s->src_dtype);
+                return 1;
+            }
+            if (elems * 2 != s->payload_len) {
+                fprintf(stderr, "eg2_gguf: %s: payload_len %u, the checkpoint's shape needs %llu\n",
+                        s->name, s->payload_len, (unsigned long long)(elems * 2));
+                return 1;
+            }
+            type = GGT_BF16;
+            for (uint32_t d = 0; d < cnd; d++) ship_ne[cnd - 1 - d] = (uint64_t)e->shape[d];
+            /* The checkpoint stores 480 of these 914 as rank-0 scalars (shape [],
+             * e.g. audio_tower.layers.0.feed_forward1.ffw_layer_1.input_max), and
+             * BOTH readers of this file reject nd 0: the engine dies "tensor has an
+             * unsupported number of dimensions" (ds4.c:3353, mirrored at
+             * crates/ds4-core/src/tensors.rs:266) and ggml asserts n_dims >= 1
+             * (ggml.c:1786). So a scalar ships as the one-element vector it is:
+             * rank 1, ne = {1} — the same shape the baseline gives its 24
+             * layer_output_scale tensors. */
+            if (cnd == 0) { ship_nd = 1; ship_ne[0] = 1; }
+            role = R_VERBATIM;
+        } else {
+            fprintf(stderr, "eg2_gguf: %s: the container carries a q4_K slot; this artifact writes none (hard stop)\n", s->name);
+            return 1;
+        }
+
+        const int ti = ds4gw_tensor(&W, s->name, type, ship_nd, ship_ne, s->payload_len);
+        if (ti + 1 > cap) {
+            cap = cap ? cap * 2 : 2048;
+            rec = realloc(rec, sizeof(art_rec) * (size_t)cap);
+            if (!rec) die("out of memory");
+        }
+        rec[ti].role = role;
+        rec[ti].cont_abs = C.payload_off + s->payload_off;
+        rec[ti].st_file = S.sh[e->shard].file;
+        rec[ti].st_abs = S.sh[e->shard].data0 + e->off;
+        rec[ti].st_dtype = e->dtype;
+        role_n[role]++;
+        role_bytes[role] += s->payload_len;
+        total_bytes += s->payload_len;
+        nt++;
+    }
+    fprintf(stderr, "[plan] %d tensors, %.3f GB of tensor data\n", nt, (double)total_bytes / 1e9);
+    for (int r = 0; r < R_NROLE; r++)
+        fprintf(stderr, "[plan]   %-8s %4d tensors  %10.3f MB\n", ROLE_NAME[r], role_n[r], (double)role_bytes[r] / 1e6);
+    if (ds4gw_header(&W)) return 1;
+
+    /* ---- the manifest: what the writer put where, plus the container interval
+     * each tensor was copied from and the checkpoint tensor it should equal, so
+     * gate 1b can compare bytes from both sides without trusting this tool. ---- */
+    if (manifest) {
+        FILE *mf = fopen(manifest, "w");
+        if (!mf) { fprintf(stderr, "eg2_gguf: cannot write %s\n", manifest); return 1; }
+        fprintf(mf, "#gguf_name\ttype\tnd\tdims\tbytes\tgguf_abs\trole\tcont_abs\tst_file\tst_abs\tst_dtype\n");
+        for (int i = 0; i < nt; i++) {
+            const ds4gw_tinfo *t = &W.t[i];
+            fprintf(mf, "%s\t%u\t%u\t", t->name, t->type, t->nd);
+            for (uint32_t d = 0; d < t->nd; d++) fprintf(mf, "%s%llu", d ? "," : "", (unsigned long long)t->ne[d]);
+            fprintf(mf, "\t%llu\t%llu\t%s\t%llu\t%s\t%llu\t%s\n",
+                    (unsigned long long)t->nbytes, (unsigned long long)(W.data0 + t->off),
+                    ROLE_NAME[rec[i].role], (unsigned long long)rec[i].cont_abs,
+                    rec[i].st_file, (unsigned long long)rec[i].st_abs, rec[i].st_dtype);
+        }
+        fclose(mf);
+        fprintf(stderr, "[manifest] %s\n", manifest);
+    }
+
+    /* ---- write the bytes: the container's payload, unchanged, in order ---- */
+    uint64_t max_pay = 0;
+    for (int i = 0; i < nt; i++) if (W.t[i].nbytes > max_pay) max_pay = W.t[i].nbytes;
+    uint8_t *buf = xmalloc((size_t)(max_pay ? max_pay : 1));
+    for (int i = 0; i < nt; i++) {
+        const ds4gw_tinfo *t = &W.t[i];
+        if (fseeko(C.f, (off_t)rec[i].cont_abs, SEEK_SET)) { perror("fseeko"); return 1; }
+        if (fread(buf, 1, (size_t)t->nbytes, C.f) != t->nbytes) {
+            fprintf(stderr, "eg2_gguf: short read of %s from the container\n", t->name);
+            return 1;
+        }
+        if (ds4gw_write(&W, i, buf, t->nbytes)) return 1;
+        if ((i + 1) % 128 == 0) { fprintf(stderr, "[write] %d/%d\n", i + 1, nt); fflush(stderr); }
+    }
+    if (ds4gw_end(&W)) return 1;
+    free(buf); free(rec);
+    v41_st_close(&S);
+    fclose(C.f);
+    fprintf(stderr, "[done] %s: %d tensors, %.3f GB of tensor data\n", out, nt, (double)total_bytes / 1e9);
+    return 0;
+}
+
 /* -------------------------------------------------------------------- main -- */
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: eg2_gguf baseline <hf-dir> <out.gguf> [--limit N] [--only SUBSTR] [--no-tokenizer]\n");
+        fprintf(stderr, "usage: eg2_gguf baseline <hf-dir> <out.gguf> [--limit N] [--only SUBSTR] [--no-tokenizer] [--manifest FILE]\n"
+                        "       eg2_gguf artifact <container.bin> <hf-dir> <out.gguf> [--manifest FILE]\n");
         return 2;
     }
-    const char *mode = argv[1], *hfdir = argv[2], *out = argc > 3 ? argv[3] : NULL;
+    const char *mode = argv[1];
+
+    if (!strcmp(mode, "artifact")) {
+        if (argc < 5) {
+            fprintf(stderr, "eg2_gguf: artifact <container.bin> <hf-dir> <out.gguf> [--manifest FILE]\n");
+            return 2;
+        }
+        const char *manifest = NULL;
+        for (int i = 5; i < argc; i++) {
+            if (!strcmp(argv[i], "--manifest") && i + 1 < argc) manifest = argv[++i];
+            else { fprintf(stderr, "eg2_gguf: unknown argument %s\n", argv[i]); return 2; }
+        }
+        return artifact_run(argv[2], argv[3], argv[4], manifest);
+    }
+
+    const char *hfdir = argv[2], *out = argc > 3 ? argv[3] : NULL;
     if (strcmp(mode, "baseline")) { fprintf(stderr, "eg2_gguf: unknown mode %s\n", mode); return 2; }
     if (!out) { fprintf(stderr, "eg2_gguf: output path required\n"); return 2; }
 
@@ -728,68 +1181,8 @@ int main(int argc, char **argv) {
     ds4gw_kv_u32(&W, "general.file_type", 32);            /* MOSTLY_BF16 */
     ds4gw_kv_u32(&W, "general.alignment", 32);            /* the writer's default */
 
-    char k[128];
-#define KVK(name) (snprintf(k, sizeof k, "%s." name, ARCH), k)
-    ds4gw_kv_u32(&W, KVK("block_count"), H.n_layer);
-    ds4gw_kv_u32(&W, KVK("context_length"), H.n_ctx);
-    ds4gw_kv_u32(&W, KVK("embedding_length"), H.n_embd);
-    ds4gw_kv_u32(&W, KVK("embedding_length_out"), H.n_embd_out);
-    ds4gw_kv_u32(&W, KVK("embedding_length_per_layer_input"), H.n_embd_pl);
-    ds4gw_kv_u32(&W, KVK("feed_forward_length"), H.n_ff);
-    ds4gw_kv_u32(&W, KVK("attention.head_count"), H.n_head);
-    ds4gw_kv_u32(&W, KVK("attention.key_length"), H.head_dim_full);
-    ds4gw_kv_u32(&W, KVK("attention.value_length"), H.head_dim_full);
-    ds4gw_kv_u32(&W, KVK("attention.key_length_swa"), H.head_dim_swa);
-    ds4gw_kv_u32(&W, KVK("attention.value_length_swa"), H.head_dim_swa);
-    ds4gw_kv_f32(&W, KVK("attention.layer_norm_rms_epsilon"), H.rms_eps);
-    /* HF's sliding_window is one-sided; the converter doubles it so the loader's
-     * symmetric mask (llama-hparams.h:524-533, |p1-p0| > n_swa/2) reproduces it
-     * (conversion/gemma.py:824-825). */
-    ds4gw_kv_u32(&W, KVK("attention.sliding_window"), 2 * H.n_swa_hf);
-    kv_arr_bool(&W, KVK("attention.sliding_window_pattern"), H.is_swa, H.n_layer);
-    ds4gw_kv_bool(&W, KVK("attention.causal"), 0);
-    ds4gw_kv_f32(&W, KVK("rope.freq_base"), H.rope_base);
-    ds4gw_kv_f32(&W, KVK("rope.freq_base_swa"), H.rope_base_swa);
-    ds4gw_kv_u32(&W, KVK("rope.dimension_count"), H.head_dim_full);
-    ds4gw_kv_u32(&W, KVK("rope.dimension_count_swa"), H.head_dim_swa);
-    ds4gw_kv_u32(&W, KVK("vocab_size"), H.n_vocab);
-    { uint32_t *kvarr = xmalloc(sizeof(uint32_t) * H.n_layer);
-      for (uint32_t i = 0; i < H.n_layer; i++) kvarr[i] = H.is_swa[i] ? H.n_head_kv_swa : H.n_head_kv_full;
-      ds4gw_kv_arr_u32(&W, KVK("attention.head_count_kv"), kvarr, H.n_layer);
-      free(kvarr); }
-    ds4gw_kv_u32(&W, KVK("pooling_type"), 1);   /* PoolingType.MEAN */
-
-    if (want_tok) {
-        /* The converter's own key set for this arch (conversion/gemma.py:641-676):
-         * model "gemma4", the token list, scores and types, then merges and the
-         * special ids. It writes no tokenizer.ggml.pre — the loader pins
-         * tokenizer_pre = "gemma4" for this model type itself
-         * (src/llama-vocab.cpp:2275), so the file does not carry one. */
-        ds4gw_kv_str(&W, "tokenizer.ggml.model", "gemma4");
-        ds4gw_kv_arr_str(&W, "tokenizer.ggml.tokens", (const char *const *)T.tok, T.n);
-        ds4gw_kv_arr_f32(&W, "tokenizer.ggml.scores", T.score, T.n);
-        ds4gw_kv_arr_i32(&W, "tokenizer.ggml.token_type", T.type, T.n);
-        if (T.n_merge) ds4gw_kv_arr_str(&W, "tokenizer.ggml.merges", (const char *const *)T.merge, T.n_merge);
-        if (T.have_bos) ds4gw_kv_u32(&W, "tokenizer.ggml.bos_token_id", T.bos);
-        if (T.have_eos) ds4gw_kv_u32(&W, "tokenizer.ggml.eos_token_id", T.eos);
-        if (T.have_unk) ds4gw_kv_u32(&W, "tokenizer.ggml.unknown_token_id", T.unk);
-        if (T.have_pad) ds4gw_kv_u32(&W, "tokenizer.ggml.padding_token_id", T.pad);
-        if (T.have_mask) ds4gw_kv_u32(&W, "tokenizer.ggml.mask_token_id", T.mask);
-        /* The add_* flags are SpecialVocab's, not the converter's: it derives them
-         * from tokenizer.json's post_processor (vocab.py:191-330). This
-         * checkpoint's post_processor is TemplateProcessing<single> =
-         * [<bos>, A, <eos>], so add_special_token = {bos: true, eos: true,
-         * sep: false} — measured, not assumed: tools/ref_vocab_probe.py runs the
-         * reference's own SpecialVocab over this checkpoint and prints exactly
-         * that (out/ref-specialvocab.gguf carries the keys it writes). Without
-         * add_eos the reference tokenizer drops the trailing <eos> the
-         * checkpoint's own tokenizer appends (src/llama-vocab.cpp:3625). */
-        ds4gw_kv_bool(&W, "tokenizer.ggml.add_bos_token", 1);
-        ds4gw_kv_bool(&W, "tokenizer.ggml.add_eos_token", 1);
-        ds4gw_kv_bool(&W, "tokenizer.ggml.add_sep_token", 0);
-        ds4gw_kv_bool(&W, "tokenizer.ggml.add_space_prefix", 0);
-        if (T.chat_template) ds4gw_kv_str(&W, "tokenizer.chat_template", T.chat_template);
-    }
+    emit_hparams(&W, ARCH, &H);
+    if (want_tok) emit_tokenizer(&W, &T);
 
     /* ---- plan the tensor table ---- */
     uint64_t total_bytes = 0;

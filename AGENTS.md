@@ -142,10 +142,17 @@ Read these before doing port work in this workspace:
    missing, found by running that reference code), the frozen 113-item input set,
    the anchor's provenance and digests, and the measurements that settle the eos
    and prompt-prefix decisions against their alternatives.
-6. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+6. `docs/artifact-gguf-gate1b.txt` — the phase-1b evidence: the artifact GGUF
+   written by re-wrapping the DQVD container (arch `gemma_vq`, 461 `vqblob`
+   payloads, one `q8_0` token table, 914 `bf16` tensors), gate 1b's three-sided
+   check, the metadata read back value by value through the port's own reader, the
+   sixth correction (the file's rank is never 0), and the fact that ds4's private
+   type 42 is why the reference loader accepts the baseline and refuses the
+   artifact.
+7. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-7. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
+8. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-8. Cross-session memory for this workspace lives under
+9. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.
