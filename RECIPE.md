@@ -285,6 +285,49 @@ so the reference loader refuses the artifact at its first VQ tensor while it
 loads the baseline (bf16/f32) happily — which is exactly why the anchor leg runs
 on the baseline.
 
+### 4e. What the codec costs, measured on a task (phase 5)
+
+RECIPE.md section 5 reports the codec's intrinsic cost (weight reconstruction
+cosines). Phase 5 reports what that cost does to retrieval, with the same engine
+over both weight sources and labels this project did not write: BEIR's SciFact test
+split, taken whole. The set is frozen in `tests/retrieval/` and its builder refuses
+any `scifact.zip` whose digest is not the pinned one; the gate pins the three frozen
+files' digests in turn, so a regenerated set cannot silently stand behind an old
+number.
+
+```sh
+# 23. The frozen labelled retrieval set — BEIR SciFact's test split, taken whole:
+#     300 labelled queries, 283 pooled documents, 339 labelled pairs, formatted with
+#     the checkpoint README's own retrieval-query prompt and titled-document rule
+mkdir -p $OUT/beir && cd $OUT/beir && \
+   curl -sSLO https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip && \
+   unzip -oq scifact.zip && cd ../.. && \
+   sha256sum $OUT/beir/scifact.zip
+tools/eg2_retrieval_set.sh $OUT/beir/scifact tests/retrieval
+
+# 24. Gate 5: the codec's cost on that task. One ids file drives both legs (built
+#     from the artifact's own vocabulary, which is the same in both files), each leg
+#     runs the same CPU reference tower — baseline weights, then the artifact's VQ
+#     payloads — and the scorer reports the agreement distribution and recall@k /
+#     MRR@10 at 768 and at each MRL width, with the invariants that would make the
+#     numbers wrong. About 80 minutes at the oracle's -O0 with the two legs running
+#     concurrently (EG2_PHASE5_SERIAL=1 runs them one after the other); a re-run
+#     reuses a leg whose raw file, ids and oracle binary still match. Writes
+#     out/phase5-{ids.tsv,items.tsv,baseline-*,artifact-*}.{txt,log,jsonl,meta}
+cd ds4-rs && make tests/parity/eg2vq_embd_c_oracle && cd ..
+tools/eg2_phase5_gate.sh \
+   $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+   $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
+
+# 25. The scorer's own check: two fixtures whose answers are worked out by hand,
+#     including the tie break's numeric rule (ids 9 and 10) and a deliberate rotation
+tools/eg2_retrieval_score_selftest.sh
+
+# 26. The same agreement distribution over the phase-2 sentence set, in the scorer's
+#     agreement-only mode (no labels there, so no retrieval metric)
+tools/eg2_retrieval_score.sh $OUT/phase4-baseline.jsonl $OUT/phase4-artifact.jsonl -
+```
+
 ## 5. Quality, measured
 
 The bar is the DeepSeek V4.1 recipe's own reported number, produced the same way (the
@@ -408,6 +451,19 @@ means reproducibility and byte accounting:
 | C identity | `DS4_MODEL_FAMILY_GEMMA_VQ` 16 / `DS4_VARIANT_GEMMA_VQ` 19 / `DS4_SHAPE_GEMMA_VQ`; `ds4.o` builds in 38.9 s, `ds4_cpu.o` in 10.7 s, and `test-catalog-parity` compares the shape's three copies |
 
 ## 8. Build notes
+
+Runtime builds on this card: the port's `ds4-rs` working copy selects the card's
+architecture through the tree's own mechanism rather than a hand-edited file — `cd
+ds4-rs && make cuda CUDA_ARCH=sm_89`, which builds the whole target list and records
+`CUDA_ARCH := sm_89` in the gitignored `.ds4-cuda-config.mk` the Makefile includes on
+every invocation, so later builds need no flag. The record earns its place twice over:
+nvcc 13.3's bare default here is sm_75 SASS (measured), and one object cannot cover the
+Spark and this card at once — with the Spark's `-DDS4_CUDA_HAVE_MXF4=1`, adding a second
+sm_89 gencode is refused outright by ptxas (`.kind::mxf4` not supported on `.target
+'sm_89'`). Switching cards is `make cuda-spark` for a GB10 and `make cuda-generic` for
+the host-detected default. The device path for the tower itself is not this note: it is
+P3 (phase 7), and the tree's existing kernels running on this card is the precondition
+row. Evidence: `docs/cuda-sm89-port.txt` sections 3e to 3g.
 
 The encode is CPU-only, and that was a measured decision rather than a preference. The
 reference's `vq_gpu.cu` kernels take host pointers directly because the machine they

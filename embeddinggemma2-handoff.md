@@ -1,13 +1,13 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: f811ce3ad7e3372cc5f8df28b3319ab3a8e2840d
+last_updated_commit: d591b9c7bdee07f998c52d041b0c40c01e68fafc
 branch: dev
 remote: 
-handoff_written_at_context_usage: 33%
-handoff_written_at: 2026-10-19T16:53:07+02:00
+handoff_written_at_context_usage: 20%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T18:22:43+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
-boundary_state: clean
+boundary_state: dirty
 ---
 
 Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rewritten 2026-10-19: the plan exact, the dropped routes named)
@@ -53,22 +53,26 @@ configured on the outer repo).
    entry and the commits are in place, call the compact_session tool as the
    last action of that turn.
 
-2. Current state (2026-10-19, verified in this session, unit 14)
+2. Current state (2026-10-19, verified in this session; unit 17 has landed phase 7's P3.1 and P3.2, phase 5 is STOPPED by the owner's directive, and the CUDA unblocking plus this card's build wiring are DONE and committed)
 
-- Workspace: /data/embeddinggemma2, branch dev, HEAD f811ce3 plus this unit's commit, tree clean but for this handoff. Nested ds4-rs carries this unit's work — the tokenizer, the family's C bind, dense decode, reference tower and its oracle — on top of 467af3a4, branch feat/ds41-dsml-carriage.
-- Artifact (phase 1b, THE RUNNABLE FORM): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf, 437,508,416 B, sha256 5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f — arch gemma_vq, 1376 tensors (461 type-42 vqblob, 1 type-8 q8_0 token table, 914 type-30 bf16), 42 KV, DATA_POS 15,881,824. Gates 1b and 3 still pass with the tower's bind in the path (re-run this unit).
-- THE TOWER (phase 4, new): `ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>` prints one 768-dim normalized vector per item; 113 items / 7088 tokens take 310 s and a 520.0 MiB dense decode at the oracle's -O0. `cargo run -p ds4-core --release --example gemma_vq_tok -- <gguf> <items.tsv> <prompt-map.json>` is the host's token dump. Gate 4 (`tools/eg2_phase4_gate.sh`): the ids equal llama.cpp's own id for id on all 113 items, and the reference reproduces the anchor on baseline weights at 768 mean cosine 0.99999681 / min 0.99998727 against a declared floor of 0.9999; the same graph on the VQ artifact is reported separately (its gap is the codec, phase 5's subject). Evidence: docs/text-tower-gate4.txt.
-- Baseline (phase 1a/2): out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, 557,949,600 B, sha256 0d84f1a9…, unchanged. Gate 1a passes; llama.cpp at the pin loads it — and it, not the artifact, is what the anchor's vectors came from (llama.cpp cannot read type 42).
-- Anchor (phase 2, frozen, unchanged this unit): tests/anchor/anchor-items.tsv (113 items, sha256 0e746c6c…) and tests/expected/anchor-embeddinggemma2.jsonl (sha256 7561254c…).
-- Container (the artifact's input, still the byte-verified record of the quantization): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B, `bin/eg2_pack_cpu check` says kind=0 slots=1376, structure OK.
-- Tools: bin/{eg2_vq,eg2_pack,eg2_pack_cpu,eg2_gpuprobe,eg2_gguf}; tools/{eg2_gguf_check.sh,eg2_artifact_check.sh,eg2_loader_check.sh,eg2_tok_check.sh (new: the tokenizer leg),eg2_phase4_gate.sh (new: gate 4),eg2_anchor.sh,eg2_anchor_cmp.sh,ref_vocab_probe.py}.
-- New this unit, measured: the tokenizer port matches the pinned reference id for id (a stronger check than the counts, because the gate compares sequences); the tower's baseline leg is the only leg that can be compared to the anchor, since llama.cpp refuses the artifact at its type-42 tensors; and the two a reader should not "fix" later are the symmetric +-512 mask (not a trailing window) and the attention scale of exactly 1.0 (no 1/sqrt(head_dim) — that belongs to the older 300m gemma-embedding).
-- Environment findings, pre-existing and both still true (section 7): ds4_cuda.o is stale and its rebuild fails in ptxas while targeting sm_89, so the C binaries and the GPU-linked Rust host cannot be built from this working copy; and /data/build/linux/build.sh cannot build this tree's binaries at all (they require `--features native`).
-- Guardrails: all five P-1 checks return zero on 2026-10-19; `sha256sum -c SHA256SUMS` passes on all five entries. The frontmatter's usage figure is a FALLBACK, not the gauge: this session's `signals.json` was last written at 14:57 and still reads 37%, so the number is `chat_history.jsonl` bytes / 4 (the protocol in section 1 says to name that fallback in the session report).
+- Workspace: /data/embeddinggemma2, branch dev, HEAD d591b9c (unit 14), tree DIRTY BY DESIGN — unit 15's and unit 17's files are uncommitted, and the exact stale inventory is section 8. Nested ds4-rs is CLEAN and FIVE local commits ahead of 5c11fc64: 9a6498da (the five sm_90 guards), ef79b5c2 (the server's missing GemmaVq arm), c7dd3ebb (this card's sm_89 arch recorded), bc353351 (P3.1, the dim-4 VQ device GEMM), 669a8777 (P3.2, the symmetric-mask attention kernel). Nothing is pushed.
+- Unit 15 (phase 5, row X.7) is UNFINISHED and was STOPPED, not cancelled, by the owner: "stop the CPU we fix the GPU now" (2026-10-19 16:28Z) cut both legs of the restarted gate at 255 of 583 items so the machine went to the device path. Evidence and state: out/phase5-gate-stop-note-1628Z.txt, with the killed log kept as out/phase5-gate-stopped-1628Z.log and both partial raws renamed *-raw-stopped-1628Z.txt. A partial raw is not a leg (reuse needs 583 lines plus a matching .meta), so a restart is the full run — measured at ~1.4 s/item per leg on an idle host, i.e. about 15 minutes, against the ~2 hours the earlier contended run implied. The tables arrive with the `gate 5:` line.
+- Unit 17 (phase 7, rows P3.1/P3.2) is the unit this section describes: two device kernels, each with its own gate, each committed in ds4-rs, with the evidence in docs/eg2vq-device-gate7.txt and the logs out/phase7-p31-gate.log / out/phase7-p32-gate.log. It also found and measured a defect of the CPU path's own decoder (the subnormal halving above, tools/eg2_subnorm.c) and two defects of its own kernels, which the gates caught.
+- Unit 15's gate has now been interrupted twice: the first run started 15:08:12Z and was cancelled by a session interrupt at 16:03:34Z (3322 s) with each leg at 409 of 583 items and about 15 tokens/s under two-leg contention; the restart began 18:21Z and was stopped by the owner's directive at 18:28Z with each leg at 255 of 583 items, at ~1.4 s/item because the host was idle by then. Neither partial raw is reusable (a leg needs 583 lines plus a matching .meta), so the next restart is the full run. The restart's log is out/phase5-gate-stopped-1628Z.log and the note beside it records the state, the reason and the corrected duration.
+- The frozen set (new this unit, committed only at unit 15's commit): tests/retrieval/scifact-test-{queries,pool,qrels}.tsv — the BEIR SciFact test split taken whole, 300 queries / 283 documents / 339 labelled pairs, digests 1247b1f4.. / caf498d9.. / 864141f9... Gate 5 re-runs the builder and refuses unless all three come back byte for byte.
+- The harness (new this unit): tools/eg2_retrieval_set.sh (the builder), tools/eg2_phase5_gate.sh (gate 5: one ids build, two weight legs over one ids file, conversion, scoring, hashes), tools/eg2_oracle_to_jsonl.sh, tools/eg2_retrieval_score.sh (agreement plus recall@k/MRR with invariants), tools/eg2_retrieval_score_selftest.sh (8 hand-checked cases, passes).
+- Already measured, reproducible in about a second (log out/phase5-phase4pair.log): the codec on the phase-4 pair — 768 mean cosine 0.960069342 / min 0.829288170 / p5 0.936426481 / p25 0.951163299 / p50 0.961872843 / p75 0.973416818, with 24 items below 0.95 and 1 below 0.90 at 768, and 0.976135232 mean at 128. docs/retrieval-cost-gate5.txt holds sections 1-5a and 8; 5b/5c and the result paragraph are marked PENDING until the legs land.
+- The CUDA unblocking is DONE and committed (ds4-rs 9a6498da): the blocker was never a missing backend. It is FIVE sm_90-only instruction sites — four `cp.async.bulk.prefetch.L2.global` and one `mbarrier.try_wait.parity` — in three headers (cuda/glm_vq_q4p.cuh 1, cuda/glm_vq_flash.cuh 2, cuda/glm_vq_gemv.cuh 2), each arch-guarded and each keeping the sm_90+/Blackwell instruction verbatim. Counted in the artifacts rather than from prose: `grep -c '!defined(__CUDA_ARCH__)'` gives 1/2/2, and 9a6498da is 42 insertions and 0 deletions over those three files. Two corrections to what an earlier version of this handoff said: the count is five sites, not six instructions; and the guard spelling is not a deviation from both precedents — ds41_vq_prefill_mma.cuh:294 already spells it with the !defined clause (my sites take the spelling from it) while glm_vq_mma.cuh:85 uses the bare form, and ds41 has no fallback arm at all, so my sites take the fallback from glm_vq_mma.cuh:89's #else instead.
+- Measured with nvcc 13.3 this session: `mbarrier.try_wait.parity` is REFUSED for sm_89 ("Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher") and compiles for sm_121a; `mbarrier.test_wait.parity` plus `prefetch.global.L2` compile for both.
+- This card's build wiring is DONE and committed (ds4-rs c7dd3ebb): `make cuda CUDA_ARCH=sm_89` recorded `CUDA_ARCH := sm_89` in the gitignored .ds4-cuda-config.mk, replacing `native` (which resolves to the same card here — measured — but does not name it when the file is read on its own). A rebuild with no arch anywhere on the command line therefore compiles `-arch=sm_89` and yields ds4_cuda.1.sm_89.cubin, and the card is named in the tree's tracked files (README.md:91 and the Makefile help block). The whole target list builds from the record — `make cuda` exit 0, with ds4, ds4-server, ds4-bench and ds4-agent each carrying ten sm_89 cubins and each exiting 0 on `--help` — and the three device tests pass on this card (out/cuda-card-wiring.log, out/cuda-card-wiring-build.log). One object covering both this card and the Spark was measured impossible, so the arch stays a per-build choice (out/cuda-multiarch-probe.log). Building the whole list is also what surfaced ef79b5c2: this working copy could not build its server at all, because worker_run.rs's family match never got the GemmaVq arm its CLI twin received in 467af3a4. ds4_cuda.o is GITIGNORED, so the prebuilt objects were copied to out/cuda-objects-backup-sm121a before any of this (94 MB; `cuobjdump --list-elf` confirms the sm_121a cubin) — that copy is the rollback, not git.
+- The gate-5 inputs, all verified this session: artifact sha256 5bcf2216.., baseline 0d84f1a9.., ids out/phase5-ids.tsv 9464c272.. (583 items / 107,029 tokens), items 66b956ad.., oracle d214f217.., and the phase-4 jsonl pair scored above is 9aefc2eb.. (baseline) / 0b5557cb.. (artifact).
+- Nothing measured so far claims: an END-TO-END device result (phase 7's P3.1 and P3.2 kernels are gated one at a time; nothing composes them into a tower yet, so there is no device tokens/s and no VRAM figure — P3.3 owns both), a serving route (phase 6), the vision/audio towers (phase 8), a latency number for the phase-5 legs (both ran concurrently, so their secs= are contended), or an MTEB-comparable score (the pool is the 283 labelled documents, not the 5183-document corpus).
+- Guardrails re-verified this session: all five P-1 checks return zero and `sha256sum -c SHA256SUMS` passes on all five entries. The frontmatter usage figure is the gauge here, not a fallback: signals.json reads contextTokensUsed 126471 / contextWindowTokens 1000000 = 12%.
+
 
 3. Next unit plan — run EmbeddingGemma-2 in ds4-rs, phase by phase (2026-10-19)
 
-Status: 1a, 2, 1b, 3 and 4 done (all 2026-10-19); 5..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
+Status: 1a, 2, 1b, 3 and 4 done (all 2026-10-19); 5 STOPPED by the owner's directive (the CPU legs were cut at 16:28Z to free the machine for the GPU; a restart is a full run, measured now at ~15 minutes on an idle host); 7's first two rows DONE this unit (P3.1 and P3.2, each gated and committed in ds4-rs), P3.3 OPEN; 6 and 8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
 `gemma_vq` payload, per the owner's container decision) and emits the 768-dim
 embeddings this model exists for, on the GPU, with the measurements that show the
 port matches the pinned original. Runtime is Rust + C + CUDA; no Python anywhere,
@@ -184,21 +188,102 @@ PHASE 4 — the text tower on the CPU reference path (phase-doc rows P1.1-P1.20)
 - Two corrections of the plan this unit made. (1) The phase doc's P1.8 said the symmetric half-window is 256 and the span 513; `n_swa` is the file's 1024, so the half is 512 and the span 1025 (corrected in the same commit). (2) The tokenizer is host-side only: no C gemma4 splitter was added, because the C oracle consumes ids and the tokenizer's oracle is the pinned reference itself (`tools/eg2_tok_check.sh`); the three `tests/tokenizer.rs` arms that used to say "no tokenizer yet" now say that.
 - What this unit does NOT claim: no device path (the CUDA object does not build in this working copy), no route (phase 6), no tower encoders (phase 8), and no quality verdict — the artifact's 0.96 is what the codec costs on this task, which phase 5 measures properly against the baseline.
 
-PHASE 5 — what VQ costs (phase-doc row X.7)
+PHASE 5 — what VQ costs (phase-doc row X.7). UNFINISHED 2026-10-19 (unit 15): the harness is built and self-tested, but its two legs were cancelled mid-run at 409 of 583 items each and are NOT running; the retrieval numbers are NOT in hand. Restarting costs the full run, not the remainder.
 
 - Act: the same sentence set and a frozen labelled retrieval set through our own engine, once with the baseline GGUF and once with the VQ artifact; report the cosine agreement distribution (mean, min, quantiles) and recall@k / MRR at 768 and at each MRL width.
 - Gate: the numbers are committed with the artifact hashes they were measured on. This is the owner's "not less smart" answer, and it needs no third party.
+- Landed this unit, uncommitted until its commit: tools/eg2_retrieval_set.sh (the set builder, byte-reproducible), tests/retrieval/scifact-test-{queries,pool,qrels}.tsv (300 queries / 283 documents / 339 labelled pairs; the digests are pinned inside the gate), tools/eg2_phase5_gate.sh (gate 5 itself), tools/eg2_oracle_to_jsonl.sh, tools/eg2_retrieval_score.sh (the scorer: agreement, recall@k, MRR@10, top-1-changed count, top1-top2 margin, and the invariants that make a wrong number fail loudly), tools/eg2_retrieval_score_selftest.sh (8 hand-checked cases) and docs/retrieval-cost-gate5.txt (sections 1-5a and 8 written; 5b/5c and the result paragraph PENDING).
+- Resume it with `tools/eg2_phase5_gate.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`. A leg is REUSED when its raw file exists AND its .meta records the same ids sha and the same oracle sha AND the raw still has 583 items, so a re-run after the first completion costs minutes instead of 78.
+- Still to do in this unit, in order: (1) add the phase-4-pair agreement-only step to tools/eg2_phase5_gate.sh — never edit that script while it is running, bash re-reads it; the same scoring is already run and logged at out/phase5-phase4pair.log; (2) re-run the gate so the final log carries every table; (3) fill sections 5b/5c of docs/retrieval-cost-gate5.txt plus its result paragraph; (4) RECIPE.md section 5 (the codec's cost on a task), its section 6 item 3 and its section 7 retrieval row; (5) phase-doc row X.7 to DONE and section 9's sequence; (6) commit the outer repo with the trailer "Unit: 15 complete".
+- The one number already in hand, for orientation only: on the phase-4 sentence pair the artifact's vectors agree with the baseline's at 768 mean cosine 0.960069342 / min 0.829288170 (out/phase5-phase4pair.log, which reproduces phase 4's own table and adds the quantiles). The retrieval delta — whether the ranking changed — is what this phase exists to produce and it is NOT in hand.
 
 PHASE 6 — the entry point (phase-doc rows P2.1-P2.4)
 
-- Land: a CLI verb (crates/ds4-cli/src/lib.rs:184 parse_args, family arms :451, :491), then /v1/embeddings in crates/ds4-server/src/serve.rs beside the existing arms (:1169, :1183, :1212 — measured today: no embeddings route and no pooling anywhere in crates/), plus the serving capability and native-limit arms (crates/ds4-core/src/serving.rs:715, serving_host.rs:1111), the task-prompt selection from config_sentence_transformers.json, and MRL truncation on request.
-- Gate: the route returns the same vector as the CLI byte for byte for the same input and prompt.
+- Land: a verb that emits one text's vector, then a `v1/embeddings` route beside the
+  server's existing arms, plus the task-prompt selection from
+  config_sentence_transformers.json and MRL truncation on request.
+- Where, each site re-verified in this session (unit 15) rather than carried over:
+  - CLI: `crates/ds4-cli/src/lib.rs:184` `parse_args` (the flag parser). The family
+    match arms at `:441-452` and `:489-492` are the MTP/speculation lists — this
+    family has no MTP, so those are NOT the sites. The crate has exactly three
+    binaries, all `required-features = ["native"]` (`crates/ds4-cli/Cargo.toml:12-25`),
+    so the verb is either a fourth `[[bin]]` (e.g. `src/bin/ds4-embed-rs.rs`) or a
+    flag on the existing `ds4-rs` binary; the CLI's own build script compiles only
+    linenoise (`crates/ds4-cli/build.rs`).
+  - Route: `crates/ds4-server/src/serve.rs:1143`
+    `fn prepare_client(cfg, inner, stream) -> Option<PreparedJob>` holds the whole
+    dispatch — GET `/v1/models` `:1169`, `/v1/models/*` `:1183`, `/metrics` `:1194`,
+    `/v1/stats` `:1212`, and the POST arm at `:1240` (first line:
+    `let inference = shed_surface_for_path(&req.path).is_some();`). An embeddings
+    route is a new POST arm beside it plus a surface:
+    `crates/ds4-server/src/http.rs:283` `shed_surface_for_path`, `:293`
+    `parse_surface_for_path`, over `enum WireSurface`
+    (`crates/ds4-server/src/route/mod.rs:74`).
+  - Capability arms: `crates/ds4-core/src/serving.rs:664` `serving_caps(family,
+    variant)`, whose GemmaVq arm at `:791` already declares this encoder's caps
+    (banks None, disk None, snapshot None, mtp None, host Any); and
+    `crates/ds4-core/src/serving_host.rs:1100` `family_native_limit`, whose GemmaVq
+    arm at `:1116` is FAMILY_NATIVE_MAX with a comment naming this phase.
+  - Verified absent today: no pooling implementation and no embeddings route anywhere
+    under `crates/` (grep: only `gemma_vq.rs:128-130` checking the metadata's
+    `pooling_type`, and the caps comment at `serving.rs:788-789` naming this phase).
+    The mean-pool + L2 composition exists only on the C reference path
+    (`ds4_eg2vq_ref_embed`).
+  - BLOCKER — CLOSED and committed this unit (row X.9; ds4-rs 9a6498da, c7dd3ebb, ef79b5c2). The tree
+    links every Rust binary against `DS4_RS_LINK_OBJS = native/bridge/ds4_bridge.o
+    $(CORE_OBJS)` (`Makefile:332`, used at `:355-357`), and on this platform `CORE_OBJS`
+    carries the CUDA objects (`Makefile:78-80`: `ds4_cuda.o`, the eight `cuda/mmq/*.o`,
+    `cuda/qwen38_ple.o`), so the host cannot be built without a CUDA object set this card can
+    execute. The blocker was five sm_90-only instruction sites — not six, and not a missing
+    backend: four `cp.async.bulk.prefetch.L2.global` (`cuda/glm_vq_flash.cuh:313` and `:351`,
+    `cuda/glm_vq_gemv.cuh:50` and `:133`) and one `mbarrier.try_wait.parity.shared.b64`
+    (`cuda/glm_vq_q4p.cuh:130`). The `ds41_vq_prefill_mma.cuh` and `glm_vq_mma.cuh` sites named
+    in the earlier version of this bullet were ALREADY guarded by the tree itself and never
+    belonged in the count; `grep -c '!defined(__CUDA_ARCH__)'` on the three edited headers gives
+    1/2/2.
+    - The owner's directive — "we need to get cuda support, it should be much faster" — settled
+      this phase's choice in favour of (a); the guards are committed (9a6498da, 42 insertions, 0
+      deletions over three headers), taking their spelling from
+      `cuda/ds41_vq_prefill_mma.cuh:294` and their fallback arm from `cuda/glm_vq_mma.cuh:89`.
+    - Measured with nvcc 13.3: the sm_90 forms are REFUSED for sm_89 ("requires .target sm_90 or
+      higher") and compile for sm_121a; the fallbacks compile for both.
+    - The arch is recorded now (c7dd3ebb): `.ds4-cuda-config.mk` reads `CUDA_ARCH := sm_89` in
+      place of `native`, so a build with no flag on the command line is still card-native, and
+      the whole target list builds from the record — `make cuda` exit 0, four Rust hosts, ten
+      sm_89 cubins each (`out/cuda-card-wiring-build.log`).
+    - One object covering both this card and the Spark is NOT available at the cost of a flag:
+      ptxas refuses `.kind::mxf4` on sm_89 (`out/cuda-multiarch-probe.log`), so the arch stays a
+      per-build choice and a sync to a Spark must run `make cuda-spark`.
+    - Building the whole list surfaced a regression of ours and fixed it (ef79b5c2):
+      `crates/ds4-server/src/worker_run.rs:16` never got the `GemmaVq` arm its CLI twin received
+      in 467af3a4, so the server crate did not compile at all.
+  - What (b) still gives, and why it is only the fallback now: `CPU_CORE_OBJS =
+    ds4_cpu.o ds4_ple.o ds4_distributed.o` (`Makefile:81`) plus `ds4_bridge.o` is what the C
+    oracles already build and run, so it stays the short path to a working CLI verb over phase
+    5's CPU-only engine. With the arch fixed no CUDA object resists a sm_89 build, so phase 6
+    does not need it; it is the documented fallback if one ever does again.
+  - Rollback: the guarded headers are committed (9a6498da), so their rollback is the commit
+    rather than a checkout. The object files are NOT tracked (`ds4_cuda.o` is gitignored): the
+    prebuilt set is kept in `out/cuda-objects-backup-sm121a` (94 MB, sm_121a cubin), which is the
+    rollback, not git. The arch record reverts with one `make cuda-spark` or `make cuda-generic`.
+  - Next for phase 6: no CUDA work remains. The host links, all four Rust binaries build from the
+    recorded arch, and `./ds4 --help` and `./ds4-server --help` exit 0. The verb and the route
+    below are the work.
+- Gate: the route returns the same vector as the CLI byte for byte for the same input
+  and the same prompt name.
 
-PHASE 7 — the device path (phase-doc rows P3.1-P3.3)
+PHASE 7 — the device path (phase-doc rows P3.1-P3.3). Unit 17 (2026-10-19): P3.1 and P3.2 are DONE, P3.3 is what remains and it is the phase's gate. The owner's directive ("we need to get cuda support, it should be much faster") is why this phase runs before 6.
 
-- Read: cuda/ds41_vq_row.cuh:55 (the kernel refuses any dim but 8) and crates/ds4-core/src/vq.rs:42 (VQ_DIM = 8) against our dim-4 tier; the attention kernel ds4_cuda.cu:42201 with the row cap :42208 (`rows > 256u`), the `float score[256]` at :42211 and the trailing-window line :42214, its public API ds4_gpu.h:3645 (no window) and :3658 (window), and the VQ-in-kernel execution pattern ds4_glmvq_gpu.cuh.
-- Land: a dim-4 VQ device kernel, a production bidirectional attention kernel with the symmetric ±n_swa/2 mask, and the tower end to end on the GPU with payloads consumed in-kernel (never expanded to dense).
+- DONE P3.1, the dim-4 VQ device GEMM: ds4-rs/cuda/eg2vq_vq.cuh (committed bc353351). Payload opened in-kernel with its own geometry re-checked, codebook in shared, 12-bit stream decoded per slab, 64-token x 64-row tile on 16 x 16 threads, 40 KB static shared, f32 in and f32 accumulation because the CPU reference path is f32. Gate: tests/test_eg2vq_vq.cu, `make test-eg2vq-vq`, out/phase7-p31-gate.log — rel RMS 4.01e-07 to 8.22e-07 against an FP64 dot of the payload's own decoded values at all six tower geometries, min cosine 1.000000000, wrong-geometry payload refused, 3.14 TFLOP/s at 2048x512x184 and 3.13 at 512x2048x1414 (single kernel). Two bugs of its own were caught by that gate (a slab-stride formula and a block-local unpack row index) and are recorded in docs/eg2vq-device-gate7.txt section 2b.
+- DONE P3.2, the attention kernel: ds4-rs/cuda/eg2vq_attn.cuh (committed 669a8777). One block per query token, one warp per query head, the key range split across lanes, three passes (scores + max, expf + sum, weighted sum over output dims), scale exactly 1.0f, no causal mask, the SYMMETRIC ±512 mask (the tree's existing windowed kernel is trailing and refuses rows > 256, so this is new code). Gate: tests/test_eg2vq_attn.cu, `make test-eg2vq-attn`, out/phase7-p32-gate.log — rel RMS 5.77e-07 to 1.78e-06 and min per-(query,head) cosine 1.000000000 at all seven tower shapes, plus a measured mask edge (distance 512 sees the value row, 513 and 1100 blind, device output exactly zero). An item beyond 2048 tokens is refused by the launcher, not truncated.
+- OPEN P3.3, the tower end to end on the device — the gate of this phase, and the one the owner's premise is settled by. What it needs, in order: (1) cuda/eg2vq_ops.cuh — weighted row RMS, weighted per-head q/k RMS plus the weightless v RMS, NeoX RoPE at both bases, the two GELU-muls, mean pool + L2, and the q8_0 token-table gather (or the tree's ds4_gpu_embed_tokens_q8_0_tensor, ds4_gpu.h:678-687), each mirroring ds4_eg2vq_graph.inc's arithmetic; (2) ds4_eg2vq_gpu.cuh — the family's device adapter on the ds4_glmvq_gpu.cuh pattern (included once by ds4_cuda.cu, a model/ctx pair, the 437 MB of payloads copied to the device ONCE per process and reused across items — this is where "weights device-resident" stops being an intention); (3) tests/test_eg2vq_gpu.cu — the artifact's real payloads and real item ids through the device tower against the CPU path's own committed vectors, with the parity bound stated up front and tokens/s plus VRAM printed by the run; (4) the numbers recorded and the row closed, with no threshold invented after the fact.
+- Measured constraint the P3.3 design inherits: the GEMM re-reads each payload once per 64-token tile, so a 1414-token document reads the whole 437 MB about 23 times; the mitigation is a larger token tile (one constant) or a K-split, and nothing has been measured about it at tower scale yet.
+- Finding recorded in P3.1 that P3.3's parity gate must expect: the tree's vendored half converter `ds4vq_f16` (ds41_vq_fmt.h:38-43) returns exactly HALF the IEEE value for every subnormal f16 input, so our CPU reference path decodes subnormal codebook entries at half magnitude while the device kernel follows the file (tools/eg2_subnorm.c measures it on the real artifact: 8,893 of 7,553,024 codebook entries, 6.09756e-05 the largest, 2.28e-09 of the decoded weight L1 mass). The device follows the file's own reader; fixing the shared converter is a separate decision, not a silent edit.
+- Not started: the DS4_CUDA_HAVE_MXF4-free device adapter's registration in ds4.c's family path (the glue that makes the *runtime* pick the device tower rather than the CPU one). Phase 6's entry point and this are the two integration steps left after P3.3.
+
+- Land: a dim-4 VQ device kernel, a production bidirectional attention kernel with the symmetric ±n_swa/2 mask, and the tower end to end on the GPU with payloads consumed in-kernel (never expanded to dense — the 520 MiB f32 decode per leg is exactly what must not happen on the device path).
 - Gate: GPU vectors equal the CPU path within a stated tolerance, plus a latency and a VRAM number printed by the run.
+- The trap this project has already measured, which the design must avoid: the encoder's kernels were 146x faster than the CPU scalar loop on one isolated stage and still 1.25 to 3x SLOWER per tensor end to end, because the data path was PCIe (RECIPE.md section 8). The tower is a few hundred MB of weights on a 12,282 MiB card, so residency is not the constraint; per-operation host-to-device copies would be. So the measurement that settles "faster" is a weights-resident device run over the same ids as the CPU oracle, reporting cosine parity (against the CPU vectors, and against the frozen anchor on baseline weights) together with tokens/s and VRAM.
 
 PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owner wants them
 
@@ -206,21 +291,34 @@ PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owne
 
 Order of work, and the first command of the next session:
 
-0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (done, the text tower and the tokenizer) → 5 (what VQ costs) → 6 (the entry point) → 7 (the device path) → 8 if wanted.
+0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (done, the text tower and the tokenizer) → 5 (STOPPED by the owner's directive of 16:28Z, see the item below) → 6 (the entry point; its CUDA blocker is CLOSED) → 7 (P3.1 and P3.2 DONE 2026-10-19, P3.3 the remaining gate) → 8 if the owner wants it.
 
-First commands of the next unit (phase 5, the quantization's cost): re-confirm the
-gates before writing anything — `sha256sum -c SHA256SUMS` must pass, `tools/eg2_loader_check.sh
-out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv` must
-print its line counts with 1376 tensors and 8 refusals, and `tools/eg2_phase4_gate.sh <artifact>
-<baseline> tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json`
-must end with the declared floor met on the baseline leg (about 20 minutes: four tower runs at the
-oracle's -O0). Then the unit itself: a frozen labelled retrieval set with a
-recall@k/MRR harness run twice through the same C reference entry — baseline weights and VQ
-weights — reporting cosine agreement (mean, min, quantiles) at 768 and at each MRL width, and the
-artifact hashes both runs were measured on. The engine now exists for it: `ds4_eg2vq_ref_embed`
-(one item's ids -> the pooled, normalized 768 vector) and the oracle that drives it
-(`ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>`, written by
-`crates/ds4-core/examples/gemma_vq_tok.rs`). Phase 5 needs no new kernel and no GPU.
+The owner cut phase 5's CPU run mid-flight on 2026-10-19 16:28Z ("stop the CPU we fix the GPU now") and unit 17 has been the device path since. Phase 5 is therefore UNFINISHED, not failed: both legs stood at 255 of 583 items, no .meta was written, so neither raw is reusable and a restart is the whole run — out/phase5-gate-stop-note-1628Z.txt records the state, and the stopped artifacts are preserved as out/phase5-*-raw-stopped-1628Z.txt. The same note corrects the earlier "~2 hours" estimate: with the host idle the legs ran at ~1.4 s/item, so a full restart is ~15 minutes, not two hours (the earlier figure was measured while the CUDA objects were being built).
+
+First commands of the next session, in this order:
+
+1. Continue phase 7 at row P3.3, which is now the critical path: the device path's
+   P3.1 (VQ GEMM) and P3.2 (attention) are done, gated and committed
+   (`cd ds4-rs && make test-eg2vq-vq && make test-eg2vq-attn`, both exit 0), so the
+   next artifact is cuda/eg2vq_ops.cuh plus ds4_eg2vq_gpu.cuh plus
+   tests/test_eg2vq_gpu.cu, exactly as PHASE 7 lists them. Re-run the two existing
+   gates first: they are cheap (seconds) and they are the floor P3.3 builds on.
+2. Restart gate 5 when the machine is free (the owner deferred it, it is not
+   cancelled): `tools/eg2_phase5_gate.sh <artifact.gguf> <baseline.gguf>` in the
+   background — about 15 minutes idle, and it holds ~16 cores, so run it when the
+   device work is not being measured. Legs are only reused when their .meta matches
+   and the raw holds 583 items; the stopped raws do not qualify.
+3. Re-confirm the standing gates before trusting any number: `sha256sum -c SHA256SUMS` (all five entries),
+   `tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf
+   out/artifact-manifest.tsv` (1376 tensors, 8 refusals by name). Gate 4 is the third and costs about 20
+   minutes; its result stands from unit 14 and was re-run then: `gate 4: PASSED (baseline C reference vs
+   anchor, 768 mean cosine 0.999996809 >= 0.9999)`.
+4. Then phase 6, whose first question is the one phase 6 records and which must be answered by attempting
+   the link rather than by reasoning about it: does the Rust host resolve against the sm_89 CUDA objects, or
+   does it need `CPU_CORE_OBJS` plus `ds4_bridge.o`? Its CUDA blocker is closed (row X.9), and it is also
+   where the device tower's registration in ds4.c's family path belongs, so the *runtime* picks the device
+   path rather than the CPU one.
+5. Phase 5's remaining work (the tables, the evidence doc, RECIPE, row X.7) once its gate has run.
 
 4. Reference map — the exact repos and files (pinned; verified in this session)
 
@@ -236,6 +334,9 @@ artifact hashes both runs were measured on. The engine now exists for it: `ds4_e
 | The loader and its gate (phase 3, landed) | our own code | ds4-rs/crates/ds4-core/src/gemma_vq.rs + gemma_vq/layout.rs, the family arms, ds4.c's `DS4_SHAPE_GEMMA_VQ`, ds4_eg2vq.h/.inc; tools/eg2_loader_check.sh (gate 3) and docs/loader-gate3.txt (the evidence) |
 | The tower and its gate (phase 4, landed) | our own code | ds4-rs/crates/ds4-core/src/tok/gemma_vq.rs + examples/gemma_vq_tok.rs + tests/eg2vq_ref.rs; ds4-rs/ds4_eg2vq_graph.inc + ds4_eg2vq_bind.inc + tests/parity/eg2vq_embd_c_oracle.c (the CPU reference forward and its oracle); tools/eg2_tok_check.sh, tools/eg2_phase4_gate.sh, docs/text-tower-gate4.txt |
 | The tokenizer's own oracle (phase 4; the family has no C splitter by design) | /data/llama.cpp at the pin, run through the anchor build | `llama-embedding ... --verbose-prompt` prints the reference's per-item token ids; tools/eg2_tok_check.sh regenerates that dump (out/tok-anchor-verbose.log) and diffs it against the Rust host's, id for id |
+| The task-level cost of the codec (phase 5, in flight) | our own code and data | tools/eg2_retrieval_set.sh (the builder), tests/retrieval/scifact-test-{queries,pool,qrels}.tsv (300 queries / 283 documents / 339 pairs; digests pinned inside the gate), tools/eg2_phase5_gate.sh (gate 5), tools/eg2_oracle_to_jsonl.sh, tools/eg2_retrieval_score.sh (agreement, recall@k, MRR@10, top-1-changed, margin, invariants), tools/eg2_retrieval_score_selftest.sh (8 hand-checked cases), docs/retrieval-cost-gate5.txt (the evidence), out/phase5-* (gitignored) |
+| The labelled data, and its pinned origin | BEIR SciFact (Thakur et al., NeurIPS 2021 Datasets and Benchmarks track), fetched once | https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip, pinned in tools/eg2_retrieval_set.sh as ZIP_SHA 536e1444.. ; the extracted out/beir/scifact is gitignored, and the gate re-runs the builder from it whenever it is present |
+| The CUDA portability pattern (row X.9, DONE: ds4-rs 9a6498da, c7dd3ebb) | the tree's own precedents, mirrored rather than invented | cuda/glm_vq_mma.cuh:85 (the bare `#if __CUDA_ARCH__ >= 900` with a `prefetch.global.L2` #else arm) and cuda/ds41_vq_prefill_mma.cuh:294 (the same guard spelled with the !defined clause and NO fallback arm) — neither precedent has both halves, so the five new sites take the spelling from one and the fallback from the other; the three headers now committed (cuda/glm_vq_q4p.cuh, cuda/glm_vq_flash.cuh, cuda/glm_vq_gemv.cuh; 42 insertions, 0 deletions); the arch record ds4-rs/.ds4-cuda-config.mk (`CUDA_ARCH := sm_89`, gitignored); the prebuilt-object backup out/cuda-objects-backup-sm121a (94 MB, the sm_121a cubin) |
 | The model | /data/embeddinggemma2/.models/EmbeddingGemma-2-914f7f8 (1.5 GB, 15 files, gitignored) | config.json, per_layer_config, config_sentence_transformers.json, 1_Pooling/config.json, modules.json, tokenizer.{json,model}, tokenizer_config.json, README.md |
 | Counter-example only | /data/llama-prism @ b10743 | not needed; read only to avoid copying its 1/sqrt(head_dim) attention scale |
 
@@ -251,26 +352,26 @@ artifact hashes both runs were measured on. The engine now exists for it: `ds4_e
 
 6. Project facts a fresh session cannot re-derive
 
-- Workspace layout: RECIPE.md (the artifact recipe: sections 4 commands, 5 quality, 6 what the port must implement, 7 identity); RECIPE-deepseek41-vq.md (the ds4 VQ recipe we mirror); docs/ds4-gemma-port-phases.md (row list); docs/ds4-gemma-port-reference.md (the port map and the four-leg verification); docs/tensor-inventory.tsv and docs/encode-plan.tsv (the per-tensor truth); docs/artifact-verify-summary.txt; docs/ladder-embeddinggemma2.txt (the measured tier ladder); docs/{baseline-gguf-gate1a,anchor-gate2,artifact-gguf-gate1b,loader-gate3,text-tower-gate4}.txt (the evidence, one per unit); tools/{eg2_vq.c,eg2_pack.c,eg2_gpuprobe.cu,eg2_gguf.c} and tools/{eg2_gguf_check,eg2_artifact_check,eg2_loader_check,eg2_tok_check,eg2_phase4_gate,eg2_anchor,eg2_anchor_cmp}.sh with bin/ (their binaries); out/ (all artifacts and logs, gitignored); AGENTS.md (project guardrails).
+- Workspace layout: RECIPE.md (the artifact recipe: sections 4 commands, 5 quality, 6 what the port must implement, 7 identity); RECIPE-deepseek41-vq.md (the ds4 VQ recipe we mirror); docs/ds4-gemma-port-phases.md (row list); docs/ds4-gemma-port-reference.md (the port map and the four-leg verification); docs/tensor-inventory.tsv and docs/encode-plan.tsv (the per-tensor truth); docs/artifact-verify-summary.txt; docs/ladder-embeddinggemma2.txt (the measured tier ladder); docs/{baseline-gguf-gate1a,anchor-gate2,artifact-gguf-gate1b,loader-gate3,text-tower-gate4,retrieval-cost-gate5}.txt (the evidence, one per unit); tests/retrieval/ (the frozen labelled set, phase 5); tools/{eg2_vq.c,eg2_pack.c,eg2_gpuprobe.cu,eg2_gguf.c} and tools/{eg2_gguf_check,eg2_artifact_check,eg2_loader_check,eg2_tok_check,eg2_phase4_gate,eg2_retrieval_set,eg2_phase5_gate,eg2_oracle_to_jsonl,eg2_retrieval_score,eg2_retrieval_score_selftest,eg2_anchor,eg2_anchor_cmp}.sh with bin/ (their binaries); out/ (all artifacts and logs, gitignored, including cuda-objects-backup-sm121a); AGENTS.md (project guardrails).
 - The loader (phase 3): crates/ds4-core/src/gemma_vq.rs is the family (the arch and `gemma_vq.format_version` gate, `validate_part` from `tensors.rs::parse_one`, the per-payload validator, `validate_metadata`), gemma_vq/layout.rs is the shape authority for all 1376 tensors, and ds4-rs/ds4.c holds `DS4_SHAPE_GEMMA_VQ` with its third copy in tests/parity/shape_c_oracle.c. The file's rank census is 1354 rank 1 / 7 rank 2 / 13 rank 3 / 2 rank 4; a VQ payload's single dimension is its byte length, and the layout computes the same number from the tower architecture through `vq_payload_bytes`.
 - The tower (phase 4): the tokenizer lives host-side in crates/ds4-core/src/tok/gemma_vq.rs (a `gemma4` pre-tokenizer: partition on the CONTROL/USER_DEFINED/UNKNOWN token set plus `</s>`, escape spaces to U+2581, split on newline runs, then the merge queue with the `<0xXX>` byte fallback; two named limits: invalid UTF-8 and `ignore_merges`). The arithmetic lives in ds4-rs/ds4_eg2vq_graph.inc with ds4_eg2vq_bind.inc: every type-42 payload is decoded once into a 520 MiB f32 cache (`ds4vq_dequant_f32`, geometry from the payload's own header, checked against the architecture), and `ds4_eg2vq_ref_embed(m, w, ids, n_ids, out768)` is the pool-and-normalize entry. The bind carries TWO weight legs by name — the artifact's HF names and the baseline's llama.cpp names — because the anchor's vectors came from the baseline; that is what makes the declared floor and the container report separable numbers. The oracle is CPU-only: `tests/parity/eg2vq_embd_c_oracle <gguf> <ids.tsv>` (its binary is gitignored, built by `make tests/parity/eg2vq_embd_c_oracle`), and it consumes the host's id dump from `cargo run -p ds4-core --release --example gemma_vq_tok -- <gguf> <items.tsv> <prompt-map.json>`.
 - The artifact's quantizer: nocal VQ (codebooks solved on weights alone), dim 4, nc 4096, text-tower mean cosine 0.9859; the ladder's measured comparison is dim 4/nc 4096 at cos 0.9869 versus dim 8/nc 4096 at 0.9218 on the same representative tensor (docs/ladder-embeddinggemma2.txt).
 - Model shape to load: 24 layers, hidden 512, 4 heads, 2 KV heads, head_dim 256; layers 5/11/17/23 full attention with head_dim 512 and 1 KV head; intermediate 2048; rms eps 1e-6; vocab 262,144; embedding dim 768; sliding window 512 in the checkpoint's one-sided sense — the FILE carries 1024 (`gemma_vq.attention.sliding_window`, the converter's doubling), and the symmetric mask is ±512; mean pool then L2 normalize.
-- Machine: RTX 4070 SUPER (12,282 MiB, sm_89), CUDA 13.3, 28 CPUs. The Rust side is built with `cargo` plus `--features native` (every ds4-cli binary needs that feature) and the C side through the tree's Makefile — measured this unit: `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses the binaries (`target ds4-agent-rs in package ds4-cli requires the features: native`), so rule 5's documented iterative-development exception is what applies here. `make ds4.o` takes 39 s and `make ds4_cpu.o` 11 s; the CUDA object and the C binaries are a separate story (section 7).
+- Machine: RTX 4070 SUPER (12,282 MiB, sm_89), CUDA 13.3, 28 CPUs. The Rust side is built with `cargo` plus `--features native` (every ds4-cli binary needs that feature) and the C side through the tree's Makefile — measured this unit: `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses the binaries (`target ds4-agent-rs in package ds4-cli requires the features: native`), so rule 5's documented iterative-development exception is what applies here. `make ds4.o` takes 39 s and `make ds4_cpu.o` 11 s. The CUDA objects are per-arch and the tree records its arch in .ds4-cuda-config.mk, which now names this card: `CUDA_ARCH := sm_89`, written by `make cuda CUDA_ARCH=sm_89` (ds4-rs c7dd3ebb), so a build here is card-native with no flag and the whole target list is green (out/cuda-card-wiring-build.log). The set that shipped was sm_121a-only (a Blackwell cubin, unusable here); the sm_121a regression object and the rollback copy of that set are in out/, and each fallback pair is legal on both archs (nvcc 13.3, measured).
 - ds4-rs remotes are shared with the live ds4 project (origin Baekpica/ds4-dfm-rs, fork JLFN/ds4-dfm-rs): a push from here is shared state and needs confirmation. /data/ds4-dfm-rs itself is not to be modified from this workspace.
 - Guardrails: global ~/.opengrok/AGENTS.md (core) + the mount at .opengrok/rules/project-work-rules.md (symlink; do not edit for project rules) + this repo's AGENTS.md. .gitignore excludes .models/, ds4-rs/, graphify-out/, graphify-rs-out/, out/ and *.o.
 
 7. Guardrails and open items
 
 - P-1 (no Python in the runtime, ever) and P-2 (references are citations or one-shot instruments, never dependencies; no ONNX, no PyTorch) are in this repo's AGENTS.md with their gate commands. All five checks return zero today, including ldd against the real ds4-server binary.
-- Owner decisions in force: the container is GGUF + `gemma_vq` payload (2026-10-19); the external anchor run is approved once the baseline GGUF exists; quality is paramount — VQ is for compactness, never a licence to lose accuracy.
-- OPEN (owner): whether the dim-4 VQ device kernel (phase 7) is in scope now or the device path waits for a dim-8 sibling artifact. OPEN (owner): whether the vision/audio towers (phase 8) are wanted. OPEN: whether KV checkpoints mean anything for an embeddings family.
-- OPEN (phase 1b): none — done, and its gate is reproducible (`tools/eg2_artifact_check.sh`). If a payload ever fails it, the fallback is a re-encode, never a hand-repaired byte.
-- OPEN (phase 3): none — done, and its gate is reproducible (`tools/eg2_loader_check.sh`). Residual notes rather than open work: an out-of-range index cannot be encoded at this tier (12-bit indices exactly cover nc 4096), so a future tier whose codebook is not a power of two is the only case that would need an index scan; and the C shape is verified as a table by `test-catalog-parity`, but nothing consumes it until phase 4 builds the graph.
-- OPEN (environment, both pre-existing and measured this unit, neither caused by this project's changes): (a) `make ds4-c ds4-server` cannot relink here — ds4_cuda.o (2026-10-14) is older than the CUDA sources it depends on (2026-10-18), and rebuilding it fails in ptxas with `Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher` because the tree's `.ds4-cuda-config.mk` pins `CUDA_ARCH := native` (sm_89 here); ds4.o and ds4_cpu.o build fine, which is all the phase-4 gate needs; (b) the canonical builder cannot build this tree at all until it can pass `--features native`. Both are phase 6/7 currency: the Rust host binary (`ds4`) links the CUDA objects, so a GPU-less host binary cannot be built here either — which is why phase 4's host leg is the tokenizer plus the `cargo test` that drives the CPU oracle, and phase 6 must resolve this before the CLI verb can exist.
-- OPEN (phase 4): none — done, and its gate is reproducible (`tools/eg2_phase4_gate.sh`, about 20 minutes: four tower runs at the oracle's -O0; `EG2_TOK_REF_LOG=out/tok-anchor-verbose.log` reuses a reference token dump instead of regenerating it). Residual notes rather than open work: the tokenizer has no C counterpart by design (the C path consumes ids, and the reference's own dump is its oracle); the oracle binary is built by its Makefile target and ignored by git; and the C reference is not a second independent implementation — the anchor is the only foreign one, which is why the declared floor is measured against it on baseline weights.
-- OPEN (phase 5, next unit): the frozen labelled retrieval set does not exist yet; the engine to measure it with does (`ds4_eg2vq_ref_embed` plus the oracle, both CPU-only). Report recall@k/MRR and the cosine agreement distribution for baseline-vs-artifact at 768 and at each MRL width, with the artifact hashes the runs were measured on, and keep the prompt-prefix convention identical to the anchor's (the prefix is part of the pooled text: phase 2 measured that dropping it moves the vectors by mean cosine 0.87).
-- OPEN before any push: rule 12 graphify, rule 19 QA evidence, rule 10 OSV scan for ds4-rs (it carries a Cargo.lock); the outer repo has no remote, so publishing is an offer.
+- Owner decisions in force: the container is GGUF + `gemma_vq` payload; the external anchor run was approved once the baseline GGUF existed (done, phase 2); quality is paramount — VQ is for compactness, never a licence to lose accuracy; and (2026-10-19) CUDA must actually be used — "we need to get cuda support, it should be much faster" — which settles phase 6's (a)/(b) choice as (a), the arch guard, and makes phase 7 a committed direction rather than an option.
+- CLOSED (CUDA, row X.9, unit 16): the five guards are committed (9a6498da), the sm_89 object set and the host link are measured, the arch is recorded so every build here is card-native (c7dd3ebb), the whole target list builds green, the three device tests pass on this card, and the family arm the full build surfaced is fixed (ef79b5c2). What the row does NOT claim: any device-path speed, because no gemma device kernel exists at all — the tokens/s comparison is P3.3. Evidence: docs/cuda-sm89-port.txt.
+- OPEN (owner): whether the vision/audio towers (phase 8) are wanted. OPEN: whether KV checkpoints mean anything for an embeddings family.
+- OPEN (environment, (a) now CLOSED): (a) the CUDA object could not be rebuilt for sm_89 because of five sm_90-only instruction sites in the GLM-VQ headers; all five are guarded now, the object builds and the whole tree builds green, so this is no longer a blocker. (b) STILL OPEN: the canonical builder cannot build this tree at all until it can pass `--features native` — `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses the binaries (measured), so rule 5's documented iterative-development exception is what applies here. Fixing it means changing a builder shared with every other project on this machine, so it is proposed rather than done.
+- OPEN (phase 5, IN FLIGHT and NOT RUNNING): the two legs were cancelled with the session interrupt at 16:03:34Z, each at 409 of 583 items. Then: a restart (the full run), the tables, the evidence doc, RECIPE, the phase-doc row and the commit. Residual note: a reused leg is trusted on its .meta plus the raw line count, so deleting a .meta forces an honest re-run — and a partial raw is never a leg.
+- CLOSED this unit: the dim-4 VQ device kernel's scope — the owner's directive put it in scope (phase 7).
+- OPEN (phases 1b, 3, 4): none — all three done, each with a reproducible gate (`tools/eg2_artifact_check.sh`, `tools/eg2_loader_check.sh`, `tools/eg2_phase4_gate.sh`). Residual notes rather than work: the tokenizer has no C counterpart by design; the C reference is not a second independent implementation, since the anchor is the only foreign one and that is why the declared floor is measured on baseline weights; and an out-of-range VQ index cannot be encoded at this tier (12-bit indices exactly cover nc 4096), so only a future non-power-of-two codebook would need an index scan.
+- OPEN before any push: rule 12 graphify, rule 19 QA evidence and rule 10 OSV scan for ds4-rs (it carries a Cargo.lock); the outer repo has no remote, so publishing is an offer. The three guard edits in ds4-rs should be committed locally as their own unit before phase 7 builds on them.
 
 8. Progress and staleness check (run this first, every session)
 
@@ -294,24 +395,36 @@ artifact hashes both runs were measured on. The engine now exists for it: `ds4_e
         tests/anchor/anchor-items.tsv .models/EmbeddingGemma-2-914f7f8/config_sentence_transformers.json \
         | tail -25
     git -C ds4-rs log --oneline -1 && git -C ds4-rs status --short
+    # phase 5 (gate 5): the harness's own self-test, then where the legs stand
+    tools/eg2_retrieval_score_selftest.sh
+    tail -3 out/phase5-gate.log
+    awk -F'\t' 'NF==3 && $2 ~ /^[0-9]+$/ {n++; s+=$2} END{print FILENAME, n, s}' \
+        out/phase5-{baseline,artifact}-raw.txt        # 583 items / 107029 tokens per leg when done
+    # the sm_89 CUDA object and the rollback copy of the prebuilt set
+    tail -3 out/cuda-sm89-build.log
+    cuobjdump --list-elf ds4-rs/ds4_cuda.o            # ds4_cuda.sm_89.cubin = the build succeeded
+    ls -l out/cuda-objects-backup-sm121a/ds4_cuda.o   # the untracked rollback, 94 MB tree
+    # the card's build wiring: the record, the guards, and the green full build
+    cat ds4-rs/.ds4-cuda-config.mk                    # CUDA_ARCH := sm_89 = the record is in place
+    grep -c '!defined(__CUDA_ARCH__)' ds4-rs/cuda/glm_vq_{q4p,flash,gemv}.cuh    # 1 2 2 = five sites
+    tail -4 out/cuda-card-wiring-build.log.summary    # make cuda exit 0, four hosts, ten cubins each
+    git -C ds4-rs log --oneline -3                    # 9a6498da, ef79b5c2, c7dd3ebb = the three local commits
     open-grok inspect | sed -n '/Project Instructions/,/^$/p'
 
 Trust git over this document's headings: continue with the first phase whose work is
-not in the diff. Staleness check at the time of writing: after this unit's commit
-only plan and evidence documents are expected in the outer repo — this handoff, the
-gate-4 evidence, the phase-doc P1 rows and its P1.8 correction, the contract and
-RECIPE notes, the AGENTS pointer, and the new tools/eg2_tok_check.sh and
-tools/eg2_phase4_gate.sh. In ds4-rs, this unit's commit is the tower: the tokenizer
-(crates/ds4-core/src/tok/gemma_vq.rs, its dispatch arms in tok.rs, the gemma_vq
-chat refusal, the synthetic-vocabulary unit tests), the host's drivers
-(crates/ds4-core/examples/gemma_vq_tok.rs, crates/ds4-core/tests/eg2vq_ref.rs), the
-C tower (ds4_eg2vq_graph.inc new, ds4_eg2vq_bind.inc and ds4_eg2vq.h extended, the
-two struct tags and the include in ds4.c, tests/parity/eg2vq_embd_c_oracle.c new,
-the Makefile deps and the oracle rule, .gitignore). Anything else in the diff must
-be read before sections 2-6 are trusted. Note that the artifact and its manifest
-live in the gitignored out/, so they are not in the diff: they are identified by the
-digests in SHA256SUMS and section 2; the same is true of every out/phase4-* file the
-gate writes.
+not in the diff. Where an in-flight unit's work is not committed yet the diff is empty
+by definition, so for unit 15 the sections above ARE the inventory: at the time of
+writing the outer repo is still at d591b9c (unit 14) and carries unit 15 as untracked
+plus modified — docs/retrieval-cost-gate5.txt, docs/cuda-sm89-port.txt, tests/retrieval/,
+tools/eg2_{retrieval_set,phase5_gate,oracle_to_jsonl,retrieval_score,
+retrieval_score_selftest}.sh, and edits to RECIPE.md, AGENTS.md,
+docs/ds4-gemma-port-phases.md and this file. ds4-rs is CLEAN: the CUDA guards, the server
+family arm and the build wiring are its three newest commits (9a6498da, ef79b5c2,
+c7dd3ebb), local only, nothing pushed. Anything else in either diff must be read before
+sections 2-6 are trusted. Note that the artifacts, the retrieval source, every
+out/phase5-* file and the CUDA objects live under gitignored paths (out/, .models/,
+ds4-rs/), so they never appear in a diff: they are identified by the digests in
+SHA256SUMS, by the pins inside the gate scripts, and by section 2.
 
 This document is COMPLETE and self-contained: a new session can execute the project
 end to end from this file alone. It carries the plan ahead, the exact reference

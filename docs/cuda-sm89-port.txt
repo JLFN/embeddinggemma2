@@ -1,0 +1,380 @@
+Device-path precondition — this tree's CUDA object set on an sm_89 card
+=======================================================================
+
+Row X.9 of docs/ds4-gemma-port-phases.md, the precondition row P3 (the device
+path) depends on. The owner's direction: "we need to get cuda support it should
+much faster". Phase 7 is where that speed is won; this document is about the
+step before it, which turned out to be a real blocker rather than a matter of
+selecting a backend: the ds4-rs working copy in this project was built for one
+architecture this card does not have.
+
+Nothing here changes the family, the artifact, or any number in
+docs/retrieval-cost-gate5.txt. The family's text tower still runs on the CPU
+reference path: it has no device source (verified below), and P3 is what adds
+one. What this row establishes is that when P3 lands there is a working CUDA
+object set underneath it for this machine, that the tree's own device tests
+pass on it, and that the build now selects this card's architecture by itself
+(section 3e) — the whole tree, not only the CUDA objects (section 3g).
+
+1. The blocker, measured
+------------------------
+
+The machine: NVIDIA GeForce RTX 4070 SUPER, compute capability 8.9 (sm_89),
+driver 610.43.03 (nvidia-smi, this host). CUDA toolkit 13.3.73 on PATH.
+
+The tree ships a CUDA object set built for sm_121a only. Read from the objects
+themselves, not from the Makefile:
+
+    cuobjdump --list-elf ds4-rs/ds4_cuda.o       -> ds4_cuda.sm_121a.cubin
+
+A cubin compiled for sm_121a correctly refuses to run on sm_89 ("no kernel image
+is available for execution on the device"), so a link against that set would have
+produced a host that cannot execute any kernel on this card — and would have said
+so only at run time.
+
+Rebuilding the set for sm_89 failed on five instruction sites, four prefetch
+hints and one barrier wait, in three headers. The failing build's log was
+overwritten by the successful rebuild, so the durable evidence for the refusal is
+the probe below plus the five guards themselves:
+
+    1  cuda/glm_vq_q4p.cuh:130-138      mbarrier.try_wait.parity.shared.b64
+    2  cuda/glm_vq_flash.cuh:313-321    cp.async.bulk.prefetch.L2.global
+    3  cuda/glm_vq_flash.cuh:351-356    cp.async.bulk.prefetch.L2.global
+    4  cuda/glm_vq_gemv.cuh:50-55       cp.async.bulk.prefetch.L2.global
+    5  cuda/glm_vq_gemv.cuh:133-138     cp.async.bulk.prefetch.L2.global
+
+Both instruction families are sm_90+. That the refusal is ptxas's and not a
+missing backend was measured with a two-kernel probe (tools are not shipped; the
+probe is 16 lines and its log is out/cuda-sm90-probe.log):
+
+    nvcc -arch=sm_89   -DPROBE_SM90   -> exit 255
+        ptxas ... error : Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher
+        ptxas ... error : Feature 'cp.async.bulk.prefetch'   requires .target sm_90 or higher
+        ptxas fatal   : Ptx assembly aborted due to errors
+    nvcc -arch=sm_121a -DPROBE_SM90   -> exit 0
+    nvcc -arch=sm_89   (sm_80-era forms) -> exit 0
+    nvcc -arch=sm_121a (sm_80-era forms) -> exit 0
+
+2. The fix: the tree's own pattern, applied at the five sites
+-------------------------------------------------------------
+
+The tree already has this split in two places, and both were read before the
+change rather than paraphrased:
+
+    cuda/glm_vq_mma.cuh:84-90            glmvq_mma_prefetch, bare #if __CUDA_ARCH__ >= 900
+                                         -> cp.async.bulk.prefetch.L2.global, #else ->
+                                         prefetch.global.L2
+    cuda/ds41_vq_prefill_mma.cuh:293-298 vqs_pf_l2, the same #if spelled with the
+                                         !defined(__CUDA_ARCH__) clause and NO fallback
+                                         arm, so below sm_90 the hint is compiled out
+                                         entirely; its comment "It is a hint — the
+                                         segment cp.async loads are the real fetches"
+
+The five sites now follow that pattern, each with the deviation named in a
+comment next to it. The instructions chosen for the sm_80-89 arm are the sm_80-era
+siblings, not substitutes:
+
+    prefetch hint   cp.async.bulk.prefetch.L2.global [p], bytes  ->  prefetch.global.L2 [p]
+    barrier wait    mbarrier.try_wait.parity.shared.b64          ->  mbarrier.test_wait.parity.shared.b64
+
+Both moves are semantics-preserving here, and for reasons about the surrounding
+code rather than about the instruction names:
+
+  - A prefetch is a preference, not a fetch. The call sites are labelled as such
+    (cuda/glm_vq_gemv.cuh:45-49) and the real fetches are the segment loads and
+    cp.async copies that follow. Losing the bulk form on sm_80-89 loses the hint,
+    not data.
+  - mbarrier.test_wait.parity tests the same phase parity as try_wait.parity
+    without suspending the warp, and the surrounding loop is already a
+    non-blocking spin on a predicate (cuda/glm_vq_q4p.cuh:129-139). Only the
+    opcode moves; the loop body is identical. mbarrier.init / arrive /
+    arrive.noinc in the same file are sm_80+ and are untouched.
+
+The five new sites take their spelling from the second precedent and their fallback
+arm from the first, and neither precedent has both. Spelled as ds41's vqs_pf_l2
+already spells it:
+
+    #if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 900
+
+where the other precedent, cuda/glm_vq_mma.cuh:85, writes the bare
+#if __CUDA_ARCH__ >= 900. The clause emits the sm_90 instruction only when the
+compilation knows it targets sm_90 or higher, so the host pass of the same
+translation unit takes the fallback. The fallback arm itself follows
+glm_vq_mma.cuh's #else (prefetch.global.L2), not ds41's (which has no arm at all and
+compiles the hint out below sm_90). That is a deviation from ds41's behaviour and is
+recorded as one; it was not measured to change any result — the sm_90+ arm is asm
+kept verbatim and the sm_121a regression build below is exit 0 — but the count is
+worth stating exactly: five sites, four prefetch hints and one barrier wait
+(1 in cuda/glm_vq_q4p.cuh, 2 in cuda/glm_vq_flash.cuh, 2 in cuda/glm_vq_gemv.cuh),
+not six.
+
+3. What was measured after the change
+-------------------------------------
+
+All five logs are in out/. Every arch fact below comes from cuobjdump on the
+object or binary itself.
+
+(a) The tree's own target is unchanged in kind. The Makefile's own sm_121a
+    command, run against the edited headers (out/cuda-sm89-objectset.log:1-85):
+
+        regression exit=0
+        ELF file 1: eg2_ds4_cuda_sm121a.1.sm_121a.cubin
+
+    So the guards do not break the architecture the fork is built for: an object
+    built from the same headers still contains an sm_121a cubin.
+
+(b) The sm_89 object set exists. ds4_cuda.o built with the Makefile's own flags
+    and CUDA_ARCH=sm_89: exit 0, 0 errors, 12 warnings, about 145 s
+    (out/cuda-sm89-build.log). Each object now carries an sm_89 cubin:
+
+        ds4_cuda.o                 33,128,288 B   ds4_cuda.1.sm_89.cubin
+        cuda/qwen38_ple.o                           qwen38_ple.sm_89.cubin
+        cuda/mmq/ds4_mmq.o                          ds4_mmq.1.sm_89.cubin
+        cuda/mmq/ds4_mmq_d2r.o                      ds4_mmq_d2r.sm_89.cubin
+        cuda/mmq/mmvq.o                             mmvq.sm_89.cubin
+        cuda/mmq/ds4_fattn.o                        ds4_fattn.sm_89.cubin
+        cuda/mmq/ds4_repack.o                       ds4_repack.sm_89.cubin
+        cuda/mmq/mmid.o                             mmid.sm_89.cubin
+        cuda/mmq/quantize.o                         quantize.sm_89.cubin
+        cuda/mmq/ds4_ggml_stubs.o                   ds4_ggml_stubs.sm_89.cubin
+        ds4_ple.o                  234,824 B        (no cubin: built from ds4_ple.c
+                                                      by the C compiler, Makefile:686-687)
+
+    The same object is 28,525,448 B as an sm_121a cubin, which is why both were
+    kept (section 5).
+
+(c) Kernels execute on this card, and the guarded code is among them. Three
+    self-contained device tests exercise exactly the edited sources and compare
+    their output against host references (two of them FP64 softmax references).
+    Built for sm_89, run on the 4070 (out/cuda-sm89-device-tests.log):
+
+        tests/test_glm_vq_flash    GLMVQ_FLASH_PASS    exit 0
+            relRMS 0.00180-0.00193 over five geometry cases, absorb k/v 0.00167/0.00166
+        tests/test_glm_vq_q4p      GLMVQ_Q4P_PASS      exit 0
+            relRMS 0.000386-0.00171 over five cases
+        tests/test_glm_vq_verify   GLMVQ_VERIFY_PASS   exit 0
+            40 checks across q4 mma, swiglu, staged GEMM, fp8, mHC, index and vq union,
+            worst observed difference one ulp; the "1 differ" lines are the test's own
+            documented ulp allowance and it still prints PASS
+
+    glm_vq_flash.cuh is compiled into the flash test directly, glm_vq_q4p.cuh into
+    the q4p test, and glm_vq_gemv.cuh into the verify test (its Makefile rule
+    includes glm_vq_gemv.cuh at Makefile:2183). So the three tests cover the three
+    edited files, on the device, at sm_89.
+
+(d) The Rust host links against the sm_89 set and starts. `make ds4
+    CUDA_ARCH=sm_89`, which is the fork's own link recipe (Makefile:354-358, all
+    of CORE_OBJS as -C link-arg plus the CUDA libraries):
+
+        link exit=0
+        -rwxrwxr-x  49,388,088 B  ds4
+        cuobjdump --list-elf ds4           -> 10 embedded cubins, all .sm_89.cubin
+        ./ds4 --help                       -> exit 0, its own usage text
+
+    The embedded images are the C core and the quantization objects the host
+    calls into: ds4.1, ds4.3, ds4_ggml_stubs, ds4_mmq_d2r, quantize, mmid, mmvq,
+    ds4_repack, ds4_fattn, qwen38_ple — each .sm_89.cubin
+    (out/cuda-sm89-link.log:1-9, 276-286).
+
+(e) The arch is persisted, and the card is a recorded target. The wiring was done
+    with the tree's own mechanism, not by hand-editing its config:
+
+        make cuda CUDA_ARCH=sm_89
+
+    That target's job is to record the configuration, and .ds4-cuda-config.mk — the
+    file the Makefile -includes on every invocation, gitignored by design
+    (.gitignore:108) so the record stays machine-local — now reads:
+
+        # written by make cuda (see the config include note in Makefile)
+        CUDA_ARCH := sm_89
+
+    It replaced "CUDA_ARCH := native" (the header said "written by make
+    cuda-generic"), which resolves to the same card here: a two-line probe compiled
+    with -arch=native yields eg2_native.sm_89.cubin (out/cuda-card-wiring.log). The
+    named form is kept because the file is read on its own and "native" does not say
+    which card it means; the probe also shows the hazard the record exists to avoid,
+    since with no -arch at all nvcc 13.3 emits eg2_bare.sm_75.cubin.
+
+    That the record drives builds and is not cosmetic was measured by rebuilding an
+    object with no architecture anywhere on the command line: ds4_cuda.cu was touched
+    and `make ds4_cuda.o` then ran nvcc with -arch=sm_89 and produced
+    ds4_cuda.1.sm_89.cubin, exit 0 (out/cuda-card-wiring.log).
+
+    The card is named in the tree's tracked files too, so a reader finds it without
+    this project's docs: README.md:91 now reads "Explicit CUDA architecture; sm_89 is
+    the Ada card (RTX 4070 SUPER class)" and the Makefile's help block gains the same
+    example beside the existing arch forms. No new target was invented — the tree
+    already had the mechanism (`make cuda CUDA_ARCH=sm_N`, README.md:91), and a third
+    alias beside cuda-spark/cuda-generic would have added a name, not a capability.
+
+(f) One object cannot carry both cards, measured — which is why the arch stays a
+    per-build choice. The obvious alternative to a per-machine record is one object
+    built for the Spark and this card at once: the tree's own sm_121 command plus a
+    second gencode, nothing else changed.
+
+        nvcc ... -gencode arch=compute_121a,code=sm_121a -DDS4_CUDA_HAVE_MXF4=1 \
+                 -gencode arch=compute_89,code=sm_89 ...
+        ptxas ... error : Feature '.kind::mxf4' not supported on .target 'sm_89'
+        ptxas ... error : Instruction 'mma with block scale' not supported on .target 'sm_89'
+        ptxas fatal   : Ptx assembly aborted due to errors
+        exit=255                                    (out/cuda-multiarch-probe.log)
+
+    The cause is structural, not a flag awaiting the right value: the v0.5 mxf4
+    indexer block (ds4_cuda.cu:21024-21358, inside #ifdef DS4_CUDA_HAVE_MXF4) carries
+    no __CUDA_ARCH__ guard at all, so the sm_89 pass is asked to assemble an
+    instruction that exists only on Blackwell. One object covering both cards is
+    therefore possible only by arch-guarding that path as well — a change to the
+    kernel the Spark's lightning indexer runs, and not this row — or by giving up mxf4
+    on the Spark, which is the thing the flag exists to enable.
+
+(g) One defect the full build surfaced, and it was ours. Running the whole target
+    list, rather than just the CUDA objects, showed that this working copy no longer
+    builds its server at all:
+
+        error[E0004]: non-exhaustive patterns: `ModelFamily::GemmaVq` not covered
+          --> crates/ds4-server/src/worker_run.rs:16:11
+
+    hidden_values() in the server carries the same family match as its twin in the
+    CLI, and the twin got the new arm in the very commit that added the family
+    (crates/ds4-cli/src/session_exec.rs:10-27, commit 467af3a4); the server's copy was
+    missed, so `make cuda` exited 2 with the CUDA objects already built and green.
+    The fix mirrors the precedent rather than deciding anything: GemmaVq joins the
+    n_embd group, as it does in the CLI. A workspace-wide sweep then found no other
+    stale arm: cargo check exits 0 with zero errors for --workspace --all-targets, for
+    ds4-server --features native and for ds4-cli --features native --all-targets
+    (out/family-match-sweep.log), and the full tree now builds from the persisted
+    record, exit 0 (out/cuda-card-wiring-build.log).
+
+4. What this does not prove
+---------------------------
+
+  - No speed number. The owner's expectation is that CUDA should be much faster;
+    that is phase 7's measurement (tokens/s device vs the CPU reference path),
+    and this row does not estimate it. The only rate measured in this project so
+    far is the CPU oracle at -O0 under the two-leg contention of gate 5, around
+    15 tokens/s per leg, which is a wall-clock observation of a contended run and
+    not a baseline.
+  - No gemma device path. The family is host-driven; there is no gemma source
+    under ds4-rs/cuda/ and none in the .inc files the host includes
+    (ds4_eg2vq_bind.inc, ds4_eg2vq_graph.inc carry no cuda/gpu/device marker).
+    The tests above prove the tree's existing kernels run on this card, not that
+    the gemma tower does.
+  - No claim about the mmq/q4 GEMM accuracies beyond what the tests assert
+    (relRMS in the 1e-3 range for the flash and q4p kernels, one-ulp differences
+    elsewhere). They are the tree's own bounds, unchanged by this row.
+  - No change to the shipped artifact, the anchor, or any gate-5 input. The
+    sha256 values in docs/retrieval-cost-gate5.txt are unaffected by this row.
+  - Not a portability claim beyond sm_89. The guards only ever add an arm below
+    sm_90; nothing here was measured on sm_80, sm_86 or sm_120.
+  - Not a deployment change. install.sh:112-116 still refuses any machine that is not
+    Linux/aarch64 with a GB10 GPU ("the binary is compiled for GB10 (sm_121) only").
+    That is the fork's deployment contract and it is untouched: this row changes what
+    can be BUILT for this card, not what the installer accepts.
+  - Not a runtime verification of the family match fix in 3(g). The added arm makes the
+    crate compile and mirrors the CLI's existing arm; nothing in the worker/assemble
+    path was exercised for GemmaVq. It is a compile-level completeness fix, not a
+    measured behavior — and the sweep only covers matches the compiler enforces, so an
+    if-chain that silently ignores an unknown family would not appear in it.
+
+5. Rollback, and why it is cheap
+--------------------------------
+
+  - The edits are three headers in ds4-rs, 42 inserted lines, 0 deleted lines,
+    each guarded at compile time: `git -C ds4-rs checkout -- cuda/glm_vq_flash.cuh
+    cuda/glm_vq_gemv.cuh cuda/glm_vq_q4p.cuh` restores the sm_90-only form
+    exactly, because no existing line was modified.
+  - The object set is not tracked by git, so the pre-existing objects — the
+    sm_121a ones the tree shipped, 94 MB in all — are kept untouched in
+    out/cuda-objects-backup-sm121a/ (ds4_cuda.o, ds4_ple.o, mmq/ with eight
+    objects, mmq/qwen38_ple.o).
+  - Trigger for the rollback: any of the three device tests failing on this card,
+    or the tree's own sm_121a build failing. Detection is the test exit code and
+    cuobjdump --list-elf on the produced object; recovery is the two commands
+    above, then a rebuild for the target of interest.
+  - The sm_89 set can be regenerated at any time from the headers
+    (Makefile's own flags plus CUDA_ARCH=sm_89), and the sm_121a regression object
+    is not needed in tree: it was written to /tmp for this measurement.
+  - The wiring reverts with one command in each direction: `make cuda-spark` restores a
+    GB10 configuration and `make cuda-generic` the host-detected one, both by rewriting
+    .ds4-cuda-config.mk, which git does not track. The three tracked edits (the Makefile
+    help line, README.md:91, the match arm in worker_run.rs) revert with
+    `git -C ds4-rs checkout --` on those paths. Trigger: this tree being synced to a
+    Spark, or a build that must target another card — detected at run time rather than
+    at build time, because a wrong arch fails as "no kernel image is available for
+    execution on the device".
+
+6. Files
+--------
+
+  docs/cuda-sm89-port.txt            this document
+  out/cuda-sm90-probe.log            the ptxas refusal/acceptance probe, four compile lines
+  out/cuda-sm89-build.log            ds4_cuda.o for sm_89, exit 0
+  out/cuda-sm89-objectset.log        (a) the sm_121a regression build, (b) the rest of the set
+  out/cuda-sm89-device-tests.log     the three device tests, built and run for sm_89
+  out/cuda-sm89-link.log             make ds4 CUDA_ARCH=sm_89, the embedded cubin list, ./ds4 --help
+  out/cuda-objects-backup-sm121a/    the rollback: the object set as it shipped
+  out/cuda-objects-sm89/             the sm_89 ds4_cuda.o, kept as the measured build
+
+  ds4-rs/cuda/glm_vq_flash.cuh       guarded, 2 sites
+  ds4-rs/cuda/glm_vq_gemv.cuh        guarded, 2 sites
+  ds4-rs/cuda/glm_vq_q4p.cuh         guarded, 1 site
+
+  out/cuda-card-wiring.log           the arch persisted, the rebuild-follows-record proof,
+                                     the hosts and the three device tests re-run
+  out/cuda-card-wiring-build.log     the full target list built from the record, exit 0
+  out/family-match-sweep.log         cargo check in three configurations, zero errors
+  out/cuda-multiarch-probe.log       the two-gencode object ptxas refuses (section 3f)
+  ds4-rs/.ds4-cuda-config.mk         the record itself, gitignored by design (machine-local)
+  ds4-rs/README.md:91                the card named in the target table
+  ds4-rs/Makefile                    the same example in the help block
+  ds4-rs/crates/ds4-server/src/worker_run.rs  the missing GemmaVq arm (section 3g)
+
+7. Risk analysis (rule 20)
+--------------------------
+
+Decision: run this tree's CUDA on sm_89 by adding the sm_80-89 arms above,
+instead of leaving the object set sm_121a-only and deferring the device path.
+
+External risks (not controlled here):
+  - The fork's upstream may move the same files; a merge then has to re-apply the
+    guards. Evidence: the tree is a working copy pinned at HEAD 5c11fc64 with
+    three local commits ahead; the two precedents (cuda/glm_vq_mma.cuh:83-90,
+    cuda/ds41_vq_prefill_mma.cuh:291-297) show upstream already does this split
+    elsewhere, so the collision risk is a textual one, not a design conflict.
+    Unverified beyond that.
+  - nvcc may shift which instructions need which target in a later toolkit.
+    Measured only for 13.3.73.
+  - The card or driver could be unavailable in a later session; nothing in this
+    row depends on the card being present for the CPU path to keep working.
+
+Decision risks (here):
+  - A prefetch-hint arm that loses the hint on sm_80-89 would change latency, not
+    results. Evidence: the two device tests that exercise those sites print their
+    relRMS against host references and pass.
+  - mbarrier.test_wait.parity is a non-suspending wait, which could busy-spin
+    differently from try_wait.parity. Evidence: the q4p test passes on the device;
+    it is not a throughput measurement, so a performance difference in the spin
+    path is unverified and would show up only in phase 7's tokens/s.
+  - The guards are on the code path of every other family in this tree that uses
+    these headers (glm_vq, l31). Evidence for no regression: the sm_89 build of
+    ds4_cuda.o is exit 0, the three tests pass, and the sm_121a rebuild still
+    yields an sm_121a cubin. Not evidence: that no other family's runtime
+    behaviour changed — no other family was run here.
+  - A persisted arch is machine-specific: a later sync of this tree to the Spark would
+    keep building for sm_89 until `make cuda-spark` is run, and the mismatch appears
+    only at run time. Evidence: the tree's own comment says to switch configurations by
+    running a cuda-* target, the record is gitignored so it never travels with a clone,
+    and the record was measured to drive rebuilds (section 3e). Residual: forgetting the
+    switch is silent until the first kernel launch.
+  - The match arm of section 3(g) was never exercised at run time. Evidence: cargo check
+    exits 0 in three configurations and the whole target list builds. Not evidence: that
+    the worker path behaves correctly for GemmaVq — nothing ran it, and it is not on the
+    embeddings path this project needs.
+
+Prevention and bounds kept: no maximum settings were used (an architecture
+explicitly named, not "native"); the previous object set is kept by name;
+nothing was deleted; the change is compile-time only and reversible per header.
+
+Residual risk: the guards are exercised by three device tests on one card at one
+toolkit version. A later unit that runs the audio8/glm/l31 families on sm_89 is
+the first real consumer, and phase 7 is the first consumer inside this project.

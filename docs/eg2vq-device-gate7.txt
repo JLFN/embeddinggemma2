@@ -1,0 +1,389 @@
+Phase 7 evidence — the gemma_vq device path
+===========================================
+
+Unit 17 of embeddinggemma2-handoff.md.  Phase 7 is the phase the owner's
+directive of 2026-10-19 opened ("we need to get cuda support, it should much
+faster"): the text tower on the GPU, weights device-resident, the VQ payloads
+consumed in-kernel.  Its rows are P3.1 (the dim-4 VQ device kernel), P3.2 (a
+bidirectional attention kernel with the symmetric sliding mask) and P3.3 (the
+tower end to end, with latency and VRAM printed by the run).
+
+This document is the evidence for the slices as they land; each section names the
+row it belongs to.  Nothing in it is a speed claim: the measured numbers here are
+single-kernel throughput, and the tokens-per-second comparison belongs to P3.3.
+
+1. Row P3.1 — the dim-4 DQVQ device GEMM
+----------------------------------------
+
+1a. What exists now
+
+  ds4-rs/cuda/eg2vq_vq.cuh        the kernel family and its launcher
+  ds4-rs/tests/test_eg2vq_vq.cu   its gate
+  ds4-rs/Makefile                 tests/test_eg2vq_vq and test-eg2vq-vq
+
+Nothing else in the tree changed: the family's CPU reference path
+(ds4_eg2vq_graph.inc), its binder, the Rust host and the artifact are untouched,
+so this slice cannot have moved any earlier number.
+
+1b. Design, and what it was read from
+
+The authority for the payload is ds41_vq_fmt.h:73-105 (`ds4vq_dequant_f32`): the
+value rule is value[row][col] = codebook[idx][col % dim] * gain[row], dim is 4
+for this tier (ds4_eg2vq.h:29-38), and the index stream is one continuous
+little-endian bit stream whose width follows the codebook size (12 bits at
+nc = 4096).  The on-device pattern comes from cuda/ds41_vq_row.cuh: the payload
+open re-checks the five header fields against the caller's expectation
+(:44-72), the codebook lives in shared memory, the bit stream is read as whole
+words and extracted with __funnelshift, and the multiply-add expression is the
+one place arithmetic identity with the reference is decided (:107-118).
+
+Three deliberate differences from that row kernel, each of them a consequence of
+this family's geometry rather than taste:
+
+  dim 4, not 8         one 12-bit index covers four weights; a codeword is 8 B.
+  a GEMM, not a dot    the tower runs whole items through a matrix (26 to 1414
+                       tokens), so a block keeps a 64-token x 64-row tile and
+                       reuses each decoded codeword across the tile's tokens.
+                       The per-row kernel would re-read the index stream once
+                       per token.
+  f32 in, f32 out      the reference path is f32 and the activation is orders of
+                       magnitude smaller than the weights, so the device adds no
+                       rounding the reference does not have.  (The tree's own
+                       prefill kernels take f16 activations, which is right for
+                       a 35B model and wrong here: the point of this family is
+                       that the artifact is not less smart.)
+
+Tile: 16 x 16 threads = 256; per block, 64 tokens (4 per thread column) x 64 rows
+(4 per thread row) x a 256-column K slab; 16 f32 accumulators per thread.  Shared:
+the codebook at 32 KB (4096 x 4 f16, loaded once per block) and one 8 KB index
+slab (64 rows x 64 codewords, uint16).  That is 40 KB, under the 48 KB static
+limit, so the kernel needs no dynamic-shared opt-in and does not trade occupancy
+for it.  Each thread unpacks its own 16 codewords per slab (24 B = six words)
+with __funnelshift, and reads its four tokens' four activation values as float4.
+
+1c. The gate, and why it has two references
+
+  make tests/test_eg2vq_vq && ./tests/test_eg2vq_vq      (exit 0 required)
+
+  ds4-rs/tests/test_eg2vq_vq.cu builds payloads at the tower's own geometries and
+  a spread of token counts, and compares the kernel against
+
+  (a) its own decoder of the same bytes, which is checked against the values that
+      were packed into them — so a packing mistake cannot hide behind the decode;
+  (b) an FP64 dot over that decoded matrix, which is the arithmetic the kernel's
+      f32 accumulation must land on.  Inputs are f32 and codeword and gain values
+      are exact f16 -> f32, so summation order is the ONLY error the kernel can
+      have; the declared bound is 1e-5 relative RMS and a per-token cosine of 1
+      to 1e-6, both far above what f32 rounding of a 512 to 2048 term dot costs.
+
+The synthetic payloads are packed by the test's own p_pack, which mirrors the
+project's writer byte for byte (/data/YoungAi/gguf-tools/quantize/vq_qc.h
+`vq_pack`:242-266): header, nc*dim f16 codebook, rows f16 gains, one continuous
+little-endian 12-bit stream, padded to whole bytes plus one guard byte.
+
+A payload bound to the wrong geometry must decode nothing: the test asks for 1024
+rows from a 512-row payload and requires the output to be untouched.
+
+1d. Measured (out/phase7-p31-gate.log, GEMM only, best of three warm launches)
+
+    geometry (rows x cols)   tokens   max abs    rel RMS   min cosine     ms   GFLOP/s   payload GB/s
+    512 x 512                    26   1.02e-05  4.01e-07   1.000000000  0.047     289.4        2.8
+    1024 x 512                    73  1.23e-05  4.07e-07   1.000000000  0.065    1186.5        7.2
+    2048 x 512                   184  1.52e-05  4.04e-07   1.000000000  0.123    3140.3       10.5
+    12288 x 512                    1  7.76e-06  4.01e-07   1.000000000  0.080     157.6       30.3
+    1024 x 1024                  349  3.41e-05  5.76e-07   1.000000000  0.242    3029.4       10.6
+    512 x 2048                  1414  5.84e-05  8.22e-07   1.000000000  0.947    3130.7       10.4
+    wrong-geometry payload                refused, output untouched        PASS
+
+Read the rel RMS column as "the kernel is the arithmetic it claims to be": at most
+8.2e-07 of the reference, with identical rankings.  The GFLOP/s column is a single
+kernel at one geometry, not the tower: at 184 tokens the tower is ~49 GFLOP, so
+3.1 TFLOP/s is the order of 16 ms of GEMM per item — a shape that the CPU path
+spends ~1400 ms on at -O0 (measured, phase 5).  Whether that becomes a tokens/s
+number, and how much of it survives the rest of the tower, is what P3.3 measures.
+
+The GB/s column is the payload traffic the design implies, not a bandwidth bound:
+the payload is re-read once per 64-token tile, so a long item reads each matrix
+ceil(tokens/64) times.  It is reported so a later slice can see whether raising
+the token tile (or splitting K) is worth anything.
+
+2. Defects this slice found, measured
+----------------------------------------------------------------
+
+2a. In the CPU path's decoder (not the kernel)
+
+Writing the kernel surfaced a divergence that is not the kernel's:
+
+  ds4vq_f16 (ds4-rs/ds41_vq_fmt.h:38-43) returns exactly HALF the IEEE value for
+  every subnormal f16 input (0 < |v| < 2^-14 = 6.10352e-05), while the payload
+  writer's own reader, go1b_fp16_to_fp32
+  (/data/YoungAi/gguf-tools/quantize/onebit_quant.h:141-159), matches the IEEE
+  rule on every pattern tested.  Normals agree exactly in both.
+
+  measured, half bit -> value:
+    0x0001   IEEE 5.960464478e-08   vendored 2.980232239e-08   ratio 2
+    0x0346   IEEE 4.994869232e-05   vendored 2.497434616e-05   ratio 2
+    0x0400   IEEE 6.103515625e-05   vendored 6.103515625e-05   ratio 1  (normal)
+
+The CPU reference path binds its dense cache through `ds4vq_dequant_f32`
+(ds4_eg2vq_bind.inc:305-310), so it decodes every subnormal codebook entry at half
+magnitude.  The device kernel follows the file (IEEE), so before this is settled
+the file, the CPU path and the device path are three different answers — and a
+CPU-versus-GPU parity gate would have charged the difference to the kernel.
+
+What it costs on the real artifact (tools/eg2_subnorm.c, out/artifact-subnormal.log):
+
+    payloads                                461
+    codebook entries                     7,553,024   (zeros 740,451)
+    subnormal entries                        8,893   (0.117741 %)
+    |value| range              5.96046e-08 .. 1.48047
+    largest subnormal entry            6.09756e-05
+    row gains                593,920 entries, 0 subnormal
+    decoded weight mass (L1)             1.39618e+13
+    error the vendored rule adds           31,851.7   (relative 2.28e-09)
+
+So the defect is real and its effect on this artifact is negligible: 0.12 % of
+codebook entries, none larger than 6.1e-05, and a weight-level L1 error of
+2.3e-09 relative.  The decision recorded here, and not taken silently: the device
+path follows the file's own reader (IEEE), because the file and the writer's
+reader are the source of truth; the CPU path's halving is a defect of the
+vendored converter, shared with the tree's V4.1 path, and fixing that converter
+is a separate change to shared tree code that this unit does not make.
+
+2b. Two defects this slice found in its own kernel, and how they were caught
+
+Recorded because they are the argument for the gate's shape rather than an
+embarrassment:
+
+  1. the index-sector stride was the byte count of 256 codewords (384 B) instead
+     of 256 columns (96 B), so every slab after the first unpacked the wrong bits;
+  2. the unpack used a block-local row index, so every row block above the first
+     re-read row 0's index stream.
+
+Both produced plausible-magnitude, entirely wrong results, and both were caught by
+the two-reference gate rather than by review: the second survived a first probe
+that used ONE index stream for every row (with identical streams, reading the
+wrong row is invisible), and was isolated by holding the activations at 1.0 — with
+ones-x the codeword decode is the only thing that can move the sum — and by a
+Kronecker probe that put a single 1.0 in one activation column.
+
+3. Row P3.2 — bidirectional attention with the symmetric mask
+--------------------------------------------------------------
+
+3a. What exists now
+
+  ds4-rs/cuda/eg2vq_attn.cuh        the kernel and its launcher
+  ds4-rs/tests/test_eg2vq_attn.cu   its gate
+  ds4-rs/Makefile                   tests/test_eg2vq_attn and test-eg2vq-attn
+
+3b. Why new kernel code, and not the tree's existing windowed kernel
+
+The phase doc's row P3.2 states the correction this slice inherits: the tree's
+windowed attention kernel does apply a window and does take causal = false, but
+
+  - it is a scalar one-thread-per-(query, head) kernel that refuses `rows > 256`
+    and holds a `float score[256]` on the stack (ds4_cuda.cu:42208, :42211), and
+  - its window is TRAILING: `first = window && visible > window ? visible - window
+    : 0` (:42214), i.e. a query sees the keys before it and none after.
+
+This model needs the symmetric mask: gemma-embedding2.cpp:4 declares
+LLAMA_SWA_TYPE_SYMMETRIC and src/llama-hparams.h:524-533 masks at
+pos_diff < -n_swa/2 or > n_swa/2, with n_swa = 512 the half-window the file's
+1024 doubles to.  A trailing cut silently drops keys the reference attends to for
+any item longer than 256 tokens, which is most of this family's documents.
+
+3c. Design
+
+One block per query token, one warp per query head (four warps), so a block's
+heads share the same KV rows and read them from L2 once.  Within a warp the key
+range [k0, k1] — the window, or the whole item on the four full layers — is split
+across the 32 lanes, which is what makes the per-key work a stride-32 walk with
+coalesced loads:
+
+  pass 1  each lane's keys' scores into shared, and the warp's maximum
+  pass 2  expf(score - max) and the warp's sum (reference: graph:148-165)
+  pass 3  output dimensions spread across the lanes; each lane accumulates its own
+          dims over all keys, then multiplies by 1/sum
+
+Scale is exactly 1.0f (no 1/sqrt(head_dim)), there is no causal mask, and a zero
+denominator yields zero — all three as the reference does them.  Shared is one
+float per key per warp, 4 x 2048 x 4 B = 32 KB static; an item longer than 2048
+tokens is refused by the launcher rather than truncated, because a plane that
+silently covered half an item would be a wrong answer, not a slow one.
+
+3d. Measured (out/phase7-p32-gate.log), against a transcription of
+`eg2vq_attn_worker`'s own arithmetic (row max, expf, sum, weighted sum, per query
+and head, f64 accumulation in the score)
+
+    case                                     tokens  head_dim  KV  half    max abs    rel RMS  min cosine
+    sliding, a query                             26       256   2   512  6.59e-06  5.77e-07  1.000000000
+    sliding, mean document                      184       256   2   512  1.62e-05  9.43e-07  1.000000000
+    sliding, window equals item                 513       256   2   512  2.20e-05  1.05e-06  1.000000000
+    sliding, mask starts to bite                514       256   2   512  2.23e-05  1.06e-06  1.000000000
+    sliding, longest frozen-set item           1414       256   2   512  1.97e-05  1.05e-06  1.000000000
+    full, no mask                               349       512   1    -1  3.61e-05  1.45e-06  1.000000000
+    full, no mask, longest item                1414       512   1    -1  4.21e-05  1.78e-06  1.000000000
+
+  the mask's edge, measured: with one value row at position 1100 and q = 0 (so
+  every in-window key gets weight 1/nkey exactly, which is why the probe cannot be
+  defeated by an underflowed weight), a query at distance exactly 512 sees it, a
+  query at 513 and at 1100 does not, and the device output for those blind queries
+  is exactly zero; `mask edge (512 sees / 513 blind) PASS`.
+
+  a 4096-token item is refused with the output untouched, not half-written.
+
+The cosine column is per (query, head) and its floor over ~4,500 pairs is
+1.000000000 at the nine printed digits; the rel RMS column is the whole tensor
+against the reference's own f32/f64 arithmetic and stays below 1.8e-06 against a
+declared bound of 1e-5.
+
+3e. What this slice does not prove
+
+1. No tower.  Nothing here is connected to the VQ GEMM of section 1 yet: the two
+   kernels are gated separately, and the composition (norms, RoPE, the PLE block,
+   pooling) is P3.3.
+2. No latency or throughput number.  The gate measures agreement and the mask
+   edge; timing attention in isolation would say nothing about the item.
+3. Items longer than 2048 tokens are refused, not handled.  The frozen set's
+   longest item is 1414 tokens, so nothing in this project's tests reaches the
+   limit — which is exactly why it is refused rather than assumed.
+4. Nothing about the geo-mean of keys, the KV cache state, batching across items
+   or any serving shape: this is the embeddings path, where every item attends to
+   itself and nothing is cached.
+5. No other attention variant (no softcap, no sliding-type variants, no
+   different scale) was tested, because this model has exactly one.
+
+4. What the two device slices do not prove, jointly
+----------------------------------------------------
+
+1. No tower and no end-to-end number.  Two kernels are gated separately; nothing
+   yet composes them, so there is no tokens/s, no VRAM figure and no cosine
+   against the CPU path's own vectors.  Those are P3.3's gate by definition.
+2. No answer to the owner's premise yet.  "It should be much faster" is a claim
+   about an item's wall time, and no item has been run on the device.  What is
+   measured so far is one kernel's arithmetic (3.1 TFLOP/s) and one kernel's
+   agreement with the reference.
+3. No device-resident weights yet.  Both kernels take payload and activation
+   pointers that the *test* allocates; nothing in this tree yet binds the
+   artifact's 461 payloads into device tensors once and reuses them across items.
+   That binding is what makes the re-read cost in section 5 real or not.
+4. No quality statement.  Neither slice consumes a different payload than the CPU
+   path does; the codec's cost stays phase 5's subject.
+5. No optimization claim for either kernel, and no cross-check between the two
+   (attention's key plane, the GEMM's token tile and the payload re-read are all
+   first-cut choices).
+6. No portability claim.  Both kernels are gated on this card at sm_89; the
+   instructions they use are sm_80-era, which is an argument for other devices,
+   not a measurement (the same distinction row X.9 keeps).
+
+5. Risk analysis (global rule 20, for the device path as a whole)
+-----------------------------------------------------------------
+
+Decision: move the gemma_vq text tower's compute onto this card's GPU, with the
+VQ payloads consumed in-kernel and the weights device-resident, and gate it on
+parity, latency and VRAM (P3.3).
+
+External risks, each with the evidence that was checked:
+- The card is not the deployment target.  install.sh:112-116 still refuses
+  non-GB10 machines by design, so nothing here says the kernel runs on the Spark
+  (sm_121a): its instructions are sm_80-era and resolve there, but that is
+  reasoning, not a measurement, and the row X.9 evidence for the Spark is the
+  tree's own sm_121a object set (out/cuda-sm89-objectset.log).  UNVERIFIED on
+  another device.
+- Driver/toolkit drift.  The build is pinned by the recorded arch
+  (.ds4-cuda-config.mk: CUDA_ARCH := sm_89) and nvcc 13.3.73; a toolkit change
+  can move f32 contraction and with it the parity numbers in 1d.  The gate
+  re-measures rather than trusting this file (section 1c).
+
+Decision risks, each with its evidence:
+- The payload is re-read once per 64-token tile (measured above as the GB/s
+  column): a long item reads each matrix ceil(tokens/64) times.  For a 1414-token
+  document that is 23 passes over 437 MB.  Not yet measured at tower scale; the
+  mitigation (a larger token tile) is a one-constant change.
+- In-kernel decode costs instructions that a pre-decoded dense matrix would not.
+  The plan of record forbids expanding the payloads to dense on the device, and
+  this slice keeps that rule; the alternative was not measured, so no claim is
+  made that in-kernel decode is faster than pre-decoding to f16 — only that it is
+  the committed design and it is now measurable.
+- Occupancy.  40 KB of static shared per block caps blocks per SM; the measured
+  throughput is what it is (3.1 TFLOP/s, ~9 % of FP32 peak), and no variant was
+  tried.  Treat 3.1 TFLOP/s as a floor, not a ceiling.
+- The CPU reference path's subnormal defect (section 2) will make CPU and GPU
+  differ slightly at the tower gate even when both are correct.  Measured size:
+  2.3e-09 of the weight L1 mass, i.e. far below any parity bound in use.
+
+Prevention in place: the kernel refuses a payload whose header disagrees with the
+caller's geometry (measured: the wrong-geometry case leaves the output untouched),
+so a mis-bound tensor cannot decode silently; the gate re-derives both references
+from the payload bytes on every run; and the arch is recorded so a rebuild here is
+card-native without a flag.
+
+Rollback: this slice is additive.  `git revert` of the ds4-rs commit, or simply
+not building tests/test_eg2vq_vq — no existing object, header or binary changed,
+and the CPU path is untouched.
+
+Residual risk, and the signal that would reverse the decision: if P3.3's
+end-to-end device run does not beat the CPU path's wall time by a wide margin, the
+premise of this phase ("it should be much faster") is wrong for this workload and
+the device path should be re-scoped rather than tuned.  The one measurement that
+settles it is the same item set through both paths, which is exactly P3.3.
+
+6. Files and commands
+----------------------
+
+New in ds4-rs:
+
+    cuda/eg2vq_vq.cuh          the dim-4 DQVQ GEMM (this slice)
+    tests/test_eg2vq_vq.cu     its gate
+    Makefile                   tests/test_eg2vq_vq, test-eg2vq-vq (the tree's own
+                               device-test pattern, Makefile:2170-2175)
+
+New in the outer repo:
+
+    tools/eg2_subnorm.c        the subnormal measurement (section 2)
+    out/eg2_subnorm            its build
+    docs/eg2vq-device-gate7.txt  this document
+    out/phase7-p31-gate.log    the gate's own output
+    out/artifact-subnormal.log the measurement's output
+
+Commands:
+
+    (cd ds4-rs && make test-eg2vq-vq)                  the P3.1 gate, exit 0
+    (cd ds4-rs && make test-eg2vq-attn)                the P3.2 gate, exit 0
+    (cd ds4-rs && nvcc -O3 -g -lineinfo --use_fast_math -std=c++17 \
+        -arch=sm_89 -Xcompiler -march=native -Xcompiler -pthread -I. \
+        -o tests/test_eg2vq_vq tests/test_eg2vq_vq.cu)  the tree's own flags
+    cc -O2 -o out/eg2_subnorm tools/eg2_subnorm.c -lm
+    ./out/eg2_subnorm out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
+        cont out/artifact-manifest.tsv
+
+7. Next slice, and what it takes
+---------------------------------
+
+P3.1 the dim-4 VQ GEMM                      DONE 2026-10-19 (ds4-rs bc353351)
+P3.2 the symmetric-mask attention kernel    DONE 2026-10-19 (ds4-rs 669a8777)
+P3.3 the tower end to end on the device     OPEN, and it is the phase's gate
+
+P3.3 needs four things, in this order:
+
+1. cuda/eg2vq_ops.cuh — the small kernels the tower is otherwise made of, each
+   mirroring the CPU reference's arithmetic (ds4_eg2vq_graph.inc): the weighted
+   row RMS (:47-53) with the eps inside the square root, the weighted per-head RMS
+   on q and k plus the weightless one on v (:264-277), NeoX RoPE over the whole
+   head with the per-layer base (:60-77, ops.cpp:6455 and :6287-6391), the
+   GELU-mul of the FFN and of the PLE gate (:39-41, :307-309, :322-326), the mean
+   pool and L2 normalize (:356-367), and the q8_0 token-table row gather (or the
+   tree's own ds4_gpu_embed_tokens_q8_0_tensor, ds4_gpu.h:678-687).
+2. ds4_eg2vq_gpu.cuh — the family's device adapter, following the shipping
+   pattern of ds4_glmvq_gpu.cuh (included once by ds4_cuda.cu, a model/ctx pair,
+   the payloads bound into device tensors once and reused across items) with the
+   API declared beside the family's own header as ds4_glmvq.h does.  This is where
+   "weights device-resident" stops being an intention: the 437 MB of payloads are
+   copied to the device once per process, not per item.
+3. tests/test_eg2vq_gpu.cu — the gate: the artifact's real payloads and the
+   frozen items' ids through the device tower, against the CPU path's own vectors
+   (the oracle's output, already committed for gate 4/5), with the parity bound
+   stated up front, plus tokens/s and the VRAM the run actually holds.
+4. the numbers recorded, and the phase-doc rows closed — and, per the plan of
+   record, no threshold invented after seeing the result: the tower gate is parity
+   plus latency plus VRAM, printed by the run.

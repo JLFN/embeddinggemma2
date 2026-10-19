@@ -166,10 +166,34 @@ Read these before doing port work in this workspace:
    with the quantization's own gap reported as phase 5's subject — and what the
    unit does not claim (no device path, no route, no tower encoders). Gate script:
    `tools/eg2_phase4_gate.sh` (with `tools/eg2_tok_check.sh` as its first leg).
-9. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+9. `docs/retrieval-cost-gate5.txt` — the phase-5 evidence: what the VQ codec costs in
+   retrieval terms. The frozen labelled set (BEIR SciFact's test split, taken whole:
+   300 queries, 283 documents, 339 labelled pairs, formatted with the checkpoint
+   README's own query prompt and titled-document rule), the builder's
+   byte-reproducibility, the two weight legs over one ids file and one oracle binary,
+   the agreement distribution and the recall@k / MRR tables at 768 and at each MRL
+   width, the analytic chance levels they are read against, and what the unit does
+   not prove. Gate script: `tools/eg2_phase5_gate.sh`, with
+   `tools/eg2_retrieval_set.sh`, `tools/eg2_oracle_to_jsonl.sh`,
+   `tools/eg2_retrieval_score.sh` and `tools/eg2_retrieval_score_selftest.sh`.
+10. `docs/cuda-sm89-port.txt` — the device-path precondition (row X.9): how the
+   ds4-rs working copy's CUDA object set was sm_121a-only, which of the five
+   sm_90-only instruction sites had to be arch-guarded and what the sm_80-era
+   siblings are, the measured ptxas refusal per architecture, the sm_89 object
+   set, the three device tests passing on this card, the Rust host link with the
+   sm_89 cubins embedded, the arch record that keeps this card selected (the
+   tree's own `make cuda CUDA_ARCH=sm_89` writing `CUDA_ARCH := sm_89` into the
+   gitignored `.ds4-cuda-config.mk` the Makefile includes), the measurement that
+   one object cannot cover both this card and the Spark, the missing `GemmaVq`
+   arm the full build surfaced in this working copy's server, and the rollback.
+   Logs: `out/cuda-sm90-probe.log`,
+   `out/cuda-sm89-{build,objectset,device-tests,link}.log`,
+   `out/cuda-card-wiring.log`, `out/cuda-card-wiring-build.log`,
+   `out/cuda-multiarch-probe.log`, `out/family-match-sweep.log`.
+11. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-10. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
+12. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-11. Cross-session memory for this workspace lives under
+13. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.
