@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: 07e0ccd786efe60be8f99620f4b3a31d650c4cfd
+last_updated_commit: d45394f34bc052f457acbc42ecfdbe52c42eee77
 branch: dev
-remote: https://github.com/JLFN/embeddinggemma2
-handoff_written_at_context_usage: 9%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T21:14:02+02:00
+remote: 
+handoff_written_at_context_usage: 24%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T21:55:43+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
