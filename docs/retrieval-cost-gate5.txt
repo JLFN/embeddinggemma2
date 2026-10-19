@@ -1,0 +1,350 @@
+Phase 5 evidence — what the VQ codec costs, in retrieval terms
+==============================================================
+
+Unit 15 of embeddinggemma2-handoff.md. Phase 5 asks the owner's own question —
+"we should not make it less smart, just use the VQ to make it compact" — over a
+frozen labelled retrieval set, with the same engine on both container paths.
+RECIPE.md section 5 already reports the codec's intrinsic cost (a 0.9859 mean
+weight cosine over the text tower); this document reports what that cost does to
+a real task, and nothing here is a weight-level claim.
+
+1. Files
+--------
+
+Created by this unit:
+
+  tools/eg2_retrieval_set.sh              the frozen labelled set's builder
+  tools/eg2_oracle_to_jsonl.sh            the oracle dump -> the anchor jsonl shape
+                                          (the awk body is byte-identical to the
+                                          to_jsonl() function in the phase-4 gate)
+  tools/eg2_retrieval_score.sh            the scorer: the agreement distribution and
+                                          recall@k / MRR@k, with the invariants
+                                          that would make the numbers wrong
+  tools/eg2_retrieval_score_selftest.sh   the scorer checked against two fixtures
+                                          whose answers are worked out by hand
+  tools/eg2_phase5_gate.sh                gate 5: set pins, ids, both legs, the score
+  tests/retrieval/scifact-test-queries.tsv   300 labelled queries, frozen
+  tests/retrieval/scifact-test-pool.tsv      283 pooled documents, frozen
+  tests/retrieval/scifact-test-qrels.tsv     339 labelled pairs, frozen
+  docs/retrieval-cost-gate5.txt               this document
+
+Nothing in the port changed: phase 5 is a measurement over the code phase 4
+landed (ds4-rs/ds4_eg2vq_graph.inc, ds4_eg2vq_bind.inc, the oracle, and the Rust
+host's tokenizer). The gate uses the same oracle binary gate 4 used, at the same
+-O0 entry and the same default thread count.
+
+2. What was declared before the run
+-----------------------------------
+
+The plan of record for this row (embeddinggemma2-handoff.md, PHASE 5, and
+docs/ds4-gemma-port-phases.md row X.7) declares the metric and the gate, and
+deliberately no threshold:
+
+    Act: the same sentence set and a frozen labelled retrieval set through our own
+    engine, once with the baseline GGUF and once with the VQ artifact; report the
+    cosine agreement distribution (mean, min, quantiles) and recall@k / MRR at 768
+    and at each MRL width.
+    Gate: the numbers are committed with the artifact hashes they were measured on.
+    This is the owner's "not less smart" answer, and it needs no third party.
+
+So the deliverable is the number and its provenance, not a pass/fail against a bar
+invented after seeing the result. What this unit does assert, because a failure of
+any of them would make the numbers wrong rather than bad, are the scorer's
+invariants: every vector unit-length, every stored truncated vector equal to the
+renormalized leading part of the same item at the widest width, every item present
+in both legs, every labelled document present in the scored pool, and the
+requested widths all present (tools/eg2_retrieval_score.sh; the scorer exits
+non-zero on any of them).
+
+The two things compared are the same code path over two weight sources:
+
+  baseline   out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, the unquantized
+             original, the file the anchor loads
+  artifact   out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf, the
+             shipped container: 461 type-42 VQ payloads through the project's own
+             dim-generic decoder (ds41_vq_fmt.h:73-105)
+
+3. The labelled set
+-------------------
+
+Phase 2 ended with a named gap: the anchor's 113 items contain 12 authored
+retrieval pairs, and "twelve easy pairs are not a hard enough test to separate
+them; the labelled set that can is phase 5's" (docs/anchor-gate2.txt). This unit
+closes that gap with labels this project did not write.
+
+  Source     BEIR's own SciFact distribution,
+             https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip
+             (Thakur et al., NeurIPS 2021 Datasets and Benchmarks), 2,816,079 B,
+             sha256 536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165.
+             The builder refuses any other digest.
+  Selection  the test split's qrels in full: every query it labels (300) and every
+             document it marks relevant (283), 339 labelled pairs. No sampling rule
+             and no seed; there is nothing here for a later unit to re-roll. (For
+             scale: the split's own 5183-document corpus and 1109 queries are in the
+             distribution; what is frozen here is the part the split labels, which is
+             also the part with human annotations.)
+  Labels     339 pairs, all score 1: 277 queries have one relevant document, 14 have
+             two, 4 have three, 3 have four, 2 have five.
+  Formatting query side prompt_name `SearchQuery`, the checkpoint's retrieval-query
+             prompt, `task: search result | query: `; document side prompt_name
+             `Raw` with the checkpoint README's titled-document formatting in the
+             text itself, `title: {title} | text: {content}` (the README's prompt
+             table, and its note that "titled documents must still be formatted
+             manually"). Every SciFact document has a title, so the title slot is
+             filled; the config's `Document` key is the untitled form.
+  Pool       the pool is every document the split labels, so every distractor is
+             the gold evidence for some other claim in the same split. There is no
+             filler text in it, which makes it a hard pool at 283 documents rather
+             than an easy one.
+  Ids        the dataset's own numeric ids, unprefixed. Query ids run 1..1395 and
+             document ids 33370..195689316, disjoint by range — asserted by the
+             builder rather than assumed, because the scorer keys vectors by item id.
+
+Reproducibility, measured: running tools/eg2_retrieval_set.sh twice produces all
+three files byte for byte, and gate 5 re-runs the builder and refuses to proceed if
+the frozen files differ from what it produces. The hidden prerequisite that makes
+the tab-separated items format lossless is checked rather than hoped: none of the
+5183 documents and none of the 1109 queries carries a TAB, CR or newline in its
+title or text (0 of each, over the whole distribution), so no text is escaped or
+folded on the way into the items file.
+
+    tests/retrieval/scifact-test-queries.tsv  sha256 1247b1f4d25a1875404480961095df8266424323eb310d9d821d3231b69a404d
+    tests/retrieval/scifact-test-pool.tsv     sha256 caf498d9db8aca3648c7e688edb970226b7bee70ad009a8f05c24c11473b73b0
+    tests/retrieval/scifact-test-qrels.tsv    sha256 864141f92383b8b7140ebbaf61cb9dac40ae522796690063ffa1a114f973476c
+
+Size, measured: 583 items per leg — 300 queries (8,059 tokens, mean 26) and 283
+documents (98,970 tokens, mean 349, longest 1,414) — 107,029 tokens in one ids file.
+The documents average about four characters per token, which is what English
+scientific prose should do; the longest items exercise the symmetric +/-512 window
+the tower carries, as the anchor's three long items did in phase 4.
+
+Order of difficulty, analytic rather than measured, so the tables below can be read
+against something: a uniformly random ranking of the 283-document pool would score
+recall@1 0.0040 (the query mix gives 1.13 relevant documents per query), recall@10
+0.0353 (10 of 283), and MRR@10 0.0104 ((H_10)/283). Those are the numbers a model
+that learned nothing would produce here.
+
+What the two sides look like, from the frozen files (ids tab prompt_name tab text,
+texts truncated here for width):
+
+    queries   1	SearchQuery	task: search result | query: 0-dimensional biomaterials show inductive properties.
+    pool      33370	Raw	title: Targeting A20 Decreases Glioma Stem Cell Survival and Tumor Growth | text: Glioblastomas are deadly cancers that display a functional cellular hierarchy maintained by self-renewing gl...
+
+The query's prefix comes from the prompt map; the document's prompt_name is `Raw`
+because the README's titled-document rule puts the whole instruction in the text.
+
+4. The engine and the two legs
+------------------------------
+
+    tools/eg2_phase5_gate.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
+
+One ids file drives both legs, so the tokenization cannot be a difference between
+them, and the ids come from the artifact's own vocabulary through the Rust host
+(the phase-4 driver, `crates/ds4-core/examples/gemma_vq_tok.rs`, whose ids are the
+reference's own id for id — gate 4). Each leg runs the tree's oracle over the same
+ids:
+
+    ds4-rs/tests/parity/eg2vq_embd_c_oracle <gguf> out/phase5-ids.tsv
+
+    ids:    out/phase5-ids.tsv sha256 9464c27272399e21895b49b6e031f7a2c1e626ba0d842d5bb4e1f49fb67d5b4c (583 items, 107029 tokens)
+    items:  out/phase5-items.tsv sha256 66b956ad1fab62b2996343ae9578b9e66d3dddfba9735f11a936cb47c8bfca03
+    oracle: ds4-rs/tests/parity/eg2vq_embd_c_oracle sha256 d214f2172351ad9ba2c8b84e8cc1f820fd99070345e9386fc1df3e1a48762ce4
+
+Flags, declared rather than implied: the oracle is the tree's own -O0 entry — the
+same binary gate 4 used — with the tree's default thread count (min(12, online
+cpus) = 12 here, ds4.c:2238-2249), and the two legs ran concurrently (two
+processes, ~8 cores each on this 28-core host). The per-leg `secs=` in their logs
+are therefore contended wall time, not a latency claim; section 7 records what the
+same entry costs at -O2 and how far its arithmetic moves.
+
+5. The numbers
+--------------
+
+5a. The codec on the phase-4 sentence set, in this unit's format
+
+The phase-4 pair (baseline and artifact vectors over the 113-item sentence set) is
+already committed, so the codec's own cost is reported here through the same scorer
+the retrieval run uses and at the same four widths, which is the one place the two
+runs can be compared:
+
+    inputs:  out/phase4-baseline.jsonl sha256 9aefc2eb50730466ab2365648659f1e6d9e942eebc684dbcc8cb91f79a3478ec
+             out/phase4-artifact.jsonl sha256 0b5557cbd2a0cb6355549a28b95297a8a1dfc01a2da40cd00b9d535f05d97da8
+    command: tools/eg2_retrieval_score.sh out/phase4-baseline.jsonl out/phase4-artifact.jsonl -
+    log:     out/phase5-phase4pair.log         (0.9 s, agreement only)
+
+    width   items      meancos       mincos           p1           p5          p25          p50          p75   worst_item
+    768       113  0.960069342  0.829288170  0.829288170  0.936426481  0.951163299  0.961872843  0.973416818          e05
+    512       113  0.961374956  0.838490158  0.838490158  0.938321564  0.953327515  0.962020977  0.974511169          e05
+    256       113  0.965519831  0.848828054  0.848828054  0.943957101  0.958795781  0.966316952  0.976736200          e05
+    128       113  0.976135232  0.890403342  0.890403342  0.961851553  0.971062634  0.976179498  0.983660284          e05
+
+    width          mincos   worst_item     n<0.99     n<0.95     n<0.90
+    768       0.829288170          e05        112         24          1
+    512       0.838490158          e05        112         19          1
+    256       0.848828054          e05        112         11          1
+    128       0.890403342          e05        107          1          1
+
+    invariants: items 113, item_width_rows 452 (113 x 4), query_items 0,
+    document_items 113, documents_ranked 113, no labels loaded,
+    unit_norm_max_dev_baseline 1.021e-07, unit_norm_max_dev_artifact 1.003e-07,
+    trunc_consistency_max_dev 5.000e-08, percentile monotonicity asserted.
+
+Two things this adds to phase 4 rather than repeats: the quantiles, which phase 4
+did not print (p5 0.936, p25 0.951, p50 0.962, p75 0.973 at 768), and the tail
+counts, which show how thin the damage is — 24 items below 0.95 at 768, 11 at 256,
+1 at 128. The mean and min agree with phase 4's own table to the printed digit
+(0.960069342 and 0.829288170 at 768, docs/text-tower-gate4.txt), which is the
+consistency check that the scorer is being fed the same pair phase 4 gated. Every
+item here is a sentence, so the side split is empty and section 5a says nothing
+about queries versus documents; that is what 5b and 5c are for. Values in the jsonl
+pair are the port's -O0 output, and the -O2 build differs only at the print
+precision (section 7), so width is the only variable in these rows.
+
+5b. The codec's cost on the frozen retrieval set, and 5c the retrieval tables
+
+PENDING-RUNS
+
+6. Corrections this unit made
+-----------------------------
+
+Three, each found by a check rather than by review, and one of them was a defect
+that would have flattered the answer.
+
+1. The scorer's first design took the RANKING POOL from the labels: documents were
+   candidates because the qrels mentioned them. That is wrong whenever the pool
+   holds a document the labels do not mention — an unlabelled distractor would be
+   dropped from the ranking, which can only improve the metrics. The hand fixture
+   found it: its pool has three documents and its labels name two, and the first
+   version scored the query as if the third did not exist (baseline recall@1 1.0
+   where the hand answer is 0.5). The pool now comes from the ITEM side — every
+   scored item that is not a labelled query is a candidate — and the scorer refuses
+   to run if a labelled document is missing from the pool. For this set the two
+   definitions coincide (all 283 pool documents are somebody's gold evidence);
+   that is a property of the set, and it is now asserted rather than assumed.
+2. The tie break compared document ids as STRINGS. For this project's numeric ids
+   byte order is not numeric order ("33370" sorts before "4983"), so the documented
+   rule — ties broken by document id ascending — was not the rule the code ran. The
+   second hand fixture (documents 9 and 10, identical vectors, the labelled one
+   being 10) pins the corrected rule: by value when both ids are numeric, by byte
+   order otherwise, so the order is total either way.
+3. The set builder's first version stamped the build time into the frozen files'
+   headers, which made them differ between two runs of the same builder. The claim
+   "the builder is byte-reproducible" was therefore false as written, and the
+   timestamp is gone: gate 5 now re-runs the builder and refuses to proceed unless
+   all three files come back byte for byte.
+4. A smaller one, recorded because it cost more time than it should have: an
+   apostrophe inside the single-quoted awk program of a shell script truncates the
+   program silently, and mawk then reports a syntax error at a line that has
+   nothing to do with it. Two comments were rephrased; the constraint is that the
+   tools here are shell and awk, so a possessive in a comment is a syntax error.
+5. The self-test corrected an expectation of its own: in case B both documents tie
+   with the query, so the baseline's mean top1-top2 margin is 0, not 1 as the first
+   version of the test asserted. The scorer was right.
+
+7. The -O2 aside, and where the timing came from
+------------------------------------------------
+
+The tree's own oracle entry is `-O0` (its Makefile rule appends -O0 after CFLAGS,
+whose default already carries -O3 and -ffast-math). Phase 4 measured the same entry
+at -O2 as 89 s against 310 s for the 113-item set; this unit measured whether that
+speed costs accuracy, because a later unit needing the wall time (phase 7's device
+comparison, say) should know before it takes it.
+
+    cc -O3 -ffast-math -g -march=native -Wall -Wextra -std=c99 -D_GNU_SOURCE \
+       -fno-finite-math-only -O2 -DDS4_NO_GPU -ffunction-sections -fdata-sections \
+       -Wno-unused-function -I. -o /tmp/eg2vq_oracle_O2 tests/parity/eg2vq_embd_c_oracle.c \
+       -Wl,--gc-sections -lm -pthread
+
+That is the tree's own compile line with the appended -O0 replaced by -O2, nothing
+else changed. Over the frozen 113 items, both weight legs, all four widths:
+
+    width   items   mincos/meancos   max element delta   mean per-item max delta
+    768       113   1.000000000      2.000e-07           6.7e-09  (baseline) / 8.2e-09  (artifact)
+    512       113   1.000000000      2.000e-07           9.2e-09            / 1.1e-08
+    256       113   1.000000000      2.000e-07           1.3e-08            / 1.5e-08
+    128       113   1.000000000      3.000e-07           1.5e-08            / 1.8e-08
+
+Read that as: the two builds agree to the last printed digit (the vectors are
+printed at %.7f, and the largest single-element difference anywhere is 3e-07, the
+rounding of that print), with wall times of 310.29 s and 88.64 s on the baseline
+leg — 3.5x. `diff` on the two raw dumps does report them as different files, which
+is why the numbers above exist instead of a one-word "identical": the difference is
+real but sits at the print precision. The phase-5 tables below are therefore
+computed at -O0, the tree's own entry, and the same flags gate 4 used; a later unit
+may take -O2 knowing exactly what it costs, and should re-check rather than trust
+this file, since a compiler change could move it.
+
+7b. Environment unchanged
+-------------------------
+
+The legs ran on the same host and the same build as phase 4: 28 cores, 31 GiB of
+RAM, the tree's own oracle binary (sha256 d214f217…), -O0, the default thread count
+(min(12, online cpus) = 12), and the CUDA object still does not build in this
+working copy (a pre-existing condition, docs/loader-gate3.txt), so nothing here is a
+device-path result. The two legs' peak memory is the 520.0 MiB dense decode plus the
+GGUF's own 437 MiB (artifact) or 558 MiB (baseline) in page cache; the host reported
+no pressure.
+
+8. What this proves, and what it does not
+-----------------------------------------
+
+PENDING-RESULT — the one paragraph that states what the codec cost on the task is
+written last, on purpose, so that the prose describes the numbers rather than the
+numbers being read to fit the prose.
+
+What it proves:
+
+1. Two containers, one engine, one tokenization. Both legs run the same tree's own
+   reference entry over the same ids file, so the only difference between them is
+   the weight source: the baseline is the unquantized checkpoint, the artifact is
+   the VQ container the runtime ships. Every cosine in these tables is therefore the
+   codec's cost and nothing else, and no third party is involved in any row.
+2. The engine is exonerated before the codec is judged. Gate 4 put the same entry
+   at 768 mean cosine 0.999996809 against the frozen anchor vectors, so the port
+   reproduces the model; a poor gate-5 number could not be explained away as a
+   porting error.
+3. The codec's intrinsic cost, in the format the retrieval run uses, with the
+   distribution rather than a single mean: 0.960 (768) and 0.976 (128) over the
+   sentence set, with p5/p50/p75 and the tail counts (section 5a).
+4. A task-level answer on labelled data. Recall@k and MRR for the artifact against
+   the baseline as its control, at 768 and at each MRL width, with the baseline's
+   own retrieval level printed beside the artifact's — so "not less smart" is
+   answered by comparing rankings on one harness instead of by asserting that two
+   vectors look alike.
+5. Reproducibility of the whole chain: the gate re-runs the set builder and refuses
+   unless the three frozen files come back byte for byte, both legs share one ids
+   file, the legs are reused only when their .meta records the same ids and the same
+   oracle binary, and each printed table carries the hashes of the artifact, the
+   baseline, the set and the ids it was measured on. RECIPE commands 23-26 re-run
+   all of it from a checkout.
+
+What it does not prove:
+
+1. No absolute benchmark score, and nothing comparable to published BEIR numbers.
+   The pool is the 283 documents the test qrels label, not the 5183-document
+   SciFact corpus, and no nDCG@10 (the benchmark's own headline) is computed —
+   the plan of record declares recall@k and MRR. These numbers answer "did the
+   codec change the ranking", not "how good is EmbeddingGemma-2 on BEIR".
+2. No device-path result. The CUDA object does not build in this working copy, a
+   pre-existing condition (docs/loader-gate3.txt), so both legs are CPU. Whether the
+   GPU agrees is a phase-7 question, and the kernels that would answer it do not
+   exist yet.
+3. No serving claim. Phase 6 (the entry point that exposes the tower to a client) is
+   not done, so nothing here says the model can be reached over ds4's own surface.
+4. No latency claim. The two legs ran concurrently on a contended host, so their
+   secs= are wall time under contention, not throughput, and latency is not part of
+   this gate.
+5. Nothing about the vision or audio towers (phase 8) or about the 914 tensors kept
+   verbatim. The cost measured here is the text tower's.
+6. No threshold, and no derived one. None was declared before the run and none is
+   inferred after it: what these numbers mean for shipping is the owner's call, and
+   the tables exist so that call can be made on evidence rather than on a summary.
+7. One set, one language, one genre. SciFact is English scientific claim
+   verification: 300 queries and 283 documents is enough to detect a ranking change
+   and not enough to bound behaviour on another domain.
+8. No variance to report, and that is a property of the measurement rather than
+   evidence of robustness: given the ids and the GGUF the legs are deterministic
+   (the oracle's output was proven bit-reproducible in phase 4), so a second run
+   would reproduce these rows and would not make them more general.
+
