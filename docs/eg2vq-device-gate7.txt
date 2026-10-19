@@ -253,8 +253,83 @@ declared bound of 1e-5.
 5. No other attention variant (no softcap, no sliding-type variants, no
    different scale) was tested, because this model has exactly one.
 
-4. What the two device slices do not prove, jointly
-----------------------------------------------------
+4. Row P3.3, step 1 — the tower's small device ops
+---------------------------------------------------
+
+4a. What exists now
+
+  ds4-rs/cuda/eg2vq_ops.cuh        the primitives the two kernels do not cover
+  ds4-rs/tests/test_eg2vq_ops.cu   their gate
+  ds4-rs/Makefile                  tests/test_eg2vq_ops and test-eg2vq-ops
+
+4b. The ops, and the two stated deviations
+
+Each mirrors one expression of the CPU reference forward (ds4_eg2vq_graph.inc,
+citations in the kernel header):
+
+  embed       one q8_0 table row, scaled by sqrt(n_embd)      graph:196-208
+  rms         row RMS with an optional weight, eps inside the
+              square root, the sum in double                    graph:47-53
+  rms_head    the same per head vector, weighted on q and k
+              and weightless on v                               graph:264-277
+  rope        NeoX over the whole head, pairs (i, i + hd/2)     graph:60-77
+  gelu_mul    gelu(gate) * up at ggml's tanh coefficients       graph:39-41, :307-309
+  proj768     per token: RMS by output_norm, then a dot with
+              each of the 768 bf16 rows, accumulated over the
+              item; then the mean pool and L2                    graph:339-367
+
+Two deviations from a literal transcription of the graph's *code* (not its
+arithmetic), both because of this build's own flags rather than a preference:
+
+  - The RoPE angles come from a table the caller builds.  --use_fast_math compiles
+    sinf/cosf to the SFU approximations, whose fp32 argument reduction loses about
+    8e-05 rad at the largest angle this tower produces; a table built with the
+    graph's own angle accumulation (theta starts at the position and multiplies by
+    theta_scale in f32, one step per pair) and double-precision sine and cosine
+    reproduces the reference's angles exactly and computes only the trig more
+    accurately.  Measured: bit-identical output (rel RMS 0.000e+00).
+  - Norm weights arrive as f32, the form the CPU path reads them into (graph:57-59);
+    a few hundred floats per layer.
+
+4c. Measured (out/phase7-p33-ops-gate.log)
+
+    case                                  rel RMS     max abs     bound
+    row RMS, weighted (512 wide)        5.986e-08   7.153e-07    1e-06
+    row RMS, weightless                 5.762e-08   4.768e-07    1e-06
+    per-head RMS, weighted (hd 256)     5.886e-08   7.153e-07    1e-06
+    per-head RMS, weightless (hd 256)   5.675e-08   4.768e-07    1e-06
+    per-head RMS, weighted (hd 512)     5.831e-08   9.537e-07    1e-06
+    per-head RMS, weightless (hd 512)   5.633e-08   4.768e-07    1e-06
+    RoPE 1414 x 4 x 256, base 1e4       0.000e+00   0.000e+00    1e-06
+    RoPE 1414 x 4 x 256, base 1e6       0.000e+00   0.000e+00    1e-06
+    gelu(gate) * up                     2.392e-06   1.967e-05    1e-05
+    q8_0 token row x sqrt(512)          0.000e+00   0.000e+00    1e-06
+    proj768 + mean pool + L2            4.926e-07   8.196e-08    1e-05
+    pooled vector norm                  |v| = 0.999999976
+
+The RMS rows sit at f32 rounding (~6e-08): the kernel and the reference accumulate
+in double and differ only in the reduction order.  RoPE and the embedding gather are
+bit-identical.  The one number that is not at rounding is the GELU: 2.39e-06
+relative, with a 1.967e-05 largest absolute difference, and its bound is 1e-05 for
+that measured reason — tanhf is a library function that --use_fast_math compiles
+differently from the libm one the CPU reference links.  It is stated rather than
+hidden because a later unit that needs a tighter tower bound will find this term
+first.
+
+4d. What this step does not prove
+
+1. No tower.  These ops are not composed with the GEMM and the attention kernel
+   yet, so there is still no item on the device, no tokens/s and no VRAM number.
+2. Nothing about the adapter: the RoPE tables are per-layer data the adapter must
+   build (2 x n_pos x head_dim/2 floats — about 1.4 MB at 1,414 tokens on the full
+   layers) and the payloads are still not device-resident.
+3. The 768 projection uses one block per token with an atomic accumulation: right
+   for 768 outputs, unmeasured for anything wider.
+4. The GELU bound is the fast-math tanh's, not the arithmetic's; the tower gate may
+   need a precise tanh and that is a change, not an assumption.
+
+5. What the three device slices do not prove, jointly
+-----------------------------------------------------
 
 1. No tower and no end-to-end number.  Two kernels are gated separately; nothing
    yet composes them, so there is no tokens/s, no VRAM figure and no cosine
@@ -276,7 +351,7 @@ declared bound of 1e-5.
    instructions they use are sm_80-era, which is an argument for other devices,
    not a measurement (the same distinction row X.9 keeps).
 
-5. Risk analysis (global rule 20, for the device path as a whole)
+6. Risk analysis (global rule 20, for the device path as a whole)
 -----------------------------------------------------------------
 
 Decision: move the gemma_vq text tower's compute onto this card's GPU, with the
@@ -328,7 +403,7 @@ premise of this phase ("it should be much faster") is wrong for this workload an
 the device path should be re-scoped rather than tuned.  The one measurement that
 settles it is the same item set through both paths, which is exactly P3.3.
 
-6. Files and commands
+7. Files and commands
 ----------------------
 
 New in ds4-rs:
@@ -357,33 +432,46 @@ Commands:
     ./out/eg2_subnorm out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
         cont out/artifact-manifest.tsv
 
-7. Next slice, and what it takes
+8. Next slice, and what it takes
 ---------------------------------
 
 P3.1 the dim-4 VQ GEMM                      DONE 2026-10-19 (ds4-rs bc353351)
 P3.2 the symmetric-mask attention kernel    DONE 2026-10-19 (ds4-rs 669a8777)
-P3.3 the tower end to end on the device     OPEN, and it is the phase's gate
+P3.3 step 1, the tower's small ops          DONE 2026-10-19 (ds4-rs 467f5431)
+P3.3 the tower end to end, on the device     OPEN — the gate of this phase, and
+                                             the one the owner's premise is
+                                             settled by
 
-P3.3 needs four things, in this order:
+What is left, in order:
 
-1. cuda/eg2vq_ops.cuh — the small kernels the tower is otherwise made of, each
-   mirroring the CPU reference's arithmetic (ds4_eg2vq_graph.inc): the weighted
-   row RMS (:47-53) with the eps inside the square root, the weighted per-head RMS
-   on q and k plus the weightless one on v (:264-277), NeoX RoPE over the whole
-   head with the per-layer base (:60-77, ops.cpp:6455 and :6287-6391), the
-   GELU-mul of the FFN and of the PLE gate (:39-41, :307-309, :322-326), the mean
-   pool and L2 normalize (:356-367), and the q8_0 token-table row gather (or the
-   tree's own ds4_gpu_embed_tokens_q8_0_tensor, ds4_gpu.h:678-687).
-2. ds4_eg2vq_gpu.cuh — the family's device adapter, following the shipping
-   pattern of ds4_glmvq_gpu.cuh (included once by ds4_cuda.cu, a model/ctx pair,
-   the payloads bound into device tensors once and reused across items) with the
-   API declared beside the family's own header as ds4_glmvq.h does.  This is where
-   "weights device-resident" stops being an intention: the 437 MB of payloads are
-   copied to the device once per process, not per item.
-3. tests/test_eg2vq_gpu.cu — the gate: the artifact's real payloads and the
-   frozen items' ids through the device tower, against the CPU path's own vectors
-   (the oracle's output, already committed for gate 4/5), with the parity bound
-   stated up front, plus tokens/s and the VRAM the run actually holds.
-4. the numbers recorded, and the phase-doc rows closed — and, per the plan of
-   record, no threshold invented after seeing the result: the tower gate is parity
-   plus latency plus VRAM, printed by the run.
+1. The adapter: out-of-tree-but-in-family, following the shipping pattern of
+   ds4_glmvq_gpu.cuh — included once by ds4_cuda.cu, a model/ctx pair, the API
+   declared beside the family's own header (ds4_glmvq.h does it for GLM VQ).  Two
+   jobs it owns that nothing written so far does:
+     - binding: copy the artifact's 461 payloads to the device ONCE per process
+       (437 MB), with the record table the CPU binder already builds
+       (ds4_eg2vq.h's ds4_eg2vq_record), so the GEMM reads device memory instead of
+       the file map.  This is where "weights device-resident" stops being an
+       intention.
+     - the per-layer facts the kernels need: the f32 norm vectors and the 24
+       layer scalars (a few hundred floats per layer), the bf16 768 projection, and
+       the RoPE tables per layer (cos/sin, [n_pos][head_dim/2], built on the host
+       with the graph's own angle accumulation — about 1.4 MB per item on the full
+       layers and half that on the sliding ones).
+2. The tower's op sequence per layer, which is exactly the CPU graph's
+   (ds4_eg2vq_graph.inc:169-337): embedding, the per-layer input block, then per
+   layer attn_norm, q/k/v, per-head RMS + RoPE, attention, o_proj, the post-attention
+   residual, the FFN, the post-FFN residual, the PLE block, the layer scalar; then
+   output_norm, the 768 projection, the mean pool and L2.
+3. The end-to-end gate: the artifact's real payloads and real item ids through the
+   device tower, against the CPU path's own committed vectors, with the parity
+   bound stated before the run, plus tokens/s and the VRAM the run actually holds.
+   The CPU reference for it already exists and is committed: the oracle's jsonl for
+   the frozen set (gate 5's inputs), so the comparison needs no new reference.
+4. The numbers recorded, and the rows closed — no threshold invented after seeing
+   the result.
+
+Two facts the adapter must be built around, both already measured: the CPU path's
+subnormal decoder defect means CPU and GPU will differ at ~1e-08 of the weight mass
+(section 2a), and the GEMM re-reads each payload once per 64-token tile, so a
+1,414-token document reads all 437 MB about 23 times (section 6).
