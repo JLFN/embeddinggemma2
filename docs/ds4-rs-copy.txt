@@ -1,0 +1,92 @@
+ds4 runtime copy — how it was made, what it contains, how it was verified
+=======================================================================
+
+Date        2026-10-19
+Source      /data/ds4-dfm-rs   @ eb67d493ec82c9602961d93c9f089a56cdef7ffe
+                              branch feat/ds41-dsml-carriage, working tree clean
+Destination /data/embeddinggemma2/ds4-rs   (nested clone, gitignored by this repo)
+
+Why a copy exists
+-----------------
+The EmbeddingGemma-2 VQ artifact (out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin)
+cannot be run by anything on this machine today: ds4-dfm-rs has no gemma
+string anywhere and no embeddings endpoint (grep over *.rs/*.c/*.h/*.cu/*.md
+under /data/ds4-dfm-rs, target/ excluded: only unrelated hf-chat-template
+vendor files). The copy is the base for adding that support without touching
+the live ds4 workspace, which has its own session, handoff and remotes.
+
+The copy command (exact, reproducible)
+--------------------------------------
+    mkdir -p /data/embeddinggemma2/ds4-rs
+    rsync -a --exclude='target/' --exclude='misc/' \
+          /data/ds4-dfm-rs/ /data/embeddinggemma2/ds4-rs/
+
+Measured result: 9,126 files (8,606 regular, 520 directories), 2,631,391,376
+bytes, 14.1 s wall, 181 MB/s.
+
+What was excluded, and why (both measured, not assumed)
+------------------------------------------------------
+target/   69 GB of cargo output (63 GB debug, 6.1 GB release). Copying it
+          would buy nothing: cargo build fingerprints bake in absolute
+          paths. 16 files under target/release/.fingerprint/ reference
+          /data/ds4-dfm-rs (for example /data/ds4-dfm-rs/cuda/mmq/ds4_mmq.o),
+          so a build at a new path rebuilds regardless of what is copied.
+misc/     1.8 GB of scratch worktrees and old trees, none of it needed to
+          build or run. Its seven tracked files were restored from the
+          copy's own git object store afterwards (git checkout -- misc/),
+          so the copy's tree is clean rather than carrying seven deletions.
+
+Verification performed on the copy (all commands run, all readings recorded)
+---------------------------------------------------------------------------
+git rev-parse HEAD                 eb67d493ec82c9602961d93c9f089a56cdef7ffe
+                                   — identical to the source
+git ls-files -s | sha256sum        65dd3bdce727a1d13c4831f9ab85953a98ff369792d52c0c7b0aed47a56fb0f5
+                                   — identical in source and copy, over 2,561
+                                   tracked files
+git status --short                 empty (clean tree)
+git branch                         17 branches; both remotes present
+                                   (origin Baekpica/ds4-dfm-rs,
+                                    fork   JLFN/ds4-dfm-rs)
+git fsck --connectivity-only       no corruption; only the expected dangling
+                                   objects from prior fetches/resets
+make -n ds4                        the whole build graph resolves inside the
+                                   copy; 0 lines reference /data/ds4-dfm-rs,
+                                   so a build here cannot write into the
+                                   source workspace
+git grep /data/ds4-dfm-rs          5 files, all prose: docs/BONSAI.md,
+                                   docs/ds41-dsml-port-inventory.md,
+                                   docs/releases/bonsai-cpu-reference-2026-09-30.md,
+                                   misc/posttrain-research-2026-10-11.md,
+                                   qa-evidence/qa-report.md — none is build
+                                   wiring
+.gitignore, Makefile               no absolute source path in either
+
+Prebuilt C/CUDA objects carried over (why the first build is incremental):
+ds4.o 16.8 MB, ds4_cuda.o 28.5 MB, cuda/mmq/ds4_mmq.o 63.8 MB, plus the rest
+of the object set and the top-level binaries (ds4, ds4-server, ds4-bench,
+ds4-agent, ds4-eval and their -c variants).
+
+Worktree registrations
+----------------------
+The source repo has five extra worktrees registered (/tmp/ds4-base-check,
+/tmp/ds4-head locked, /tmp/ds4-main-check, /tmp/ds4-merge, and
+misc/scratch/wt-prbase). Copying .git carried those registrations into the
+copy, where they are inert but misleading, and their .git back-pointers name
+the SOURCE admin directory. git worktree prune does not clear them; the five
+admin directories under the copy's .git/worktrees/ were removed directly.
+That is copy-local bookkeeping only — the /tmp worktrees belong to the
+source repo and were left alone, verified by re-listing the source's
+worktrees, which still shows all six.
+
+Two caveats to keep in mind
+---------------------------
+1. The copy shares its remotes with the source. A push from this copy lands
+   on the same fork (JLFN/ds4-dfm-rs) as work from the ds4 project. Treat
+   any push as shared state and confirm before doing it (rule 20) — and note
+   rule 6: never publish private repositories.
+2. The copy is not a submodule and is gitignored by this repo. Its history,
+   branches and commits live in its own .git; this repo records only this
+   file.
+
+Disk: the copy is 2.5 GB (of which .git is 267 MB), against 263 GB free on
+/data at the time.

@@ -2,6 +2,7 @@ graphify-out/
 graphify-rs-out/
 graphify-rs.toml
 .models/
+ds4-rs/
 *[.]o
 out/
 out/*.bin
