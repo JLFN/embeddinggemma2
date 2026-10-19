@@ -1,0 +1,140 @@
+Unit 21 plan (phase 6, row P2.3, slice 2): batch several items into one tower call
+
+PARKED 2026-10-19. This is the executable spec that stood in the handoff's
+section 3 at the d42fc8f boundary, moved here when the owner directed the vision
+phase (phase 8) to go first. It is a deferred unit, not a cancelled one: nothing
+in it has been executed (no edit was made for it), the reference reading it asks
+for was done, and the design below is the one the owner chose. Resume it when the
+vision phase closes.
+
+What IS done already, so the resumed unit does not repeat it: the reference
+semantics were read first-hand (llama-batch.cpp's `llama_ubatch` packing and
+llama-graph.cpp's `llm_graph_input_attn_no_cache::set_input` fill_mask, both at
+the pin) and every ds4-rs site the change touches was read (cuda/eg2vq_attn.cuh,
+cuda/eg2vq_ops.cuh, ds4_eg2vq.h, ds4_eg2vq_gpu.cuh, ds4_eg2vq_graph.inc,
+ds4.c's ds4_engine_embed_gemma_vq and eg2vq_device_ensure, native/bridge/
+ds4_bridge.{c,h}, crates/ds4-sys/src/lib.rs's ds4_bridge_eg2vq_embed, crates/
+ds4-core/src/lib.rs's Model::embed_gemma_vq, crates/ds4-server/src/serve.rs's
+run_embed). The reference reading is recorded here so it can be re-used:
+
+  - llama-graph.cpp:482-517 (fill_mask): for query i1 (seq s1, pos p1) and key i0
+    (seq s0, pos p0) the key is masked when s0 != s1, when causal_attn && p0 > p1,
+    or when llama_hparams::is_masked_swa(n_swa, swa_type, p0, p1) holds. The
+    SYMMETRIC arm (llama-hparams.h:524-533) masks when p1 - p0 < -n_swa/2 or
+    > n_swa/2, i.e. the window is |p1 - p0| <= half.
+  - llama-batch.cpp:140-193 carries per-token pos[] and seq_id[] with the tokens
+    of several sequences packed CONTIGUOUSLY (no padded grid).
+  - The one Rust shape in this tree that carries several items through one FFI
+    call is ds4_bridge_mimo2_sync_media: flat arrays plus a count
+    (crates/ds4-core/src/lib.rs:2865-2876 builds starts/counts Vecs and passes
+    spans.len()). Mirror that shape, not an invented one.
+
+Goal, in the row's own words (docs/ds4-gemma-port-phases.md row P2.3): "batching of
+several items into one tower call". Today an array input embeds its items one at a
+time over the single bound plan (`run_embed` loops; `ds4_engine_embed_gemma_vq` and
+`ds4_gpu_eg2vq_embed` each take ONE item), so an N-item request pays N host round
+trips, N kernel-wave launches and N syncs. After this unit one call carries all N
+items, the caps already advertised (item_tokens_max 2048, batch_rows_max 8192) bound
+it, and the equality claim is that a batched item's vector EQUALS its single-item
+vector.
+
+THE DESIGN, and where it is read from (rule 0.2 — read these before writing):
+
+- The reference semantics are llama.cpp's own batched path at the pin
+  (/data/llama.cpp @ 31288c9c): src/llama-batch.cpp's `llama_ubatch` packs the
+  tokens of several sequences contiguously and carries per-token `seq_id[]` and
+  `pos[]`, and src/llama-graph.cpp builds the attention mask so tokens of different
+  sequences cannot attend to each other (the same mechanism the anchor's
+  `llama-embedding` run used when it embedded a batch). The packing is ONE row block
+  of `sum(item tokens)` rows, not a padded grid (padding wastes the budget this
+  project just declared).
+- The device tower's mask TODAY is the symmetric +-512 window over [0, n_tok)
+  (cuda/eg2vq_attn.cuh:105-114, `half_swa`). For a packed batch the window and the
+  item's own bounds combine into ONE contiguous key range, so no mask array is
+  needed: for query row t with item start s and item length L, the keys are
+  [s + max(0, pos - half), s + min(L - 1, pos + half)], where pos = t - s. That is
+  the only attention change, and it makes the batch exactly equal to the per-item
+  run (same keys, same order, same reduction), which is what the gate asserts.
+- Three per-row facts must travel with the ids, and nothing else:
+  `pos[t]` (position within its item; RoPE reads it instead of the row index) and
+  `item_len[t]` (the row's item length; the attention bound), plus
+  `item_off[n_items + 1]` (the per-item row ranges; the pool needs them). Store
+  `pos` and `item_len` as int32 rows in the workspace (`ds4_eg2vq_gpu.cuh:72-99`'s
+  layout, three new fields, ~8 B per row against the 108,548 B the row already
+  costs), and pass `item_off` in the same arena.
+- Pool: today one block per token writes the mean over ALL rows
+  (eg2vq_ops.cuh's proj768_pool). It becomes one block per ITEM, averaging its own
+  `item_off[i]..item_off[i+1]` rows and writing out768 + i * 768.
+- RoPE: eg2vq_ops.cuh's rope kernel indexes the cos/sin tables by row. It takes a
+  `const int32_t *pos` and indexes by pos[t] (the tables are already sized by
+  max_tokens, and pos < item_len <= 2048 holds).
+
+FILES, in the order the change has to land (each one read before it is written):
+
+ 1. cuda/eg2vq_attn.cuh — the key range from the item's bounds (above). Update its
+    header comment: the "window over the whole item" text becomes item-relative.
+ 2. cuda/eg2vq_ops.cuh — rope takes pos; proj768_pool becomes per-item (grid
+    n_items) and reads item_off.
+ 3. ds4_eg2vq.h — the API: a batch entry
+    `int ds4_gpu_eg2vq_embed_batch(ctx, const int32_t *ids, const int32_t *pos,
+     const int32_t *item_len, const uint32_t *item_off, uint32_t n_items,
+     uint32_t n_tokens, float *out)`; `ds4_gpu_eg2vq_workspace`/`create` gain the
+    row-budget side (they are already sized by max_tokens = rows).
+ 4. ds4_eg2vq_gpu.cuh — the layout fields, the entry, and the refusal set (ids
+    range, n_items == 0, rows past max_tokens, an item longer than the plane).
+ 5. ds4_eg2vq_graph.inc — `ds4_eg2vq_ref_embed_batch(...)`; the CPU reference may
+    simply loop `ds4_eg2vq_ref_embed` (it is the oracle, not the speed path) but it
+    MUST exist so the engine has one entry on both backends, and its comment must
+    say which of the two it is.
+ 6. ds4.c + ds4.h — `ds4_engine_embed_gemma_vq_batch`, keeping the single-item
+    entry as the one-item call; the workspace is ensured once for the whole batch
+    (rows = n_tokens, rounded up in 256 steps as today).
+ 7. crates/ds4-sys/src/lib.rs, crates/ds4-core/src/lib.rs — the bridge and
+    `Model::embed_gemma_vq_batch(&[(pos, ids)])`-shaped API (choose the Rust shape
+    after reading how the other multi-item bridged calls in this tree carry their
+    arguments; do not invent one).
+ 8. crates/ds4-server/src/serve.rs `run_embed` — tokenize all inputs (it already
+    loops), then ONE tower call, then the per-item MRL truncation and the same JSON
+    the route emits today; the response must stay byte-comparable with the
+    single-item path (the QA pass will diff them).
+ 9. The caps stay as they are: batch_rows_max is already the packed row count, so
+    no number moves.
+
+THE GATE (write it as tools/eg2_embed_batch_gate.sh, evidence docs/eg2vq-batch-gate21.txt):
+
+ a. EQUALITY, the whole point: over the frozen SciFact set (tests/retrieval/), the
+    same items through the batch entry and through the per-item entry must agree
+    bit-for-bit or to a declared floor — measure the per-element delta and the
+    cosine on both the device and the CPU reference, and declare the floor BEFORE
+    the run. Same ids file, same weights, one binary.
+ b. The batch is not a different answer: the route's array response for the same
+    inputs, byte-compared with N single-input requests (the QA pass will repeat
+    this; make it a scripted check, not a manual one).
+ c. The caps bind: a batch whose rows would pass 8192 is refused by name (already
+    true at the route), and a batch exactly AT 8192 rows is accepted.
+ d. Speed, measured, with the claim's limits stated: items/s and tokens/s for
+    one call of N items against N calls of one item, on the same set, with N and
+    the set named in the evidence. Report the launch/sync count implied. Do NOT
+    claim a serving latency or a concurrency number: the plan never had one.
+ e. Regression: `cargo test -q -p ds4-core`, `cargo check --workspace --all-targets`,
+    the phase-7 device gate (docs/eg2vq-device-gate7.txt's harness) re-run, and
+    tests/run.sh (which includes the rule 19 gate: run the QA pass BEFORE the push
+    offer, on the model the project recorded, deepseek-v4.1-CC-flash).
+ f. Then: phase-doc row P2.3 to DONE (it is the row's last slice), this handoff's
+    section 2/3 rotated again, the project memory entry refreshed, and the push
+    offer recorded — NOT executed.
+
+TWO THINGS TO GET RIGHT, or the unit will be wrong rather than slow:
+
+- The batch must not change any item's arithmetic. A packed layout keeps every
+  item's keys contiguous and its positions item-relative, so the per-row inputs are
+  identical to the single-item run; anything that makes a row's result depend on
+  the batch's composition (a shared row max in the softmax, a mask that lets one
+  item's pads leak into another's window, positions counted from the batch start)
+  is a bug the gate's equality check must catch. The first version of that check
+  should therefore run at least one batch whose items have very different lengths.
+- The device path is NOT run-to-run bit-identical at the last printed digit
+  (measured at the unit-20 boundary: the 256-dim L2 norm read 1.000000017 in one
+  run and 1.000000000 in another, with byte-differing JSON). Declare the equality
+  floor accordingly — a per-element tolerance and a cosine floor, like gate 4's —
+  and do not claim bit-identity on the device unless the measurement supports it.
