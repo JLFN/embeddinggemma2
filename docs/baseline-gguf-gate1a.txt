@@ -1,0 +1,123 @@
+Baseline GGUF — phase 1a evidence (2026-10-19)
+
+What this records: the pinned checkpoint re-expressed as a GGUF the reference
+loader resolves, the two-sided check that it carries the checkpoint's own bytes,
+and the reference's own acceptance of the file. Everything below was run in this
+session; where a number is quoted it was printed by the command shown next to it.
+
+Files
+  out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf   557,949,472 B
+    sha256 a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725
+  out/baseline-manifest.tsv                         the writer's per-tensor map
+  out/baseline-inventory.txt                        the ds4-rs reader's own dump
+  tools/eg2_gguf.c                                  the writer (413 tensors, metadata)
+  tools/ds4_gguf_write.h                            the reference writer, vendored
+                                                    byte-identical: sha256
+    5bfc5dd4fc8646709d521ad9a212aa0c6cba83cce2f0016baf0ff698364f1fff
+  tools/eg2_gguf_check.sh                           the two-sided check
+  ds4-rs/crates/ds4-core/examples/gguf_inventory.rs the port's own reader, as a dump
+
+The writer's own report
+  $ ./bin/eg2_gguf baseline .models/EmbeddingGemma-2-914f7f8 \
+        out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf --manifest out/baseline-manifest.tsv
+  [hparams] 24 layers, embd 512, heads 4 (kv 2 swa / 1 full), ff 2048, out 768,
+            per-layer 512, vocab 262144, head_dim 256 swa / 512 full,
+            swa window 512 (file 1024), ctx 262144
+  [tokenizer] 262144 tokens (514906 merges), bos 2 eos 1 unk 3 pad 0, chat template
+  [plan] 413 tensors, 0.542 GB of tensor data
+  [done] ...gguf: 413 tensors, 0.542 GB            (3.0 s wall)
+
+  Tensor census by (type / source dtype), from the manifest:
+    219 tensors type 30 (bf16), copied byte for byte
+    194 tensors type  0 (f32), widened from the checkpoint's bf16
+
+The two-sided check
+  $ cargo run -q -p ds4-core --release --example gguf_inventory -- \
+        ../out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf --no-kv > ../out/baseline-inventory.txt
+  $ tools/eg2_gguf_check.sh out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+        out/baseline-manifest.tsv .models/EmbeddingGemma-2-914f7f8 out/baseline-inventory.txt
+  checked 413 tensors: writer and ds4-rs reader agree on name/type/rank/dims/bytes/offset;
+    219 copied byte-for-byte, 194 widened BF16->F32 with every element's high half equal to the source
+
+  The reader's view of the header, from the same dump: version=3, n_tensors=413,
+  n_kv=39, alignment=32, DATA_POS 15789920, and for example
+    T token_embd.weight ndim=2 dims=512,262144 type=30(bf16) elems=134217728 bytes=268435456
+    T output.weight   ndim=2 dims=512,768    type=30(bf16) elems=393216    bytes=786432
+    T output_norm.weight ndim=1 dims=512     type=0(f32)  elems=512       bytes=2048
+
+The reference's own acceptance (llama.cpp at 31288c9c, built in /data/llama-anchor-build)
+  $ cmake -S /data/llama.cpp -B /data/llama-anchor-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF
+  $ cmake --build /data/llama-anchor-build -j 28 --target llama-embedding
+    (24.4 s wall, 7m49 CPU)
+  $ LD_LIBRARY_PATH=/data/llama-anchor-build/bin \
+      /data/llama-anchor-build/bin/llama-embedding \
+      -m out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf -p "hello world" --pooling mean
+  exit 0; the model loads, the graph runs, and the vector prints:
+    batch_decode: n_tokens = 3, n_seq = 1
+    embedding 0: -0.091347  0.044968  0.031217 ... -0.001910      (768 values)
+  Two warnings, both expected and non-fatal:
+    W load: control-looking token: 212 '</s>' was not control-type; this is probably
+            a bug in the model. its type will be overridden
+    W main: 'tokenizer.ggml.add_eos_token' should be set to 'true' in the GGUF header
+  The first is llama.cpp's own expectation for a Gemma-family vocabulary: 212 '</s>'
+  is in the checkpoint's model.vocab as a regular entry and is not in added_tokens
+  with special=true, and the converter's rule (gguf-py/gguf/vocab.py:651-657) marks
+  CONTROL only for an id in all_special_ids, so the real conversion would print the
+  same line. The second is phase 2's business: the anchor's prompt construction and
+  whether the file should set add_eos_token.
+
+Findings that changed the plan (each measured, not assumed)
+
+1. One-dimensional tensors and *_norm.weight must be F32, not BF16
+   (conversion/base.py:1244-1246: "Most of the codebase that takes in 1D tensors or
+   norms only handles F32 tensors", applied before the ftype default at :1305-1315).
+   Measured the other way first: an all-BF16 build of the file loads and then dies
+   in the graph with
+     binary_op: unsupported types: dst: f32, src0: f32, src1: bf16
+   repeated once per worker thread, before any embedding is produced. With the 194
+   one-dimensional tensors written F32 the same file runs to a finished vector. That
+   is 194 tensors, not a handful: 24 x {attn_norm, attn_q_norm, attn_k_norm,
+   post_attention_norm, ffn_norm, post_ffw_norm, post_norm, layer_output_scale} plus
+   output_norm and per_layer_proj_norm.
+
+2. attention.sliding_window is written DOUBLED: 2 x 512 = 1024
+   (conversion/gemma.py:824-825, "HF sliding_window is bidirectional, llama.cpp
+   expects the full window size"), and the loader's symmetric mask is
+   |p1 - p0| > n_swa/2 (src/llama-hparams.h:524-533). The half-window a token sees
+   is therefore 512, i.e. a 1025-wide span, not the 256/513 that reading the
+   checkpoint's sliding_window straight into n_swa would give. Phase 4 and phase 7
+   must use the doubled value; the phase-0 contract's key table said 512 and is
+   corrected in the same commit.
+
+3. attention.sliding_window_pattern is written as a BOOL ARRAY of per-layer flags
+   derived from the checkpoint's own layer_types (conversion/gemma.py:681-682), not
+   as the scalar 6; the loader prefers the array when present
+   (src/llama-model.cpp:3902-3912). Both encode the same pattern for this model —
+   is_swa = il % 6 < 5 (src/llama-hparams.cpp:8-17) — and the writer cross-checks
+   the array against that formula and refuses to write if they disagree.
+
+4. The converter's key set for this arch also includes attention.causal = false,
+   rope.dimension_count (= 512) and rope.dimension_count_swa (= 256), and
+   gemma-embedding2.pooling_type = 1 (MEAN, from 1_Pooling/config.json via
+   _try_set_pooling_type). No tokenizer.ggml.pre: the loader pins "gemma4" itself.
+
+5. Norm weights ship VERBATIM. Gemma3Model adds +1.0 to every norm.weight
+   (conversion/gemma.py:131), Gemma4Model overrides norm_shift to 0.0
+   (conversion/gemma.py:637-639) and EmbeddingGemma2Model inherits that — so no
+   shift here, and the port must not apply one either.
+
+6. The tokenizer is gemma4 BPE and REQUIRES merges (src/llama-vocab.cpp:2236-2276:
+   "cannot find tokenizer merges in model file" is a hard throw). The checkpoint's
+   514,906 merges are in the list-of-pairs form, which the converter escapes as
+   U+0101 for any part containing a space (gguf-py/gguf/vocab.py:202-220); no part
+   of this vocabulary contains a space, so the escape never fires here. The token
+   list is the 262,144 model.vocab keys by id, the scores are -1000.0 throughout
+   (gguf-py/gguf/vocab.py:659-662), and the types are BYTE for <0xNN>, CONTROL for a
+   special id, NORMAL otherwise (gguf-py/gguf/vocab.py:651-657).
+
+Open, for phase 2
+  The anchor's prompt construction: the checkpoint's config_sentence_transformers.json
+  carries the task prompts, and whether the file should set tokenizer.ggml.add_eos_token
+  is undecided (the converter does not write it; llama.cpp warns). Neither affects
+  this gate — the file loads and computes.

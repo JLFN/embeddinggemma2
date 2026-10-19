@@ -124,6 +124,46 @@ hard-stops on a slot that is missing, duplicated or mismatched with the plan.
 (`bin/eg2_vq tensor <hf-dir> <name> <dim> <nc>`); its rows are recorded verbatim in
 `docs/ladder-embeddinggemma2.txt`.
 
+### 4b. The baseline GGUF (phase 1a) — the pinned checkpoint as a loadable GGUF
+
+The baseline is the checkpoint re-expressed with the metadata and tensor names the
+reference loader resolves, all 413 text-tower tensors in BF16 exactly as the
+checkpoint carries them, so phase 2's anchor (llama.cpp at `31288c9c` over the
+frozen sentence set) and our own C reference path read the same file. The writer is
+`tools/eg2_gguf.c`; it uses the reference toolchain's own GGUF v3 writer, vendored
+byte-identical at `tools/ds4_gguf_write.h`
+(sha256 `5bfc5dd4fc8646709d521ad9a212aa0c6cba83cce2f0016baf0ff698364f1fff`).
+
+```sh
+# 8. Build the baseline writer
+cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -Itools \
+   -I$YA/src/common -o bin/eg2_gguf tools/eg2_gguf.c -lm
+
+# 9. Write the baseline (413 tensors, ~0.54 GB of tensor data, ~3 s)
+./bin/eg2_gguf baseline $HF $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+   --manifest $OUT/baseline-manifest.tsv
+
+# 10. Read it back with the port's own reader (ds4-rs, not this tool)
+cd ds4-rs && cargo run -q -p ds4-core --release --example gguf_inventory -- \
+   ../out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf --no-kv > ../out/baseline-inventory.txt && cd ..
+
+# 11. Two-sided check: the writer's manifest and the reader's dump must agree on
+#     every tensor's name/type/rank/dims/bytes/offset, and every tensor's bytes
+#     must equal the checkpoint's own (413 cmp calls, ~0.4 s)
+tools/eg2_gguf_check.sh $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
+   $OUT/baseline-manifest.tsv $HF $OUT/baseline-inventory.txt
+```
+
+`--limit N` and `--only SUBSTR` write a smoke file whose `general.name` carries the
+marker `SMOKE-TEST-NOT-A-RELEASE`. The metadata is the converter's own key set for
+this arch (`/data/llama.cpp/conversion/gemma.py:676-733`, `:815-832`), read against
+the loader that consumes it (`src/llama-model.cpp:1382-1541`,
+`src/models/gemma-embedding2.cpp:3-13`); the tokenizer block is `gemma4` BPE with
+the checkpoint's own `model.vocab` as the token list, `-1000.0` scores, and the
+514,906 merges. The one deliberate difference from the artifact recipe: the baseline
+ships the token table in BF16, not `q8_0`, so the baseline is the unquantized
+original and phase 5's delta against it is the whole cost of the recipe.
+
 ## 5. Quality, measured
 
 The bar is the DeepSeek V4.1 recipe's own reported number, produced the same way (the

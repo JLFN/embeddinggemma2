@@ -1,9 +1,11 @@
-# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, phase-doc row X.8)
+# ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a)
 
 Derived 2026-10-19 in `/data/embeddinggemma2`, reading only: no reader, writer or
-encoder code was written for this document. It is subordinate to
-`embeddinggemma2-handoff.md` — where the two disagree, the handoff wins and this
-file is corrected in the same commit.
+encoder code was written for this document. Phase 1a then wrote the baseline GGUF
+against it and corrected four of its rows by measurement (section 7 states each
+correction and the evidence). It is subordinate to `embeddinggemma2-handoff.md` —
+where the two disagree, the handoff wins and this file is corrected in the same
+commit.
 
 Every key, type, offset and magic below carries a `file:line` citation that was
 opened and read in this session, per project rule 0.2. Sections 2 and 3 settle
@@ -242,32 +244,57 @@ dim-4 device kernel is in scope now.
 
 ## 7. The baseline GGUF (phase 1a / row X.5a) — the same writer, the other arch
 
+STATUS 2026-10-19: WRITTEN AND VERIFIED. `tools/eg2_gguf.c` emits it, the port's own
+reader reads it back tensor by tensor, and `/data/llama.cpp` at 31288c9c loads it and
+computes a 768-dimensional embedding. Evidence: `docs/baseline-gguf-gate1a.txt`. The
+tables below are corrected against what the writer had to do; the four corrections
+(sliding_window doubled, the pattern as a bool array, 1-D tensors in F32, and the
+converter's extra keys) are each cited and were each measured, the first as a crash
+and the third as a crash, before they were fixed.
+
 The baseline is a plain GGUF that `/data/llama.cpp` can load, because phase 2's
 anchor run feeds it to `examples/embedding/embedding.cpp`. Arch string
-`gemma-embedding2` (`/data/llama.cpp/src/llama-arch.cpp:64`), alignment 32.
+`gemma-embedding2` (`/data/llama.cpp/src/llama-arch.cpp:64`), alignment 32. The
+authority for the key set is the converter that would write this file,
+`/data/llama.cpp/conversion/gemma.py:676-733` and `:815-832`, read against the loader
+that consumes it.
 
 Key set, every name read from the loader that consumes it:
 
 | key | type | value | read at |
 | --- | --- | --- | --- |
 | `general.architecture` | str | `gemma-embedding2` | `llama-model.cpp:385` (`ml.get_arch()`) |
+| `general.name` | str | `EmbeddingGemma-2` | `llama-model.cpp:1376` |
+| `general.file_type` | u32 | 32 (MOSTLY_BF16) | `gguf-py/gguf/constants.py:6274` |
 | `general.alignment` | u32 | 32 | `gguf.h:29-30`, `:46` |
 | `gemma-embedding2.block_count` | u32 | 24 | `llama-model.cpp:1394` |
 | `.context_length` | u32 | 262144 | `llama-model.cpp:1382` |
 | `.embedding_length` | u32 | 512 | `llama-model.cpp:1383` |
 | `.embedding_length_out` | u32 | 768 | `llama-model.cpp:1384` (`n_embd_out_impl`, `llama-hparams.cpp:136-137`) |
 | `.embedding_length_per_layer_input` | u32 | 512 | `src/models/gemma-embedding2.cpp:13` |
-| `.feed_forward_length` | u32 or array | 2048 | `llama-model.cpp:1462` |
-| `.attention.head_count` | u32 or array | 4 | `llama-model.cpp:1463` |
-| `.attention.head_count_kv` | array (24) | 2, and 1 for layers 5/11/17/23 | `llama-model.cpp:1471` |
+| `.feed_forward_length` | u32 | 2048 | `llama-model.cpp:1462` |
+| `.attention.head_count` | u32 | 4 | `llama-model.cpp:1463` |
+| `.attention.head_count_kv` | array u32 (24) | 2, and 1 at layers 5/11/17/23 | `llama-model.cpp:1471`; the converter builds it from `per_layer_config` (`conversion/gemma.py:714-726`) |
 | `.attention.key_length` / `.value_length` | u32 | 512 | `llama-model.cpp:1514`, `:1517` |
 | `.attention.key_length_swa` / `.value_length_swa` | u32 | 256 | `llama-model.cpp:1539-1540` |
 | `.attention.layer_norm_rms_epsilon` | f32 | 1e-6 | `gemma-embedding2.cpp:12` |
-| `.attention.sliding_window` | u32 | 512 | `gemma-embedding2.cpp:11` |
-| `.attention.sliding_window_pattern` | u32 | 6 | `gemma-embedding2.cpp:5` (`load_swa_pattern(ml, 6)`), `llama-model.cpp:3905-3912` |
+| `.attention.sliding_window` | u32 | **1024** = 2 x the checkpoint's 512 | `gemma-embedding2.cpp:11`; the doubling is the converter's (`conversion/gemma.py:824-825`) so the loader's symmetric mask reproduces HF's one-sided window |
+| `.attention.sliding_window_pattern` | **array bool (24)** | per-layer, from `layer_types`: true for the sliding layers | `llama-model.cpp:3902-3912` (the array is preferred over the scalar); `conversion/gemma.py:681-682` |
+| `.attention.causal` | bool | false | `llama-model.cpp:1387`; `conversion/gemma.py:828` |
 | `.rope.freq_base` / `.rope.freq_base_swa` | f32 | 1e6 / 1e4 | `llama-model.cpp:1482`, `gemma-embedding2.cpp:10` |
-| `.vocab_size` | u32 | 262144 | `llama-arch.cpp:202` (vocab route) |
-| `tokenizer.ggml.*` | mixed | see below | `v41_to_gguf_tok.inc.c:16-21` is the precedent's set: `.model`, `.pre`, `.tokens`, `.merges`, `.bos_token_id`, `.eos_token_id` |
+| `.rope.dimension_count` / `_swa` | u32 | 512 / 256 | `llama-model.cpp:1528`, `:1543`; `conversion/gemma.py:729-733` |
+| `.pooling_type` | u32 | 1 (MEAN) | `llama-model.cpp:1386`; the converter writes it from `1_Pooling/config.json` (`conversion/gemma.py:829`) |
+| `.vocab_size` | u32 | 262144 | `llama-arch.cpp:202` |
+| `tokenizer.ggml.model` | str | `gemma4` | `llama-vocab.cpp:2236` (BPE; a missing `tokenizer.ggml.merges` is a hard throw at `:2242`) |
+| `tokenizer.ggml.tokens` | array str (262144) | the checkpoint's `model.vocab` keys by id | `llama-vocab.cpp:2595-2602` (required) |
+| `tokenizer.ggml.scores` | array f32 | -1000.0 throughout | `llama-vocab.cpp:2609`; `gguf-py/gguf/vocab.py:659-662` |
+| `tokenizer.ggml.token_type` | array i32 | BYTE for `<0xNN>`, CONTROL for a special id, else NORMAL | `llama-vocab.cpp:2629`; `gguf-py/gguf/vocab.py:651-657` |
+| `tokenizer.ggml.merges` | array str (514906) | the checkpoint's `model.merges`, pairs joined with one space (parts containing a space escaped as U+0101 — inert for this vocabulary) | `llama-vocab.cpp:2239-2269`; `gguf-py/gguf/vocab.py:197-220` |
+| `tokenizer.ggml.bos_token_id` / `.eos_token_id` / `.unknown_token_id` / `.padding_token_id` | u32 | 2 / 1 / 3 / 0 | `llama-vocab.cpp:2734-2738`; from `tokenizer_config.json` by name |
+| `tokenizer.ggml.add_bos_token` | bool | true | `conversion/gemma.py:675` |
+| `tokenizer.ggml.add_space_prefix` | bool | false | `conversion/gemma.py:674` |
+| `tokenizer.chat_template` | str | the checkpoint's `chat_template.jinja` | `gguf-py/gguf/vocab.py:107-110` |
+| `tokenizer.ggml.pre` | — | **not written**: the loader pins `"gemma4"` for this model type itself (`llama-vocab.cpp:2275`) | — |
 
 Values are the checkpoint's own, from `.models/EmbeddingGemma-2-914f7f8/config.json`
 (`text_config`: hidden 512, layers 24, heads 4, kv heads 2, head_dim 256,
@@ -276,6 +303,22 @@ Values are the checkpoint's own, from `.models/EmbeddingGemma-2-914f7f8/config.j
 `per_layer_config` giving those four `head_dim` 512 and `num_key_value_heads` 1,
 `rope_parameters` 1e6 full / 1e4 sliding, `max_position_embeddings` 262144, bos 2,
 eos 1, pad 0).
+
+Tensor dtypes: **219 tensors are BF16 and 194 are F32**. The rule is the converter's
+own (`conversion/base.py:1244-1246`): "most of the codebase that takes in 1D tensors
+or norms only handles F32 tensors", so anything with `n_dims <= 1` or a name ending
+`_norm.weight` is written F32 even in a BF16 conversion, which for this model is the
+24 x {attn_norm, attn_q_norm, attn_k_norm, post_attention_norm, ffn_norm,
+post_ffw_norm, post_norm, layer_output_scale} plus `output_norm` and
+`per_layer_proj_norm`. The widening is exact (the BF16 pattern is the F32 word's high
+half). Without it the file loads and then dies in the graph — measured:
+`binary_op: unsupported types: dst: f32, src0: f32, src1: bf16` — so the rule is not
+cosmetic.
+
+Norm weights ship **verbatim**: `Gemma3Model` adds +1.0 to every `norm.weight`
+(`conversion/gemma.py:131-132`) but `Gemma4Model` overrides `norm_shift` to 0.0
+(`conversion/gemma.py:637-639`) and `EmbeddingGemma2Model` inherits that
+(`:815-816`). The port must not add a shift either.
 
 Tensor names, the checkpoint name → the GGUF name
 (`/data/llama.cpp/src/llama-arch.cpp` name table):
@@ -307,11 +350,19 @@ Tensor names, the checkpoint name → the GGUF name
 
 The tensor set is `src/models/gemma-embedding2.cpp:34-72`: 5 top-level tensors
 plus 24 layers of 17 = 413, which is exactly the count of `language_model.*`
-tensors in `docs/encode-plan.tsv` (217 VQ, 195 verbatim, 1 q8_0). Dims are GGUF
+tensors in `docs/encode-plan.tsv` (217 VQ, 195 verbatim, 1 table). Dims are GGUF
 order, inner dimension first: a checkpoint row `[rows, cols]` becomes
-`ne = [cols, rows]`. All matrices keep the checkpoint's BF16 except the token
-table, which ships q8_0 (type 8); whether llama.cpp's loader wants the 1-element
-scales upcast to F32 is settled at gate 1a by loading the file, not by assuming.
+`ne = [cols, rows]`; the writer checks every declared dim against the checkpoint's
+own shape and refuses on any disagreement, so the file cannot drift from the
+loader's declaration.
+
+The baseline writes **every** tensor from the checkpoint: the token table is BF16
+here, not `q8_0`, and no tower is quantized. That is deliberate and it is a named
+deviation from this document's earlier text: the baseline is the unquantized
+original, so phase 2's anchor is the true model and phase 5's delta against this
+file is the whole cost of the artifact recipe, token table included. The `q8_0`
+token table belongs to the artifact (section 4), where it is part of the recipe
+string and the byte account.
 
 ## 8. Reference map for this contract (pinned)
 
@@ -321,6 +372,8 @@ scales upcast to F32 is settled at gate 1a by loading the file, not by assuming.
 | form authority (read-only) | `/data/llama.cpp` | `31288c9c` |
 | writer and payload precedent | `/data/YoungAi` | `a4e6d31` for the quantizer sources cited by the packer, `3946dbc` for the vendored `vq_fmt.h` |
 | our artifact and its evidence | `out/`, `docs/artifact-verify-summary.txt`, `docs/encode-plan.tsv`, `docs/tensor-inventory.tsv` | artifact sha256 `8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe` |
+| the baseline and its evidence (phase 1a) | `out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`, `docs/baseline-gguf-gate1a.txt` | baseline sha256 `a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725` |
+| the anchor build (phase 2) | `/data/llama-anchor-build` (built from the pin above, never inside its tree) | llama-embedding, CPU backend |
 
 ## 9. Open items this document does not decide
 
@@ -328,9 +381,20 @@ scales upcast to F32 is settled at gate 1a by loading the file, not by assuming.
 2. Whether the vision and audio towers (row P4) are ported at all — owner. The
    artifact carries their payloads either way, since the DQVD container does.
 3. Whether KV checkpoints mean anything for an embeddings family (row X.3).
+4. Phase 2's prompt construction: whether the file should set
+   `tokenizer.ggml.add_eos_token` (the converter does not write it and llama.cpp
+   warns), and how the checkpoint's task prompts
+   (`config_sentence_transformers.json`) are applied. Phase 1a did not need either.
 
 Gate for phase 1: the writer may be written only against sections 4 to 7, and no
 key or type may enter it that is not in those tables. Gate 1a is one tensor
 round-tripped through our own reader and then loaded by the reference; gate 1b is
 all 1376 tensors dumped and compared with `bin/eg2_pack_cpu check` plus the
 per-payload hashes.
+
+Gate 1a: PASSED 2026-10-19. One tensor round-tripped first
+(`output_norm.weight`, abs 15765504, byte-identical to the checkpoint), then all
+413: the writer's manifest and the ds4-rs reader's own dump agree on every tensor's
+name, type, rank, dims, byte count and offset, 219 tensors are byte-for-byte the
+checkpoint's and 194 are its exact BF16->F32 widening; and llama.cpp at the pin
+loads the file and prints a 768-dimensional embedding for a prompt.

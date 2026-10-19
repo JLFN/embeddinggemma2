@@ -65,6 +65,12 @@ must come back with zero hits:
     find ds4-rs/crates/*/src ds4-rs/native -name '*.py'
     grep -rin 'onnx\|ort-sys' ds4-rs/crates/*/src ds4-rs/native ds4-rs/Cargo.toml ds4-rs/Cargo.lock
 
+This project's own tooling needs no Python and carries none: the writer, the
+encoder and the checkers are C and shell (`tools/*.c`, `tools/eg2_gguf_check.sh`),
+which is the faster and more durable choice when awk, sed, jq, od and dd already
+do the job. Python would be allowed here as a test or one-off measurement script
+under `tools/`, per the list above — it is simply not needed.
+
 All five returned zero on 2026-10-19, measured in this workspace. The ldd check is
 not vacuous: `ds4-rs/ds4-server` is a built 76 MB ELF linked against
 `libcudart.so.13` and `libcublas.so.13`, and `ldd` on it reports no python and no
@@ -124,10 +130,14 @@ Read these before doing port work in this workspace:
    shape and rank live, and the host/device split. It also settles, by
    measurement, that the encoder's payloads are DQVQ payloads byte for byte and
    that the artifact GGUF step is a re-wrap rather than a re-encode.
-4. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+4. `docs/baseline-gguf-gate1a.txt` — the phase-1a evidence: the baseline GGUF's
+   identity, the two-sided check (writer's manifest vs the port's own reader, then
+   every tensor's bytes against the checkpoint) and the reference's own acceptance
+   of the file, with the four measured corrections to the contract.
+5. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-5. `RECIPE.md` — how the artifact in `out/` was made, and its measured quality;
+6. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-6. Cross-session memory for this workspace lives under
+7. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.

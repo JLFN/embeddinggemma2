@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: 50a4a3bd97b82b29638a9e4ad6558a6b4c16e10b
+last_updated_commit: d3ba929297f1de181f93a20d79f81cf7210d630a
 branch: dev
 remote: 
-handoff_written_at_context_usage: 12%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T08:34:41+02:00
+handoff_written_at_context_usage: 21%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T09:35:46+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -55,17 +55,18 @@ configured on the outer repo).
 
 2. Current state (2026-10-19, verified in this session)
 
-- Workspace: /data/embeddinggemma2, branch dev, HEAD cada4bd, tree clean but for this handoff. Nested ds4-rs untouched at eb67d493 on feat/ds41-dsml-carriage, 0 modified, 8,582 files, 2.5 GB.
-- Artifact: out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B; `bin/eg2_pack_cpu check` says kind=0 slots=1376, recipe `towers=vq4x4096 sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal src=914f7f89142e`, structure OK. SHA256SUMS carries one line, 8902fb8a… (the container is the DQVD one being retired in phase 1 of section 3).
-- Tools built: bin/eg2_vq, bin/eg2_pack, bin/eg2_pack_cpu, bin/eg2_gpuprobe.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD d3ba929 plus this unit's commit, tree clean but for this handoff. Nested ds4-rs at eb67d493 on feat/ds41-dsml-carriage with this unit's new example (crates/ds4-core/examples/gguf_inventory.rs) committed locally there.
+- Artifact (the DQVD container being retired in 1b): out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B; `bin/eg2_pack_cpu check` says kind=0 slots=1376, recipe `towers=vq4x4096 sharedcb=0 cbfp16 token=q8_0 frontend=vq other=keep nocal src=914f7f89142e`, structure OK.
+- Baseline (phase 1a, new): out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, 557,949,472 B, sha256 a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725; `bin/eg2_gguf` wrote it in 3.0 s, the ds4-rs dump and the writer's manifest agree on all 413 tensors, and llama.cpp at the pin loads it and prints a 768-dim embedding. SHA256SUMS carries both files.
+- Tools built: bin/eg2_vq, bin/eg2_pack, bin/eg2_pack_cpu, bin/eg2_gpuprobe, bin/eg2_gguf (new this unit), plus tools/eg2_gguf_check.sh.
 - Checkpoint: .models/EmbeddingGemma-2-914f7f8, 1.5 GB, pinned revision 914f7f8.
-- References verified today: /data/llama.cpp at 31288c9c (2026-10-18), src/models/gemma-embedding2.cpp is 232 lines; /data/YoungAi carries the native GGUF writer precedent (section 3, phase 1) and vq_fmt.h.
+- References verified today: /data/llama.cpp at 31288c9c (clean tree), built for the anchor at /data/llama-anchor-build (llama-embedding, CPU backend, 24 s wall); /data/YoungAi carries the native GGUF writer precedent (its header vendored this unit) and vq_fmt.h; /data/YoungAi/src/common/ds4_gguf_write.h sha256 5bfc5dd4…, unchanged.
 - Guardrails: all five P-1 checks return zero, and the ldd check is now non-vacuous — ds4-rs/ds4-server is a built 76 MB CUDA-linked ELF (libcudart.so.13, libcublas.so.13) with 0 python/torch entries.
-- Behavior correction recorded: llama.cpp declares this model's sliding window as LLAMA_SWA_TYPE_SYMMETRIC (src/models/gemma-embedding2.cpp:4), masked at ±n_swa/2 (src/llama-hparams.h:524-533) — not ds4's trailing cut. Phase 4 and 6 must implement the symmetric mask.
+- Behavior corrections recorded this unit, each measured: the file's attention.sliding_window is 1024 (the converter doubles HF's 512, conversion/gemma.py:824-825) so the symmetric mask spans ±512; 1-D and *_norm.weight tensors must ship F32 (conversion/base.py:1244-1246) or the reference's CPU graph aborts; and this model's norm weights ship verbatim (Gemma4Model.norm_shift = 0.0).
 
 3. Next unit plan — run EmbeddingGemma-2 in ds4-rs, phase by phase (2026-10-19)
 
-Status: not started. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
+Status: 1a done (2026-10-19), 2/1b/3..8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
 `gemma_vq` payload, per the owner's container decision) and emits the 768-dim
 embeddings this model exists for, on the GPU, with the measurements that show the
 port matches the pinned original. Runtime is Rust + C + CUDA; no Python anywhere,
@@ -95,15 +96,66 @@ PHASE 0 — the `gemma_vq` payload contract (phase-doc row X.8). DONE 2026-10-19
   2. Therefore phase 1b's artifact step is a re-wrap (I/O bound, byte-preserving), not a re-encode (measured at ~14.5 min of shard wall time plus the merge). A re-encode remains the fallback and was not needed.
 - One correction found here and fixed in the same commit: the decoder is at ds41_vq_fmt.h:73-105, not :72-104 (this file and the phase doc cited it one line early).
 
-PHASE 1 — the writer, and the baseline GGUF (phase-doc rows X.5, X.6, plus the encoder change)
+PHASE 1a — the writer and the baseline GGUF (phase-doc rows X.5/X.5a). DONE 2026-10-19.
 
-- Read: the two GGUF sources side by side — /data/llama.cpp/ggml/include/gguf.h with ggml/src/gguf.cpp (the format authority: header, KV value types, tensor-info layout, alignment), and ds4-rs's own reader ds4.c:1607 (DS4_GGUF_MAGIC) with :2348 (the parse entry) plus crates/ds4-core/src/gguf.rs (the Rust reader: open at :208, getters at :295-466, split handling at :509). Reuse the writer helper /data/YoungAi/src/common/ds4_gguf_write.h (ds4gw_begin / ds4gw_kv_* / ds4gw_tensor / ds4gw_header / ds4gw_write / ds4gw_end) exactly as v41_to_gguf.c uses it; write our own only if the helper cannot express a key this model needs, and say so in the commit.
-- Metadata and tensor set to write: /data/llama.cpp/src/models/gemma-embedding2.cpp:3-13 (the hparams keys the loader resolves) and :34-71 (the 413 text-tower tensors); arch string at src/llama-arch.cpp:64; tokenizer keys as llama.cpp reads them (src/llama-arch.cpp LLM_KV_TOKENIZER_* block, and the vocab loader src/llama-vocab.cpp), sourced from .models/EmbeddingGemma-2-914f7f8/tokenizer.json and tokenizer_config.json.
-- Our own inputs to the writer: docs/tensor-inventory.tsv (1377 lines, the per-tensor truth) and docs/encode-plan.tsv (1377 lines); the DQVD writer being replaced is tools/eg2_pack.c:51-88, :221-225, :666-724, and its checker :980-1077 defines what the new writer must still guarantee.
-- Land: the vendored writer header in our tree, tools/eg2_gguf.c + bin/eg2_gguf, the changed emit path in tools/eg2_pack.c, and RECIPE.md section 3 rewritten for the GGUF container. The GGUF must carry the DQVD-only information the old container lost: rank and shape per tensor (the container's slot table records rows/cols only), via the declared layout, mirroring `glm_vq.logical_shapes`.
-- Gate 1a (baseline): metadata plus one tensor first, round-tripped through OUR OWN reader (ds4.c's parser path, or crates/ds4-core/src/gguf.rs) back to the same name, dtype, dims and byte-identical payload; then the whole checkpoint, 413 text-tower tensors, key set equal to gemma-embedding2.cpp:3-13.
-- Gate 1b (artifact): all 1376 slots present in one GGUF; a ds4-side dump of every tensor (name, dtype, dims, kind, geometry, payload length, payload hash) equals what `bin/eg2_pack_cpu check` plus the per-slot re-encode comparison already produce; SHA256SUMS regenerated for the new file.
-- Cost, measured: ~14.5 minutes of shard wall time plus the merge for a full re-encode (out/encode-run.txt); a re-wrap, if phase 0 proves the payloads identical, is minutes. Say which one ran.
+- Landed: tools/eg2_gguf.c (+ bin/eg2_gguf), tools/eg2_gguf_check.sh, the vendored
+  tools/ds4_gguf_write.h (byte-identical to /data/YoungAi/src/common/ds4_gguf_write.h,
+  sha256 5bfc5dd4fc8646709d521ad9a212aa0c6cba83cce2f0016baf0ff698364f1fff), the port's
+  own reader dump ds4-rs/crates/ds4-core/examples/gguf_inventory.rs, RECIPE.md section 4b,
+  docs/baseline-gguf-gate1a.txt (the evidence).
+- Artifact: out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf, 557,949,472 B, sha256
+  a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725; 413 tensors,
+  219 bf16 copied verbatim + 194 f32 widened, 39 metadata keys.
+- Gate 1a PASSED, both halves: (a) one tensor round-tripped through the port's own
+  reader first (output_norm.weight at abs 15765504, byte-identical), then all 413 —
+  the writer's manifest and the ds4-rs reader's dump agree on every tensor's name,
+  type, rank, dims, bytes and offset, 219 tensors are byte-for-byte the checkpoint's,
+  194 are its exact BF16->F32 widening; (b) llama.cpp at the pin loads the file and
+  prints a 768-dim embedding (built at /data/llama-anchor-build, 24 s wall).
+- Read for it: conversion/gemma.py (the whole Gemma4/EmbeddingGemma2 chain: :131 the
+  Gemma3 norm shift, :637-639 Gemma4's zero shift, :641-676 set_vocab, :676-733
+  set_gguf_parameters, :813-832 the EmbeddingGemma2 overrides), gguf-py/gguf/vocab.py
+  (:191-330 the special-token and merges extraction, :563-684 LlamaHfVocab, :84-110
+  SpecialVocab.add_to_gguf), gguf-py/gguf/gguf_writer.py and constants.py,
+  conversion/base.py:1220-1370 (the per-tensor dtype decision), src/llama-model.cpp
+  (:1370-1400, :1455-1545, :3902-3912), src/llama-hparams.cpp:8-17 and .h:524-533,
+  src/llama-vocab.cpp (:2065-2300 the tokenizer dispatch and merges, :2595-2640 the
+  token/scores/type arrays), src/models/gemma-embedding2.cpp in full.
+- FOUR corrections to docs/ds4-gemma-payload-contract.md section 7, each measured:
+  1. 1-D tensors and *_norm.weight ship F32, not BF16 (conversion/base.py:1244-1246).
+     An all-BF16 file loads and then aborts in the graph:
+     binary_op: unsupported types: dst: f32, src0: f32, src1: bf16.
+  2. attention.sliding_window is written DOUBLED: 2 x 512 = 1024
+     (conversion/gemma.py:824-825), so with llama-hparams.h:524-533 the half-window
+     is 512 (a 1025-wide span), not 256/513. Phase 4 and 7 must use the doubled
+     value; the earlier "n_swa 512 -> +/-256" note in this file was wrong.
+  3. attention.sliding_window_pattern is a BOOL ARRAY from layer_types
+     (conversion/gemma.py:681-682), not the scalar 6; the loader prefers the array.
+  4. The key set also carries attention.causal=false, rope.dimension_count 512 /
+     _swa 256, gemma-embedding2.pooling_type 1 (MEAN) and general.file_type 32;
+     tokenizer.ggml.pre is NOT written (the loader pins "gemma4" itself).
+  Also settled: norm weights ship VERBATIM (Gemma4Model.norm_shift = 0.0, so no +1
+  shift, unlike Gemma3), and the tokenizer is gemma4 BPE whose merges are REQUIRED
+  (514,906, pair form, U+0101 escaping inert here), tokens = model.vocab keys by id,
+  scores -1000.0, type BYTE/CONTROL/NORMAL.
+- Baseline deviation, named: the baseline's token table ships BF16, not q8_0, so the
+  baseline is the unquantized original and phase 5's delta against it is the whole
+  cost of the recipe. q8_0 belongs to the artifact.
+
+PHASE 1b — the artifact GGUF (phase-doc row X.5b): a re-wrap, per phase 0.
+
+- Metadata and tensor set to write: the artifact GGUF per contract section 4 (arch
+  `gemma_vq`, alignment 32, `gemma_vq.format_version` 1, `gemma_vq.recipe` verbatim,
+  hparams with the `gemma_vq.` prefix): 461 VQ payloads as type 42 `vqblob` with
+  nd=1 ne=[payload_bytes], the token table as type 8 `q8_0` ne=[512,262144], 914
+  verbatim BF16 at their true rank.
+- Our own inputs: the DQVD container's slot table (bin/eg2_pack_cpu check re-prints it),
+  docs/tensor-inventory.tsv and docs/encode-plan.tsv; the DQVD writer's guarantees are
+  at tools/eg2_pack.c:980-1077 and must hold in GGUF terms.
+- Gate 1b (artifact): all 1376 slots present in one GGUF; a ds4-side dump of every
+  tensor equals what `bin/eg2_pack_cpu check` plus the per-slot re-encode comparison
+  already produce; SHA256SUMS regenerated for the new file.
+- Cost: a re-wrap, minutes, because phase 0 proved the payloads byte-identical.
 
 PHASE 2 — the external anchor, once the baseline GGUF exists (phase-doc row X.5; owner-approved 2026-10-19)
 
@@ -122,7 +174,7 @@ PHASE 3 — the loader: identity, payload reader, layouts, registration (phase-d
 PHASE 4 — the text tower on the CPU reference path (phase-doc rows P1.1-P1.20)
 
 - Authority, every line from /data/llama.cpp/src/models/gemma-embedding2.cpp unless named: embedding lookup scaled by sqrt(512) :86; no-cache, non-causal inputs :90-92 (causal_attn = false at :7); per-layer input block :97 with :215-232; attn_norm :109; q/k/v and heads :113-123; weighted RMS on Q and K, weightless on V :125-127; per-layer RoPE base (:132-137, base selection src/llama-model.cpp:2748-2750, the SWA split rule src/llama-hparams.cpp:8-20) ; attention scale 1.0 :139-141; attn_post_norm + residual :149-152; gated tanh-GELU FFN :156-170; the per-layer embedding block :172-193; layer_scalar :195-196; the control-vector hook is a no-op without a cvec file :199 (implement nothing, record the decision); output_norm + the 768 projection :206-211; mean pool src/llama-graph.cpp:4049-4053; L2 normalize in the caller, examples/embedding/embedding.cpp:70.
-- The one mechanism to get exactly right, and the reason: the sliding layers use a SYMMETRIC window — declared at gemma-embedding2.cpp:4 (LLAMA_SWA_TYPE_SYMMETRIC) and masked at |p1 - p0| > n_swa/2 (src/llama-hparams.h:524-533), so with n_swa = 512 a token sees ±256, a 513-wide span. With causal_attn = false every query sees every row, so a trailing cut (what ds4's kernel does at ds4_cuda.cu:42214) is the wrong mask for sequences longer than 256 tokens.
+- The one mechanism to get exactly right, and the reason: the sliding layers use a SYMMETRIC window — declared at gemma-embedding2.cpp:4 (LLAMA_SWA_TYPE_SYMMETRIC) and masked at |p1 - p0| > n_swa/2 (src/llama-hparams.h:524-533), and the file's n_swa is 1024, because the converter doubles HF's one-sided 512 (conversion/gemma.py:824-825: "HF sliding_window is bidirectional, llama.cpp expects the full window size"). So a token sees ±512, a 1025-wide span. With causal_attn = false every query sees every row, so a trailing cut (what ds4's kernel does at ds4_cuda.cu:42214) is the wrong mask — and any implementation that reads the checkpoint's 512 straight into n_swa would get the window half the width it should be.
 - Tokenizer: .models/EmbeddingGemma-2-914f7f8/tokenizer.json + tokenizer_config.json + tokenizer.model (262,144 entries, byte fallback), ported in the pattern of crates/ds4-core/src/tok/ling31.rs.
 - Land: the family's C graph (ds4_eg2vq_graph.inc) plus its CPU reference entry, and the tokenizer module.
 - Gate: the frozen sentence set (phase 2) through three things — the C reference path, the Rust host, and the anchor vectors. Report mean and minimum cosine and max element difference for C-vs-Rust and C-vs-anchor, at 768 and at 512/256/128 with re-normalization. Declared before the run: C-vs-anchor mean cosine ≥ 0.9999 (if it is not, the port is wrong, not the anchor), and Rust-vs-C within a stated element tolerance.
@@ -149,15 +201,29 @@ PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owne
 
 Order of work, and the first command of the next session:
 
-0 (done) → 1a (baseline GGUF) → 2 (anchor freeze) → 1b (artifact GGUF, re-wrap) → 3 → 4 → 5 → 6 → 7 → 8 if wanted.
-First command of the next unit (phase 1a): `./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin` (re-prints the 1376-slot verdict, which is both the artifact's denominator and the re-wrap's input manifest), then open the two writer sources side by side — /data/YoungAi/src/common/ds4_gguf_write.h with /data/YoungAi/gguf-tools/quantize/v41_to_gguf.c — and emit metadata plus one tensor of the baseline GGUF, with the key and tensor tables of docs/ds4-gemma-payload-contract.md sections 5 and 7 as the whole specification.
+0 (done) → 1a (done) → 2 (anchor freeze) → 1b (artifact GGUF, re-wrap) → 3 → 4 → 5 → 6 → 7 → 8 if wanted.
+First command of the next unit (phase 2): the llama.cpp build already exists at
+/data/llama-anchor-build (llama-embedding, CPU, built from the pin this session), so
+phase 2 starts with the frozen sentence set — the
+at-least-100-sentence file with the checkpoint's own task prompts from
+config_sentence_transformers.json — then
+`LD_LIBRARY_PATH=/data/llama-anchor-build/bin /data/llama-anchor-build/bin/llama-embedding
+-m out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf --pooling mean -p "<sentence>"`
+per sentence at all four MRL widths (768 / 512 / 256 / 128, each re-normalized after
+truncation per the checkpoint README:155-185), and committing
+tests/expected/anchor-embeddinggemma2.jsonl with the revision, the command line and
+the digests. Open decision for it: whether tokenizer.ggml.add_eos_token should be
+true (the converter does not write it; llama.cpp warns) and how the task prompts are
+applied — decide by measurement, both ways, and record which one the frozen vectors
+carry.
 
 4. Reference map — the exact repos and files (pinned; verified in this session)
 
 | Role | Root and pin | What is read from it |
 |---|---|---|
 | Port base (the work lands here) | /data/embeddinggemma2/ds4-rs @ eb67d493, branch feat/ds41-dsml-carriage, gitignored, own git | every crates/ds4-core/src path named in section 3, ds4.c, ds4_glmvq*.inc/.h, cuda/*.cuh, tests/parity/, the Makefile |
-| Form and metadata authority | /data/llama.cpp @ 31288c9c (b11723, 2026-10-18), MIT, read-only, source only (no build/ present) | src/models/gemma-embedding2.cpp (232 lines), src/llama-arch.cpp, src/llama-hparams.*, src/llama-model.cpp, src/llama-graph.cpp, ggml/include/gguf.h, ggml/src/gguf.cpp, examples/embedding/embedding.cpp, tools/mtmd/** (phase 8) |
+| Form and metadata authority | /data/llama.cpp @ 31288c9c (b11723, 2026-10-18), MIT, read-only, source only (no build/ present) | src/models/gemma-embedding2.cpp (232 lines), src/llama-arch.cpp, src/llama-hparams.*, src/llama-model.cpp, src/llama-graph.cpp, src/llama-vocab.cpp, ggml/include/gguf.h, ggml/src/gguf.cpp, examples/embedding/embedding.cpp, conversion/gemma.py, conversion/base.py, gguf-py/gguf/** (vocab.py, gguf_writer.py, constants.py), tools/mtmd/** (phase 8) |
+| The anchor build (phase 2; a build of the pin, never inside its tree) | /data/llama-anchor-build (CPU, built 2026-10-19) | bin/llama-embedding; the frozen vectors it produces are phase 2's deliverable |
 | Writer and payload precedent | /data/YoungAi (reference toolchain, revision a4e6d31) | src/common/ds4_gguf_write.h, gguf-tools/quantize/v41_to_gguf.c, vq_fmt.h |
 | Verification method | /data/ds4-dfm-rs (the live ds4 project; not modified from here) | AGENTS.md (retained `-c` oracles), tests/parity/, tests/ds4_proof.py, Makefile (the false-green guard) |
 | The model | /data/embeddinggemma2/.models/EmbeddingGemma-2-914f7f8 (1.5 GB, 15 files, gitignored) | config.json, per_layer_config, config_sentence_transformers.json, 1_Pooling/config.json, modules.json, tokenizer.{json,model}, tokenizer_config.json, README.md |
@@ -187,6 +253,7 @@ First command of the next unit (phase 1a): `./bin/eg2_pack_cpu check out/Embeddi
 - P-1 (no Python in the runtime, ever) and P-2 (references are citations or one-shot instruments, never dependencies; no ONNX, no PyTorch) are in this repo's AGENTS.md with their gate commands. All five checks return zero today, including ldd against the real ds4-server binary.
 - Owner decisions in force: the container is GGUF + `gemma_vq` payload (2026-10-19); the external anchor run is approved once the baseline GGUF exists; quality is paramount — VQ is for compactness, never a licence to lose accuracy.
 - OPEN (owner): whether the dim-4 VQ device kernel (phase 7) is in scope now or the device path waits for a dim-8 sibling artifact. OPEN (owner): whether the vision/audio towers (phase 8) are wanted. OPEN: whether KV checkpoints mean anything for an embeddings family.
+- OPEN (phase 2): tokenizer.ggml.add_eos_token (the converter does not write it; llama.cpp warns) and how the checkpoint's task prompts (config_sentence_transformers.json) enter the anchor's sentences. Phase 1a needed neither.
 - OPEN before any push: rule 12 graphify, rule 19 QA evidence, rule 10 OSV scan for ds4-rs (it carries a Cargo.lock); the outer repo has no remote, so publishing is an offer.
 
 8. Progress and staleness check (run this first, every session)
