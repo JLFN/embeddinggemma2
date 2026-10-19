@@ -63,8 +63,11 @@ must come back with zero hits:
     grep -in 'pyo3\|cpython\|libpython\|candle\|tch \|torch\|transformers' ds4-rs/Cargo.toml ds4-rs/Cargo.lock
     ldd ds4-rs/ds4-server | grep -ic 'python\|torch'
     find ds4-rs/crates/*/src ds4-rs/native -name '*.py'
+    grep -rin 'onnx\|ort-sys' ds4-rs/crates/*/src ds4-rs/native ds4-rs/Cargo.toml ds4-rs/Cargo.lock
 
-All four returned zero on 2026-10-19 (measured in this workspace). A hit means
+All five returned zero on 2026-10-19 (measured in this workspace; ds4-rs has no
+built binary here yet, so the ldd check is vacuous until the port produces one —
+it becomes meaningful from P0 onward). A hit means
 the change is rejected before merge and before any push, and it is not a style
 preference: global rule 0 makes an owner instruction binding, and this check is
 how a fresh session proves the rule still holds.
@@ -88,11 +91,18 @@ kernels. Everything else is evidence:
 3. If a reference route needs a Python stack to run, the route still may not
    enter the runtime, and the frozen output must state which revision produced
    it. Prefer a route that needs no Python at all.
-4. A third-party conversion (for example an ONNX export, a GGUF conversion) is
-   never ground truth by itself: before its numbers are used as the denominator
-   of a quality claim, the conversion is checked against the pinned source and
-   that check is recorded.
+4. A third-party conversion (a published export, a GGUF conversion) is never
+   ground truth by itself: before its numbers are used as the denominator of a
+   quality claim, the conversion is checked against the pinned source and that
+   check is recorded.
+5. No ONNX and no PyTorch in this project at all — not in the runtime, not in the
+   verification chain, not as a measuring instrument (owner, 2026-10-19: "remove
+   this onnx i dont want it and no pytorch see how /data/ds4-dfm-rs works"). The
+   verification is the ds4-dfm-rs method: the project's own native C oracle
+   against the Rust candidate, committed golden snapshots, and device parity,
+   with the upstream implementation read and cited as the authority
+   (docs/ds4-gemma-port-reference.md section 6).
 
 Verification: any quality or parity number in a commit, evidence file or
 handoff must name the artifact and revision that produced it, and the runtime
-tree must still pass the four P-1 checks.
+tree must still pass the five P-1 checks.

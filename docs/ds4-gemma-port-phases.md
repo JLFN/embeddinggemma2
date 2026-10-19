@@ -124,9 +124,10 @@ re-enumerated here; treat it as unverified and use the measurement above.
 
 Every line below is `src/models/gemma-embedding2.cpp` at `b11723` unless another
 file is named. Gate: on a frozen set of at least 100 sentences, our 768-dim
-vectors agree with the reference instrument's — mean and minimum cosine, maximum
-element difference — and the same three numbers under MRL truncation to 512, 256
-and 128 with re-normalization (the checkpoint's own README documents the
+vectors agree with the C reference path's (X.1 leg 2; the optional external anchor
+is a second, independent number, not the denominator) — mean and minimum cosine,
+maximum element difference — and the same three numbers under MRL truncation to
+512, 256 and 128 with re-normalization (the checkpoint's own README documents the
 truncation and the required re-normalization: `.models/EmbeddingGemma-2-914f7f8/README.md:91`,
 `:166-185`).
 
@@ -179,8 +180,8 @@ a VRAM number, both printed by the run.
 ## 7. P4 — vision and audio towers (owner decision pending)
 
 The container already holds both towers (section 2); nothing in this phase is
-needed for the text embeddings to work. Gate: the same instrument comparison as
-P1, per tower, on the tower's own inputs.
+needed for the text embeddings to work. Gate: the same comparison as P1 (X.1
+leg 2), per tower, on the tower's own inputs.
 
 | id | Item to port | Reference | Status |
 |---|---|---|---|
@@ -193,19 +194,25 @@ P1, per tower, on the tower's own inputs.
 
 | id | Item | Reference | Status |
 |---|---|---|---|
-| X.1 | The measuring instrument: an ONNX execution path in Rust (`ort` crates, already in the local cargo cache), producing frozen reference vectors. Four checks before any number from it is a denominator: pick the artifact and record its revision, dump its graph I/O, check the conversion against the pinned reference, then freeze | `docs/ds4-gemma-port-reference.md` section 6 (the four checks listed there) | OPEN |
-| X.2 | Guardrails in force for every row: no Python in the runtime (P-1, with its four zero-hit greps) and references are citations or one-shot instruments, never dependencies (P-2) | `/data/embeddinggemma2/AGENTS.md` | DONE (rule written, commit `fd63233`; gate greps return zero) |
+| X.1 | Verification, four legs, all native — no ONNX and no PyTorch anywhere (owner, 2026-10-19). Leg 1: read and cite the authority, llama.cpp `gemma-embedding2` (`src/models/gemma-embedding2.cpp:3-13` hparams keys, `:34-71` the 413 tensors). Leg 2: the port's own C reference path is the oracle and the Rust host is the candidate, with the false-green guard (distinct builds or the comparison is void). Leg 3: a frozen sentence set carrying the checkpoint's own task prompts, run once through the C path, its digests committed and reproduced by every later run. Leg 4: the CUDA path against the C path within a stated tolerance, latency and VRAM recorded beside the equality | `docs/ds4-gemma-port-reference.md` section 6; `/data/ds4-dfm-rs/AGENTS.md` (retained `-c` behavior oracles), `/data/ds4-dfm-rs/tests/parity/`, `/data/ds4-dfm-rs/tests/ds4_proof.py` (scenario + `--check-expected`), `/data/ds4-dfm-rs/Makefile` (the false-green guard) | OPEN |
+| X.2 | Guardrails in force for every row: no Python in the runtime and no ONNX or PyTorch anywhere (P-1, five zero-hit greps, the fifth added this session) and references are citations or one-shot instruments, never dependencies (P-2, item 5) | `/data/embeddinggemma2/AGENTS.md` | DONE (rules written, commit `fd63233` plus this session's P-2 item 5; all five greps return zero) |
 | X.3 | Decide whether key-value checkpoints matter for an embeddings model at all before wiring `payload.rs` (row P0.8). An embeddings route has no decode loop, so a checkpoint format may be pure cost | `crates/ds4-core/src/payload.rs` (the GLM/Ling VQ arms) | OPEN |
 | X.4 | Before any push from ds4-rs: rule 12 graphify graph, rule 19 QA evidence, rule 10 OSV scan (ds4-rs carries a `Cargo.lock`); ds4-rs's remotes are shared with the live ds4 project, so a push is shared state and needs confirmation | `~/.opengrok/project-work-rules.md` rules 10/12/19/23 | OPEN |
+| X.5 | The baseline model in GGUF, written natively: the pinned checkpoint re-expressed as GGUF with the metadata and tensor names the loader resolves, so the reference's embedding example and our own C reference path can load the same file. Needed by the external anchor in X.1, and needed anyway as the CPU reference path's own input. llama.cpp's own converter is not usable: `convert_hf_to_gguf.py:12` imports torch, which rule P-1 forbids | `src/models/gemma-embedding2.cpp:3-71` (the key and tensor set), `src/llama-arch.cpp:64` (arch string), format authority `ggml/include/gguf.h` + `ggml/src/gguf.cpp`, our own reader `ds4.c:1607`, `:2348`; the tokenizer arrays come from our `tokenizer.json` (P1.19) | OPEN |
+| X.6 | Container decision: keep DQVD, or move the artifact onto GGUF plus a `gemma_vq` payload as `glm_vq` and `ling31_vq` do. GGUF is ds4's native container (`ds4.c:1607`, `crates/ds4-core/src/identify.rs:199-208`), and the ds4 VQ recipe writes GGUF (`RECIPE-deepseek41-vq.md`, `v41_to_gguf ... .gguf`). Keeping DQVD means new reader and identity code in both hosts (P0.1-P0.4); moving means a re-encode, measured today at about 14.5 minutes of wall time for the shard phase (14 shards in parallel, 1017-1155 s each) plus the merge | `crates/ds4-core/src/identify.rs:199-208`; `RECIPE-deepseek41-vq.md`; `out/encode-run.txt` (`19:47:47Z` -> `20:02:16Z`) | OPEN (owner) |
+| X.7 | What VQ costs, measured on our own engine: the same sentences through the port's path with the baseline weights (X.5) and with the VQ artifact, compared as a cosine agreement distribution (mean, min, quantiles) and as retrieval quality on a frozen labelled set (recall@k, MRR), at 768 and at each MRL truncation. This is the "not less smart" number, and it needs no third party | our own engine on both container paths; the MRL contract in the checkpoint README `:155-185` | OPEN |
 
 ## 9. Order of work and the first gate
 
-X.1 (the instrument) and P0 (the container) can run in parallel and both precede
-P1's gate: without X.1 the quality gate has no denominator, and without P0 there
-is nothing to run.
+X.6 (the container) comes first, because P0 is written against its answer. X.5
+(the baseline in GGUF) and P0 (the compressed artifact's reader) can then proceed
+in parallel, and both precede P1's gate: without a baseline there is no C
+reference path to serve as the oracle of X.1 leg 2, and without P0 there is
+nothing to run.
 
-Sequence: P0.1-P0.3 → P0.4-P0.10 → P0 gate → X.1's four checks → P1 → P1 gate →
-P2 → P3 → P4 (owner's call).
+Sequence: X.6 → (X.5 in parallel with P0.1-P0.3 → P0.4-P0.10) → P0 gate → P1 →
+P1 gate → X.7 → P2 → P3 → P4 (owner's call) → the external anchor run of X.1 if
+the owner wants the second opinion.
 
 First gate to run, concretely: `./bin/eg2_pack_cpu check
 out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin` (the encoder's verdict,
@@ -215,10 +222,17 @@ payload lengths.
 
 ## 10. Open owner decisions carried by this doc
 
-1. Which ONNX artifact becomes the instrument (X.1 item 1) — and whether the
-   export includes the per-layer input, the embedding projection, pooling and
-   normalization or only the encoder body.
-2. Whether the dim-4 device kernel (P3.1) is in scope now, or the device path
+1. The container (X.6): keep DQVD, or move the artifact onto GGUF plus a
+   `gemma_vq` payload as `glm_vq` and `ling31_vq` do. ds4's native container is
+   GGUF and the ds4 VQ recipe writes GGUF, so keeping DQVD is a named deviation
+   that costs new reader and identity code in both hosts. The re-encode is
+   affordable: about 14.5 minutes of wall time for the shard phase, measured.
+2. Whether the external anchor run is wanted at all (X.5): llama.cpp built at the
+   pinned revision, over the frozen set. The GGUF writer it needs is required
+   either way, for the CPU reference path's own input; the anchor itself is a
+   second opinion, not the denominator. Its converter is out of the question
+   (`convert_hf_to_gguf.py:12` imports torch).
+3. Whether the dim-4 device kernel (P3.1) is in scope now, or the device path
    waits for a dim-8 sibling artifact. Dim 4 / K=4096 is the higher-quality tier.
-3. Whether P4 (vision and audio towers) is wanted at all.
-4. Whether key-value checkpoints are in scope for an embeddings family (X.3).
+4. Whether P4 (vision and audio towers) is wanted at all.
+5. Whether key-value checkpoints are in scope for an embeddings family (X.3).

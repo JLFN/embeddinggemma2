@@ -17,10 +17,13 @@ Three roles, never mixed:
   conventions.
 - Port shape: the ds4-rs family pattern (Rust host, C bind `.inc`, C graph
   `.inc`, CUDA kernels), per the GLM VQ family as the closest analog.
-- Measuring instrument for the gate: an ONNX execution path run once, outside the
-  runtime, freezing reference vectors into a committed evidence file (section 6).
-  The runtime never imports it, and per project rule P-1 no Python is involved in
-  the runtime at any point.
+- Verification: the ds4-dfm-rs method itself, with no foreign instrument. The
+  candidate (Rust host, CUDA kernels) is checked against a native oracle — the
+  port's own C reference path, in the ds4 idiom of the retained `-c` behavior
+  oracles and their parity harnesses — with frozen numbers committed as golden
+  snapshots, and the pinned llama.cpp run once (C++, in GGUF) as an optional
+  external anchor (section 6). No ONNX, no PyTorch, and no Python in the runtime
+  at any point (owner decision 2026-10-19; project rule P-1).
 
 ## 2. Pinned references
 
@@ -197,32 +200,93 @@ default it from this file.
   implemented in the ds4 pattern (`crates/ds4-core/src/tok/ling31.rs` is the
   template: assert the whole pipeline shape, then build tables).
 
-## 6. The measuring instrument (open, and its own verification)
+## 6. Verification: the ds4 method, and no foreign instrument
 
-The gate number is "our 768-dim vectors against a reference implementation's".
-The intended instrument is an ONNX execution path with the Rust `ort` bindings
-(crates already in the local cargo cache: `ort-2.0.0-rc.9/12/13`, `ort-sys`
-likewise), driven by a test binary, producing a frozen vector file that the
-quality evidence cites. No Python is involved and the runtime is untouched.
+Owner decision, 2026-10-19: this port carries no ONNX and no PyTorch, in the
+runtime or in its verification. The method is the one `/data/ds4-dfm-rs` already
+uses, read out of that tree:
 
-Not yet done, and each is a required check before any number from it is used as
-the denominator of a quality claim (project rule P-2, item 4):
+- The oracle is native code of the project's own. "C executables with `-c`
+  suffixes are retained behavior oracles, not the production hosts"
+  (`/data/ds4-dfm-rs/AGENTS.md`). The Rust host is the candidate, and each
+  surface has a parity harness against the C oracle
+  (`tests/parity/<surface>_c_oracle.c`, with Makefile targets
+  `test-route-parity`, `test-catalog-parity`, `test-tokenizer-parity`,
+  `test-kv-parity`, `test-server-parity`, `test-agent-parity`).
+- A false green is a named failure, not an accident. `proof-rust-cuda-opp-c`
+  refuses to run when candidate and oracle are the same binary or the same hash:
+  "Same inode or same hash is a false-green (Rust-vs-Rust) and must die"
+  (`/data/ds4-dfm-rs/Makefile`).
+- Frozen numbers are committed snapshots, not a library call:
+  `tests/proof/expected/<scenario>.json`, checked by `tests/ds4_proof.py
+  --scenario <name> --check-expected <path>`; the report carries the same fields
+  across scenarios so the same commit and artifact produce a byte-identical plan
+  (`tests/ds4_proof.py:2007-2019`).
+- Evidence is a committed JSON that names the artifact and its revision
+  (`docs/evidence/`), and a release ledger records what was qualified
+  (`docs/releases/`).
 
-1. Choose the ONNX artifact (candidates seen on the Hub:
-   `onnx-community/embeddinggemma-2-ONNX`, `wesjos/embeddinggemma-2-onnx-fix`)
-   and record its revision.
-2. Dump its graph I/O: does it include the per-layer input, the embedding
-   projection, pooling, and normalization, or only the encoder body?
-3. Check the conversion against the pinned source on a small input against the
-   llama.cpp implementation, in the same run that produces the frozen vectors.
-4. Only then freeze the vectors and record the artifact revision with them.
+For this port that is four legs, all native.
+
+Leg 1, the authority (read and cited). llama.cpp's `gemma-embedding2` at the
+pinned revision (section 2), read first-hand and cited in the port's comments and
+in the evidence file (global rule 0.2). This is where the arithmetic comes from,
+including the GGUF key and tensor set the loader resolves:
+`src/models/gemma-embedding2.cpp:3-13` — `attention.sliding_window`,
+`attention.layer_norm_rms_epsilon`, `rope_freq_base_swa`,
+`embedding_length_per_layer`, the SWA pattern through `load_swa_pattern(ml, 6)`,
+non-causal attention and `f_attention_scale = 1.0f` — and `:34-71`, the 413
+tensors: 5 globals plus 17 per layer. Arch string `src/llama-arch.cpp:64`,
+loader wiring `src/llama-model.cpp:161`.
+
+Leg 2, the oracle (run, native). The port's own C reference path is the oracle
+and the Rust host is the candidate, exactly as `ds4-c` is to `ds4`. Same
+container, same weights, same input: the 768-dim pooled vector, the per-tensor
+values and their digests must agree. The false-green guard applies in our terms
+too — distinct builds, or the comparison is void.
+
+Leg 3, the golden snapshot (committed, reproducible). A frozen sentence set with
+the checkpoint's own task prompts, run once through the C reference path, its
+digests committed; every later run must reproduce them. MRL truncation is part of
+the snapshot rather than an afterthought: 768/512/256/128, each re-normalized
+after the slice, per the checkpoint README lines 166-185.
+
+Leg 4, device parity (run). The CUDA path must match the C reference path within
+a stated tolerance, and the VQ device path must reproduce the host decode of the
+same payload. Latency and VRAM are recorded beside the equality, because a
+correct kernel slower than the CPU path is not the deliverable.
+
+External anchor, optional and by owner decision (phase doc X.5). llama.cpp
+itself, built at the pinned revision and run once over the frozen set, is the
+only independent implementation of this architecture on hand. It is C++ and needs
+no Python, but it needs the model in GGUF, and its own converter is not usable:
+`convert_hf_to_gguf.py:12` imports torch, which rule P-1 forbids. The anchor
+route is therefore a native GGUF writer of our own, plus one run of the
+reference's embedding example (`examples/embedding/embedding.cpp`, normalization
+at `:70`), its output committed as data with the GGUF's sha256 and the build's
+revision. The anchor is a second opinion, never the denominator: the denominator
+is our own C reference path, checked against a cited implementation.
+
+Why the container is a decision rather than a given (phase doc X.6). GGUF is
+ds4's native container, not a foreign one. The C host parses it itself
+(`ds4.c:1607` carries `DS4_GGUF_MAGIC`, the parser starts at `:2348`), the Rust
+host opens it (`crates/ds4-core/src/identify.rs:199-208`), and both VQ families
+extend it with their own payload instead of replacing it (`glm_vq`, `ling31_vq`,
+each a GGUF with a format-version key). The ds4 VQ recipe our own
+`RECIPE-deepseek41-vq.md` follows writes a `.gguf` too (`v41_to_gguf ... .gguf`).
+Our DQVD container is a deviation from that pattern and is named as one.
 
 ## 7. Consequences for the port
 
 - The Rust host learns a new container identity: our DQVD file (rooted where a
   directory release currently routes, `crates/ds4-core/src/identify.rs:199-207`),
   read and validated before any pointer reaches C — the same split as
-  `ling31_vq` (validate in Rust, bind a flat record table in C).
+  `ling31_vq` (validate in Rust, bind a flat record table in C). This is a
+  deviation from the ds4 pattern, in which the container stays GGUF and a family
+  adds only a payload; section 6 and phase doc row X.6 carry the decision, and the
+  answer decides whether this bullet survives. If the artifact moves to GGUF plus
+  a `gemma_vq` payload, the reader work folds into the existing GGUF path and the
+  identity rows (P0.1-P0.4) shrink to the payload extension.
 - The family id lands in `ModelFamily`/`Variant`
   (`crates/ds4-core/src/shape.rs:20-35`, `:84-104`), the five Rust dispatch
   tables, the C family enum (`ds4.c:383`), the catalog (`ds4.c:659`) and the
@@ -232,11 +296,19 @@ the denominator of a quality claim (project rule P-2, item 4):
   code. The device VQ path is dim-8 only (`cuda/ds41_vq_row.cuh:55`,
   `crates/ds4-core/src/vq.rs:40-44`), so the GPU phase needs a dim-4 kernel.
 - Bidirectional attention exists in the device API (`ds4_gpu.h:3645-3656`,
-  kernel at `ds4_cuda.cu:42201-42230`, which computes full attention when
-  `causal=0`), but it is a scalar reference kernel capped at 256 rows per launch
-  (`ds4_cuda.cu:42207`), so it can prove correctness, not serve traffic. It also
-  does not implement a sliding window, which twenty of our twenty-four layers
-  need.
+  kernel at `ds4_cuda.cu:42201-42230`, full attention when `causal=0`), but it is
+  a scalar reference kernel capped at 256 rows per launch (`ds4_cuda.cu:42208`,
+  score buffer `float score[256]` at `:42211`, guarded again at `:42358`), so it
+  can prove correctness, not serve traffic. A windowed entry point also exists and
+  is in use (`ds4_gpu_motif3_expanded_attention_window_tensor`, `ds4_gpu.h:3658`,
+  called at `ds4.c:48259`), but its window is trailing: `first = window &&
+  visible > window ? visible - window : 0` (`ds4_cuda.cu:42214`), and with
+  `causal=0` `visible` is the whole row set, so every query would attend only to
+  the last `window` tokens rather than to a window around itself. Twenty of our
+  twenty-four layers need the symmetric form, so P3 is a new kernel, not a
+  parameter (phase doc P3.2). Correction of 2026-10-19: an earlier draft of this
+  bullet claimed no sliding window existed in that kernel, which the signature at
+  `ds4_gpu.h:3658` and the use at `:42214` disprove.
 - There is no embeddings route and no mean pooling anywhere in the tree
   (`crates/ds4-server/src/serve.rs:1169-1240` dispatches only models, metrics,
   stats and batch), so both are new work for the port.

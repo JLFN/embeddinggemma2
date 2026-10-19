@@ -1,16 +1,16 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d6da36680643c48c144536caf658e360b6d30d82
-last_updated_commit: 36719eb273b83d459183a969651eac350f9dae45
+last_updated_commit: 4a375e0c043ec52b26f3fbb11150aff50d0246a2
 branch: dev
 remote: 
-handoff_written_at_context_usage: 11%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-19T06:54:18+02:00
+handoff_written_at_context_usage: 14%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T07:04:22+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-19, after the phase doc was written)
+Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-19, after the ONNX instrument was dropped and the verification chain rewritten to the ds4-dfm-rs method)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -62,6 +62,11 @@ configured yet).
   421,758,160 B from 1,488,743,984 B (3.53x), 1376 slots, every payload
   re-encoded and compared byte for byte; text-tower mean cosine 0.9859 against
   the DeepSeek bar 0.910-0.925 (RECIPE.md sections 5-7, SHA256SUMS).
+- Unit 7 (this session): ONNX and PyTorch dropped by owner instruction ("remove
+  this onnx i dont want it and no pytorch see how /data/ds4-dfm-rs works and make
+  a new plan"). Verification is now the ds4-dfm-rs native method: reference doc
+  section 6, phase doc X.1 and the new rows X.5-X.7, and a new P-2 item 5 with a
+  fifth gate grep (all five greps zero today).
 - Unit 5 (new): AGENTS.md at the workspace root is the project guardrail file and
   open-grok inspect lists it (project, ~1337 tokens) alongside the global file
   and the mount. It carries P-1 (no Python in the runtime, with four zero-hit
@@ -76,13 +81,16 @@ configured yet).
 
 3. Next unit plan — run the artifact: the EmbeddingGemma-2 text tower in ds4-rs (2026-10-19)
 
-Status: not started. Owner direction, this session: "we will use ONNX instead we
-can port the parts from llama.cpp to this local /ds4-rs we need to add gemma to
-this ds4-rs", and "i dont want no python you can put this in guard rail for this
+Status: not started. Owner direction, in order: "we will use ONNX instead we can
+port the parts from llama.cpp to this local /ds4-rs we need to add gemma to this
+ds4-rs" and "i dont want no python you can put this in guard rail for this
 project, we can use it as test script or script to optimize the code but it will
-never be in final runtime". So: the reference is llama.cpp's gemma-embedding2
-(read and cited, section 4 facts and docs/ds4-gemma-port-reference.md), the
-measuring instrument is an ONNX run in Rust with the cached ort crates, and the
+never be in final runtime" — then, on 2026-10-19, the override that supersedes the
+first: "remove this onnx i dont want it and no pytorch see how /data/ds4-dfm-rs
+works and make a new plan". So: ONNX is out, PyTorch is out, and verification is
+the ds4-dfm-rs method itself — a native C oracle against the Rust candidate,
+committed golden snapshots, device parity — with llama.cpp read and cited as the
+authority for the arithmetic (docs/ds4-gemma-port-reference.md section 6). The
 runtime stays Rust + C + CUDA with no Python anywhere.
 
 Goal: a runtime that loads our DQVD artifact and produces the 768-dim embeddings
@@ -116,8 +124,9 @@ attention on 5/11/17/23 (head_dim 512 there, 1 KV head), the pre-layer input
 block, per-layer residual block, layer_scalar, output norm and the 768-wide
 embedding projection, then mean pool and L2 normalize. Gate, and it is also the
 owner's behavioural proof: on a frozen set of at least 100 sentences the 768-dim
-vectors agree with the reference instrument's — mean and minimum cosine, max
-element difference, and the same three numbers under MRL truncation to 512/256/128.
+vectors agree with the C reference path's (X.1 leg 2; the optional external anchor
+is a second, independent number) — mean and minimum cosine, max element
+difference, and the same three numbers under MRL truncation to 512/256/128.
 P2 — the entry point: a CLI verb first, then /v1/embeddings with the family
 registered through the five Rust dispatch tables and the C dispatch. The route
 takes the task prompt (defaults from config_sentence_transformers.json). Gate: the
@@ -137,14 +146,16 @@ P4 — vision and audio towers (16 and 12 layers; their graphs live in llama.cpp
 gemma4 code, and our inventory already carries embed_vision/embed_audio
 projections), only if the owner wants them.
 
-Measure order: P0, then the ONNX instrument check (docs/ds4-gemma-port-reference.md
-section 6 lists the four checks; the instrument must be trustworthy before P1's
-gate can mean anything), then P1.
+Measure order: X.6 (the container decision) first, then X.5 (the baseline GGUF)
+alongside P0, then P1. The denominator of P1's gate is our own C reference path
+reading that baseline, checked against the cited llama.cpp code; the optional
+external anchor (llama.cpp itself, run once) is a second opinion, never the
+denominator. Reference doc section 6, phase doc section 9.
 
 Fallback kept from the previous revision of this plan: a reconstruct mode in
 eg2_pack (eg2_pack_cpu reconstruct <hf-dir> <in.bin> <out-dir> writing a
 safetensors directory with all 1376 tensors, verbatim slots byte-exact). It proves
-the container has no unreachable slot and gives the ONNX route something loadable
+the container has no unreachable slot and gives the reference something loadable
 in the original's own shape.
 
 Known limit to state in any proof: the numbers say how close the quantized runtime
@@ -200,8 +211,9 @@ original is.
   (measured: no file in the package matches embedding_gemma; its gemma family is
   diffusion_gemma, gemma, gemma2, gemma3, gemma3n, gemma4, gemma4_assistant,
   gemma4_unified, paligemma, recurrent_gemma, shieldgemma2, t5gemma, t5gemma2,
-  vaultgemma). The checkpoint records transformers_version 5.18.0.dev0. This is why
-  the instrument is ONNX, not transformers.
+  vaultgemma). The checkpoint records transformers_version 5.18.0.dev0. That is why
+  verification is our own native chain and not a Python ML stack: nothing installed
+  here can load the model at all.
 - Guardrails: global ~/.opengrok/AGENTS.md (core) + the mount
   .opengrok/rules/project-work-rules.md (symlink to the shared file, do not edit
   it for project-specific rules) + this repo's own AGENTS.md (project rules; the
@@ -214,12 +226,20 @@ original is.
   Python only as a test/optimization script or a one-time evidence producer, and
   never reachable from the runtime. Its four gate greps all return zero today.
 - Reference policy: llama.cpp and any other upstream is a citation, never a
-  dependency; a third-party conversion (ONNX, GGUF) is not ground truth until it
-  is checked against the pinned source.
-- OPEN (owner): which ONNX artifact becomes the instrument and whether its export
-  includes the pre-layer input, the embedding projection, pooling and
-  normalization (docs/ds4-gemma-port-reference.md section 6). Until that is
-  checked, P1's gate has no denominator.
+  dependency; a third-party conversion is not ground truth until it is checked
+  against the pinned source.
+- Rule, owner 2026-10-19: no ONNX and no PyTorch anywhere in this port, in the
+  runtime or in verification. The chain is the ds4 method — C oracle against the
+  Rust candidate, committed golden snapshots, device parity (reference doc
+  section 6, phase doc X.1).
+- OPEN (owner): the container decision, phase doc X.6 — keep DQVD, or move the
+  artifact onto GGUF plus a gemma_vq payload as glm_vq and ling31_vq do. P0 is not
+  written until it is answered; the re-encode is affordable (about 14.5 min of
+  wall time for the shard phase, measured from out/encode-run.txt).
+- OPEN (owner): whether the external anchor is wanted at all (phase doc X.5) —
+  llama.cpp built at the pinned revision over the frozen set. It needs the native
+  GGUF writer, which the CPU reference path needs anyway; the converter llama.cpp
+  ships is out of the question (convert_hf_to_gguf.py:12 imports torch).
 - OPEN (owner): whether the dim-4 VQ device kernel (P3) is in scope now or whether
   the device path waits for a dim-8 sibling artifact. Dim 4 / K=4096 is the
   higher-quality tier (text tower 0.9869 against 0.9218 at the same 12-bit index).
@@ -228,9 +248,9 @@ original is.
   still rests on a quality statement rather than an explicit list.
 - OPEN: rule 12 graphify graph rebuild and rule 19 QA evidence before any push.
   Rule 10 applies to ds4-rs (it carries a Cargo.lock); this outer repo is not Rust.
-- Dead item, removed this session: transformers 5.18.0.dev0 in an isolated venv.
-  The owner chose ONNX, and the installed transformers cannot load the model
-  anyway, so no venv is to be created.
+- Dead item, removed earlier: transformers 5.18.0.dev0 in an isolated venv. The
+  installed transformers cannot load the model anyway, and on 2026-10-19 the owner
+  dropped the ONNX route as well, so no venv is to be created.
 
 6. Progress and staleness check (run this first, every session)
 
