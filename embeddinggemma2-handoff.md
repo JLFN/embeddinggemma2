@@ -1,16 +1,16 @@
 ---
 project: embeddinggemma2
-plan_start_commit: ed2fa0be41e80d3de2ccdd181a642f87b1552f5d
-last_updated_commit: ed2fa0be41e80d3de2ccdd181a642f87b1552f5d
+plan_start_commit: ef0d6f1da814bbfd28e18d754f633eee4f5727ea
+last_updated_commit: ef0d6f1da814bbfd28e18d754f633eee4f5727ea
 branch: dev
 remote: 
-handoff_written_at_context_usage: 34%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-18T22:24:24+02:00
+handoff_written_at_context_usage: 38%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-19T06:28:59+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-18, after unit 3)
+Handoff + executable plan — EmbeddingGemma-2 VQ (2026-10-19, after the ds4 runtime copy)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -52,99 +52,109 @@ configured yet).
    entry and the commits are in place, call the compact_session tool as the
    last action of that turn.
 
-2. Current state (2026-10-18, after unit 3 — COMPLETE, verified this session)
+2. Current state (2026-10-19, after the runtime copy — COMPLETE, verified this session)
 
-- Unit 3 outcome: the artifact exists.
-  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B
-  (421,604,557 B payload), from a 1,488,743,984 B bf16 checkpoint: 3.53x
-  smaller. sha256 8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe.
-  1376 slots: 461 VQ matrices at dim 4 / K=4096, the token table at q8_0, 914
-  tensors verbatim.
-- Quality measured from the merged file (decode every payload through the
-  reference's reader): text-tower 216 matrices mean cos 0.9859 / 16.69% relL2,
-  text-ple 0.9857 / 16.86, audio-attn 0.9992 / 3.64, audio-ffn 0.9993 / 3.35,
-  audio-frontend 0.9936 / 9.53, vision-attn 0.9853 / 17.07, vision-ffn 0.9841 /
-  17.76, token table 1.0000 / 0.55. Worst single matrix 0.9740 (vision encoder
-  layer 0 attention o_proj); nothing lower. DeepSeek bar is 0.910-0.925.
-- Verified: structure OK on read-back (1376 slots, names, hashes, order,
-  alignment, ranges, reference byte accounts); 14 parallel verify runs covering
-  all 1376 slots re-encoded and compared byte for byte, all identical; source
-  bytes sum exactly to the checkpoint's tensor total.
-- Cost: shards 19:42:39Z-20:02:16Z, merge 1.4 s, verifies to 20:21:45Z; 39 min
-  wall on 14 cores against ~2 h single-process.
-- GPU, all measured by tools/eg2_gpuprobe.cu: pageableMemoryAccess 0, so vq_gpu.cu's
-  host-pointer kernels fault (cudaErrorIllegalAddress, 0/200000 indices written);
-  the reference's vqg_host_alloc pinning fixes it (146x the CPU scalar loop on
-  that stage); driven end to end the GPU path is 1.25-3x SLOWER per tensor on
-  this card (89.6 s vs 58.8 s over a 92-tensor subset, identical cosines); and
-  dim 4 / K=4096 cannot run at all (81920 B codebook vs the 49152 B gate).
-- q8_K is not a weight format here (quants_p1.inc.c:55 can_quantize=false, no
-  encoder, no ds4_deq_q8_K, engines use Q8_K for activations only). q8_0 is
-  supported on both ends (quants_p3.inc.c:276, ds4_quantfmt.h:45).
-- Owner decisions this session: asked for vq8 + q8_K, then "I want high quality";
-  measurement showed dim 8 is the size path (0.9111-0.9495 at K=4096) and dim 4
-  the quality path, so the artifact ships vq4x4096 with a q8_0 token table.
+- Unit 4 outcome: /data/embeddinggemma2/ds4-rs is a working copy of the ds4
+  runtime (rsync of /data/ds4-dfm-rs @ eb67d493, minus target/ and misc/): 9,126
+  files, 2,631,391,376 B, gitignored here, with its own history, 17 branches and
+  both remotes. Commit ef0d6f1; evidence in docs/ds4-rs-copy.txt.
+- Verified on it: HEAD and the git ls-files -s hash match the source over 2,561
+  files, tree clean, git fsck clean, make -n ds4 resolves inside the copy with
+  zero references to the source path, the source's six worktrees are intact, and
+  the 69 GB of cargo target/ was left behind because 16 fingerprint files bake
+  /data/ds4-dfm-rs, so it rebuilds at the new path regardless.
+- Unchanged from unit 3: the artifact is
+  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin, 421,758,160 B from
+  1,488,743,984 B (3.53x), 1376 slots (461 VQ at dim 4 / K=4096, token table
+  q8_0, 914 verbatim), every payload re-encoded and compared byte for byte,
+  text-tower mean cosine 0.9859 against the DeepSeek bar 0.910-0.925. Detail in
+  RECIPE.md, docs/allocation-plan.txt and SHA256SUMS.
+- Owner direction: dim 4 ships because it measures 0.9869 against 0.9218 for dim
+  8 at the same 12-bit index width — smaller must not mean dumber.
 
-3. Next unit plan — the behavioural proof (2026-10-18, after unit 3)
+3. Next unit plan — run the artifact: the EmbeddingGemma-2 runner (2026-10-19, after the copy)
 
-Status: not yet started. The owner asked for it in these words: "when we are done
-i want proof what this model can do". Weight-reconstruction cosine is not that
-proof; this unit produces it.
+Status: not started. The owner asked for it in these words: "lets copy
+/data/ds4-dfm-rs/ so we can make a code to run this model with". The copy is done
+(unit 4); this unit is the code.
 
-Goal: show, end to end, what the artifact can do relative to the original
-checkpoint, in one runtime on one input set.
+Goal: a runtime that loads the artifact and produces the 768-dim embeddings this
+model exists for, with the measurement that shows it matches the original.
 
-Step 1 — reconstruct mode in eg2_pack (acceptance: `eg2_pack_cpu reconstruct
-<hf-dir> <in.bin> <out-dir>` writes a standard safetensors directory containing
-all 1376 tensors with the checkpoint's names, shapes and dtypes, and a byte
-comparison of the verbatim slots against the source is exact).
-- VQ slots decode through vq_unpack_dequant, q8_0 slots through ds4_deq_q8_0, and
-  verbatim slots are copied. Write BF16 for tensors that were BF16 and F32 only
-  where the source was F32; never silently widen, so the reconstruction is
-  loadable by the same loading path as the original.
-- This is also the strongest container proof available: if the reconstruction
-  loads and runs, no slot can be missing, misnamed or mis-shaped. The safetensors
-  header is JSON written by hand (write_safetensors: header length, then 8-byte
-  aligned offsets) — the format is 8-byte-aligned little-endian data plus a JSON
-  header, and it must be written in C, no Python.
+What the recon settled (read this session in ds4-rs, not recalled):
+- Family registration is an enum plus five dispatch tables, no plugin system:
+  ModelFamily/Variant (crates/ds4-core/src/shape.rs:20-35, :84-104),
+  route_architecture (shape.rs:344-363), then arms in
+  crates/ds4-core/src/validate.rs:1949-1974, bind.rs:990-1073,
+  layout.rs:3782-3801, serving.rs:661-1050 and serving_host.rs:225-545, plus a
+  native binder in ds4.c (ling3vl_bind :9916, step37_bind_common :9926) and a
+  graph include (ds4.c:46292-46293). A port is 15-25 files, with ds4.c,
+  ds4_gpu.h and the Makefile the heavy touch points.
+- Weights come from mmap GGUF v3 (crates/ds4-core/src/gguf.rs:10-11) with custom
+  type ids (crates/ds4-core/src/tensors.rs:105-112, e.g. (42,"vqblob",1,1)) — but
+  a DIRECTORY path already routes to a different container reader
+  (crates/ds4-core/src/identify.rs:199-207: ling31_vq::is_release /
+  glm_vq::identify), so a DQVD reader as a third container identity fits a shape
+  the runtime already has.
+- Our payload is already the runtime's payload: ds41_vq_fmt.h:8-12 documents
+  [u32 'DQVQ'][u16 dim][u16 nc][u32 rows][u32 cols][codebook nc*dim f16][gains
+  rows f16][index stream], "Value = codebook[idx][d] * g_r[row]", which is
+  byte-for-byte what eg2_pack writes. The host decoder ds4vq_dequant_f32
+  (ds41_vq_fmt.h:72-104) is dim-generic and width-generic (nbit derived from nc
+  at :87), so it decodes our dim 4 / K=4096 tier as it stands.
+- The device path is NOT compatible: cuda/ds41_vq_row.cuh:55 rejects every dim
+  but 8 ("this kernel only writes dim 8 (the vq8 recipe)"), and the Rust device
+  open rejects it too (crates/ds4-core/src/vq.rs:40-44 VQ_DIM, :246-247 BadDim).
+- There is nothing to reuse for an encoder. No embeddings route: the server
+  dispatches /v1/models, /metrics, /v1/stats, /v1/batch only
+  (crates/ds4-server/src/serve.rs:1169-1240). No pooling: every family ends in a
+  logits head (ds4_step37_graph.inc:309, ds4_ling3vl_graph.inc:690). Text
+  attention is causal everywhere (ds4_gpu.h:3656/3669/5130, clamped in
+  ds4_cuda.cu:19106/19163/19233). The one non-causal attention in the tree is the
+  vision segment kernel qwen4exp_vision_attention_row (ds4_cuda.cu:29197-29237,
+  used at ds4_step37_vision.inc:125 and ds4_ling3vl_vision.inc:399) — a template
+  for the masking style, not a text-encoder body.
 
-Step 2 — a runtime for the ORIGINAL checkpoint (acceptance: the pinned checkpoint
-loads and emits a 768-dim embedding in the venv, printed with its dtype).
-- The checkpoint pins transformers 5.18.0.dev0 and this machine has 5.14.1, with
-  no remote code in the checkpoint, so nothing here can load the model today.
-  Install into an ISOLATED venv (e.g. /data/embeddinggemma2/.venv) with pip, not
-  into the system python which other projects use. Record the exact versions
-  (transformers, sentence-transformers, torch) in the recipe and in the proof log.
-- This is a dependency change: state it to the owner in the session report before
-  installing, per rule 20.
+Phases, each ending in a gate, in the order the documented port template
+prescribes (docs/deepseek41-port-plan.md:131-150; the plan + inventory pair to
+copy is docs/deepseek41-port-plan.md and docs/deepseek41-port-inventory.md):
 
-Step 3 — embedding agreement (acceptance: docs/proof-embeddings.txt carries, for a
-fixed sentence set of at least 100 sentences, the mean and minimum cosine between
-the original's embeddings and the reconstruction's, the max absolute element
-difference, and the same three numbers under MRL truncation to 512/256/128).
-- Inputs: the model card's own usage text, plus a small public set (a fixed slice
-  of a public sentence-similarity or retrieval dataset). Freeze the exact list in
-  the repo so the numbers are reproducible.
-- Both models must be fed identical tokenization (same tokenizer.json), and the
-  pooling/normalization composition from 1_Pooling + 2_Normalize.
+P0 — container and decode. Teach the copy to identify and read the DQVD container
+(kind 0 through ds4vq_dequant_f32, kind 3 through ds4_deq_q8_0, kind 2 by copy)
+and prove the decode: every slot must match what the encoder's own verify
+produced. Gate: a ds4-side dump of all 1376 tensors equals the eg2_pack verify
+output.
+P1 — the text-tower forward for an encoder: bidirectional attention over the
+sequence, 24 layers at hidden 512, head_dim 256, intermediate 2048, embedding_dim
+768, mean pooling then L2 normalize. Gate, and it is also the proof the owner
+asked for: on a frozen set of at least 100 sentences, the 768-dim embeddings agree
+with the original checkpoint's — mean and minimum cosine, max element difference,
+and the same three numbers under MRL truncation to 512/256/128. This needs the
+reference runtime as well: transformers 5.18.0.dev0 in an isolated venv, still an
+open owner decision (section 5).
+P2 — an entry point: a CLI verb first, then the /v1/embeddings route with the
+family registered through the five dispatch tables. Gate: the route returns the
+same vector as the CLI.
+P3 — device path: a dim-4 VQ kernel (or a dim-8 sibling artifact) and the text
+tower on the GPU. Gate: GPU embeddings equal CPU embeddings within a stated
+tolerance, plus a latency number. This is where VRAM and speed get answered by
+measurement instead of estimate.
+P4 — vision and audio towers (16 and 12 layers), only if the owner wants them;
+their weights are already in the artifact.
 
-Step 4 — behaviour (acceptance: docs/proof-retrieval.txt carries one retrieval or
-ranking metric for BOTH models on the same labelled set, plus the delta).
-- Prefer a small, deterministic task the two models can run in minutes: e.g.
-  rank 100 queries against 1000 candidate passages and report recall@1/10 and MRR
-  for the original and for the reconstruction.
-- If the runtime handles the vision and audio towers, extend the same comparison
-  to a handful of images and audio clips and say plainly if it does not.
+Open owner decisions carried into this unit (rule 20): the shape of P1/P2 (a
+standalone encoder binary inside the copy versus full family plus serving
+integration), and whether P3's dim-4 kernel is in scope at all.
 
-Step 5 — record and commit: docs/proof-embeddings.txt, docs/proof-retrieval.txt,
-the frozen input lists, the exact commands and the pinned runtime versions.
-Anything that cannot be measured is written as unmeasured, with the reason.
+Fallback kept from the previous revision of this plan, still worth doing: a
+reconstruct mode in eg2_pack (eg2_pack_cpu reconstruct <hf-dir> <in.bin> <out-dir>
+writing a standard safetensors directory with all 1376 tensors, verbatim slots
+byte-exact). It proves the container has no unreachable slot and gives the
+reference runtime something loadable in the original's own shape.
 
-Known limits to state in the proof: the artifact is verifiable but not runnable in
-ds4-dfm-rs (no embedding_gemma2 family, no embeddings endpoint), so the only way
-to run it today is the reconstruction in an HF runtime; and the numbers say how
-close the quantized model is to the original, which is a different question from
-how good the original is.
+Known limit to state in any proof: the numbers say how close the quantized runtime
+is to the original checkpoint, which is a different question from how good the
+original is.
 
 4. Project facts a fresh session cannot re-derive
 
@@ -155,11 +165,18 @@ how good the original is.
   bin/eg2_pack (the CUDA build) exists only as an A/B artifact — for the shipped
   tier the kernels cannot run (81920 B codebook vs the 49152 B gate), so the
   release binary is bin/eg2_pack_cpu and the container says encoder=cpu.
-- Build commands are in the header of each tool and in RECIPE.md section 4. The
-  reference headers emit harmless warnings (unused static plan-table paths).
-- Reference toolchain pinned at /data/YoungAi revision a4e6d31. The future loader
-  is /data/ds4-dfm-rs @ 233dc7a9 (no gemma string anywhere, no embeddings
-  endpoint; ds41_vq_fmt.h:7 is the DQVQ value rule the container's kind 0 obeys).
+- ds4-rs/ is the runner base: the ds4 runtime at eb67d493, 2.5 GB, nested and
+  gitignored, with its own git. Rust side through the canonical builder
+  (/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs, rule 5); C/CUDA
+  side through its Makefile, and the prebuilt objects carried over make the first
+  build incremental. Its remotes are shared with the ds4 project (origin
+  Baekpica/ds4-dfm-rs, fork JLFN/ds4-dfm-rs), so a push from here is shared state
+  — confirm before doing it. /data/ds4-dfm-rs itself is the live ds4 project and
+  is not to be modified from this workspace.
+- Build commands for the tools are in each tool's header and in RECIPE.md section
+  4. The reference headers emit harmless warnings (unused static plan-table paths).
+- Reference toolchain pinned at /data/YoungAi revision a4e6d31. The payload rule
+  the container's kind 0 obeys is ds41_vq_fmt.h:7-12, read in ds4-rs.
 - Environment: RTX 4070 SUPER, 12282 MiB, sm_89, CUDA 13.3, 28 CPUs (i7-14700F);
   nvcc flags for vq_gpu.cu per the reference Makefile:197 (nvcc -O3 -arch=native
   -c, no -fmad=false — the reference validates the VQ GPU path by quality, not by
@@ -168,45 +185,51 @@ how good the original is.
   requires transformers 5.18.0.dev0. No auto_map / remote code in the checkpoint.
 - Guardrails mount: /data/embeddinggemma2/.opengrok/rules/project-work-rules.md
   listed=yes, excluded via .git/info/exclude. .gitignore excludes .models/,
-  graphify-out/, graphify-rs-out/, out/ and *.o.
+  ds4-rs/, graphify-out/, graphify-rs-out/, out/ and *.o.
 
 5. Guardrails and open items
 
 - Global guardrails: always-on core in ~/.opengrok/AGENTS.md (0, 0.1, 1, 2, 4, 8,
   15, 16, 17, 18, 20, 21, 22); project-work rules 3, 5, 6, 7, 9, 10, 12, 13, 14,
   19, 23 via the mount above.
-- Repo hygiene: no remote configured, so rule 23's push offer is an offer to
-  create one. The artifact (421 MB) is gitignored; SHA256SUMS, RECIPE.md, the
-  docs and the tool sources are committed.
-- OPEN (owner): installing a newer transformers in an isolated venv, which the
-  proof unit needs. Nothing else in the project depends on it, but it is a
-  dependency change and rule 20 wants it stated before it happens.
+- Repo hygiene: this repo has no remote, so rule 23's push offer is an offer to
+  create one. The artifact (421 MB) and ds4-rs/ are gitignored; SHA256SUMS,
+  RECIPE.md, docs/, tools/ and this handoff are committed.
+- OPEN (owner): the shape of the runner — a standalone encoder binary inside
+  ds4-rs versus the full family port with the serving surface (section 3, P1/P2).
+- OPEN (owner): whether the dim-4 VQ device kernel (section 3, P3) is in scope, or
+  whether the device path waits for a dim-8 artifact. The two are not equivalent:
+  dim 4 / K=4096 is the higher-quality tier (text-tower cosine 0.9869 against
+  0.9218 for dim 8 at the same 12-bit index).
+- OPEN (owner): installing transformers 5.18.0.dev0 into an isolated venv
+  (/data/embeddinggemma2/.venv), which P1 needs in order to have an original to
+  compare against. Nothing else depends on it, but it is a dependency change and
+  rule 20 wants it stated before it happens.
 - OPEN (owner): whether to pursue gguf-tools/quantize/v41_vq.cu, the reference's
-  device-resident encoder for dim 8 / K=4096, as the GPU route — it would need
-  its own payload layout and its own quality ladder.
+  device-resident encoder for dim 8 / K=4096, as the encoder-side GPU route — it
+  would need its own payload layout and its own quality ladder.
 - OPEN (owner): the scope reading (all three towers VQ'd) still rests on a
   quality statement rather than an explicit list.
-- OPEN: rule 12 graphify graph rebuild and rule 19 QA evidence before any push;
-  rule 10 has no Cargo.lock to scan (this repo is not Rust).
+- OPEN: rule 12 graphify graph rebuild and rule 19 QA evidence before any push.
+  Rule 10 now applies to ds4-rs, which carries a Cargo.lock; this outer repo is
+  not Rust and has none.
 
 6. Progress and staleness check (run this first, every session)
 
     cd /data/embeddinggemma2
-    git log --oneline ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
-    git diff --stat ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
-    git log --grep "Unit: .* complete" ed2fa0be41e80d3de2ccdd181a642f87b1552f5d..HEAD
+    git log --oneline ef0d6f1da814bbfd28e18d754f633eee4f5727ea..HEAD
+    git diff --stat ef0d6f1da814bbfd28e18d754f633eee4f5727ea..HEAD
+    git log --grep "Unit: .* complete" ef0d6f1da814bbfd28e18d754f633eee4f5727ea..HEAD
     ./bin/eg2_pack_cpu check out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
     sha256sum -c SHA256SUMS
+    git -C ds4-rs log --oneline -1
 
 Trust git over this document's headings: continue with the first unit whose work
 is not in the diff.
 
-Staleness check:
-
-    cd /data/embeddinggemma2 && git log --oneline 7ec9b56dfc0aa00ad5279d1f7b4c79a1a36eebfc..HEAD
-
-Three commits carrying unit 3 (the tooling, the artifact, this handoff) are
-expected; anything else must be read before sections 2-5 are trusted.
+Staleness check at the time of writing: nothing but this handoff's own commit is
+expected after ef0d6f1 (the copy commit). Anything else must be read before
+sections 2-5 are trusted.
 
 This document is COMPLETE and self-contained: a new session can execute the
 project end to end from this file alone. It carries the plan ahead, the facts
