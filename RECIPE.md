@@ -417,9 +417,23 @@ at 768 (min 0.898186175, one item below 0.90 and 124 below 0.95) and 0.972493258
 recall@10 marginally better for the artifact (0.990000 against 0.983333): the
 labelled evidence is still retrieved within the top ten at the same rate or better,
 while the very top of the ranking is a few percent looser. At 128 dims the two costs
-compound (MRR -0.029414, recall@5 0.954667 to 0.915889). No threshold is declared
-here or in the plan of record — the numbers and the hashes they were measured on are
-the deliverable, and the decision they inform is the owner's. Full evidence:
+compound (MRR -0.029414, recall@5 0.954667 to 0.915889).
+
+In the percentages a decision is actually made in, at 768: the vectors keep 95.60% of
+their agreement with the original; MRR@10 keeps 98.32% of the original's ranking
+quality (1.68% worse); recall@1 keeps 97.00% (3.00% worse); recall@5 keeps 99.59%;
+recall@10 keeps 100.68% (0.68% better, no loss); and 7.67% of queries (23 of 300)
+changed their single best answer. The other widths, as MRR retained: 512 dims 98.64%,
+256 dims 97.81%, 128 dims 96.76% (that width also loses 4.06% of recall@5 and 2.63% of
+recall@10, where MRL truncation and the codec compound).
+
+The owner declared the floor for this tier (dim 4 / nc 4096) on 2026-10-19, and it is
+tier-tolerant by his own word: recall@10 at or above the baseline's own 0.983333;
+MRR@10 within 2% of the baseline (floor 0.932742); recall@1 at or above 0.855; and a
+mean vector cosine at or above 0.95. All four are met, with margins of 0.006667,
+0.003077, 0.006611 and 0.006040 respectively; the floors, the verdict and the three
+things they do not cover (the 512/256/128 widths, other data, and the top-1 change
+rate) are recorded in section 9 of docs/retrieval-cost-gate5.txt. Full evidence:
 docs/retrieval-cost-gate5.txt.
 
 ## 6. What the `ds4-dfm-rs` port has to implement

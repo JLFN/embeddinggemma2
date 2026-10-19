@@ -1,0 +1,141 @@
+Unit 20 evidence — phase 6 row P2.3, slice 1: the embedding-shaped serving caps
+================================================================================
+
+Boundary: outer repo branch feature/p23-serving-cap-batching (off dev at 68a3a28,
+which is dev d45394f plus the handoff frontmatter refresh); nested ds4-rs
+feat/ds41-dsml-carriage at 68837a53 (the caps change; the tip before it was
+29873445). No push in this unit: the push remains an offer (rule 23).
+
+What the row asked for (docs/ds4-gemma-port-phases.md:192): "Serving capability
+and native-limit arms for the new family" -- a per-family serving-cap entry,
+because "a decode-shaped cap does not describe an embedding model" -- and
+"batching several items into one tower call". This unit is the first half; the
+batching is the next slice and section 6 below states exactly where it stands.
+
+1. The two caps, and where each number comes from
+-------------------------------------------------
+
+    item_tokens_max  2048   the device attention kernel's key plane:
+                            cuda/eg2vq_attn.cuh:49 (EG2VQ_ATTN_KEYS_MAX), which
+                            ds4_eg2vq.h:140 (DS4_EG2VQ_MAX_TOKENS) mirrors and
+                            ds4_eg2vq_gpu.cuh:45-46 static-asserts equal.
+    batch_rows_max   8192   the row budget of one batched call. A POLICY of this
+                            port: nothing in the artifact states a batch width.
+                            At the layout's own charge of 108,548 B per row
+                            (106.0 KiB; ds4_eg2vq_gpu.cuh:72-99 sums to 27,136
+                            f32 planes plus the 4-byte id) that is 848.0 MiB of
+                            device workspace, four times the measured 212.01 MiB
+                            at 2048 rows (docs/eg2vq-device-gate7.txt:407-411).
+
+Neither number is the family's `ctx_max` (262144, the file's own
+`gemma_vq.context_length` = the checkpoint's max_position_embeddings). That field
+answers "which session could be created", which for an encoder is not a question a
+caller asks; the caps answer "what may I send", which is. Both live in
+crates/ds4-core/src/gemma_vq.rs and are reached through
+`ds4_core::embed_caps(family) -> Option<EmbedCaps>`, `Some` exactly for
+ModelFamily::GemmaVq -- the same family-keyed shape the tree already uses for
+serving_host::family_native_limit, rather than a field on ServingCaps whose
+vocabulary (banks, reuse, speculation, context) is decode-shaped and empty here.
+
+2. One number, three files -- now held together by a test
+---------------------------------------------------------
+
+The item ceiling existed in Rust, in a C macro and in a CUDA enum, with the last
+two asserted equal at compile time and nothing asserting the first. The new
+crates/ds4-core/tests/eg2vq_serving_caps.rs READS both C sources (include_str!:
+this crate builds without the C tree) and fails if either disagrees with the Rust
+constant, so a divergence is a red test rather than a mismatch discovered by a
+refused request. It also pins the per-row workspace arithmetic the batch budget's
+comment quotes, and that a decode family reports no embedding caps at all.
+
+3. Enforcement, and what a live run shows
+-----------------------------------------
+
+Enforced in three places, each the one that can see the number first:
+
+  * crates/ds4-core/src/lib.rs, `Model::embed_gemma_vq`: an item past the ceiling
+    is refused before the FFI call, so the message is the same on every backend
+    (the C refusal in ds4_engine_embed_gemma_vq stays as the second line, keyed
+    to the same macro).
+  * crates/ds4-server/src/serve.rs, `run_embed`: both caps, after tokenization and
+    before the tower, as a 400 in the OpenAI envelope naming the cap -- a request
+    that exceeds a limit the server itself advertises on /health is a client
+    error, not an engine fault. `embed_fail` keeps the 500 for a real fault.
+  * crates/ds4-core/src/serving_host.rs: the family's native limit and chunk
+    default are the tower's ceiling (2048), not the generic 16384, and
+    DS4_GEMMAVQ_PREFILL_CHUNK cannot lift them past it: an encoder has no prefill
+    chunk to size, and advertising one the tower cannot hold would be a lie in
+    the plan.
+
+The live proof is tools/eg2_embed_route_gate.sh, which grew sections 4b and 4c for
+this unit. Run over the CUDA backend on the VQ artifact
+(sha256 5bcf22161dda46bccbd5123b..., server binary 3fbac283c15e0fcd9ca86c88...),
+log out/eg2vq-route-gate-unit20.log, sha256
+5bc8874c90500cbf0c5e282952b351b0493f9a9607d1a6a4e22174addd0e1be1, exit 0:
+
+    == 1. GET /health ==  HTTP 200
+    {"status":"ok","model":"EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq",
+     "backend":"cuda","family":"gemma_vq","embedding":true,
+     "embed":{"item_tokens_max":2048,"batch_rows_max":8192}}
+
+    == 4b. the embedding caps /health advertises ==
+    embed: {"item_tokens_max":2048,"batch_rows_max":8192}
+
+    == 4c. a request past an advertised cap -> 400, naming the cap ==
+    one 3000-word item: HTTP 400
+      "input[0] is 3010 tokens, past this model's 2048-token item ceiling
+       (GET /health reports embed.item_tokens_max)"
+    eight 1400-word items (11200+ tokens): HTTP 400
+      "the 8 inputs add up to 8460 tokens, past the 8192-token budget of one
+       embedding call (GET /health reports embed.batch_rows_max); split the request"
+    three 1400-word items at 128 dims (inside the budget): HTTP 200, 3 vectors
+
+    == 5. route vs CLI ==   dim=768 cos=1.000000000000  (declared >= 0.999999)
+    EG2VQ_EMBED_ROUTE_PASS
+
+Note what the middle row measures: 1400 words tokenize to about 1057 tokens
+(8460/8), so the eight-item request was refused by the ROW budget and not by the
+per-item ceiling -- the three checks together show each cap firing on its own
+ground and neither firing on a request that respects them.
+
+Rust-side verification: `cargo test -p ds4-core --lib serving` 212 passed;
+`cargo test -p ds4-core --test eg2vq_serving_caps` 3 passed;
+`cargo test -p ds4-core --lib -- the_embedding_family_reports_item_and_batch_caps
+gemma_vq_native_arm` 2 passed; `cargo check -p ds4-server --all-targets` clean.
+
+4. The two other parts of this unit
+-----------------------------------
+
+  * The owner's declared quality floor for the dim-4/nc-4096 tier, and the verdict
+    against it, are recorded in section 9 of docs/retrieval-cost-gate5.txt (four
+    floors, all met, with margins 0.006667 / 0.003077 / 0.006611 / 0.006040), and
+    summarized in RECIPE.md section 5b. The floor is the owner's, declared
+    2026-10-19 in percentages ("tier-tolerant"); the numbers are the arithmetic of
+    that document's own table, not a second measurement.
+  * The rule 19 gate mount the previous unit recorded as this one's duty:
+    tests/qa-gate.sh (a copy of ~/.opengrok/templates/qa-gate.sh with two recorded
+    deviations -- QA_BASE defaults to publish/dev because this repo has no origin,
+    and the three surface patterns are retargeted at C/Rust/shell, because the
+    template's TypeScript/Postgres patterns find nothing here and a gate that
+    always prints "no new surfaces" is worse than none) and tests/run.sh (the
+    repo's standing checks, with the QA gate wired in).
+
+5. What this unit does NOT prove
+--------------------------------
+
+  1. No batching. An array input still embeds its items one at a time over the
+     single bound plan; batch_rows_max bounds the work a request may ask for, and
+     after the next slice it bounds the memory of one packed call, which is the
+     same number for the same tokens.
+  2. No device-path throughput claim. Nothing here measures items/s, and the
+     route's per-item serialization is exactly what the batching slice exists to
+     change.
+  3. The caps are two policy numbers around one measured fact. item_tokens_max is
+     a kernel property; batch_rows_max is this port's choice, and a different
+     choice would be a different document, not a different measurement.
+  4. No claim about the 512/256/128 output widths or the task names: those stay
+     owned by ds4_core::mrl_truncate and ds4_core::st_prompt, and are deliberately
+     not duplicated into the caps.
+  5. The refusal checks are one live run on this card over the CUDA backend; the
+     CPU backend reaches the same Rust refusal before the FFI call (and the C one
+     behind it) but was not driven over HTTP in this unit.

@@ -456,9 +456,10 @@ Read beside the other two tables: 461 VQ payloads reconstructing the text tower 
 0.9560 (768) on this set, and one item at 0.8982. So "not less smart" has a number in
 both directions — the labelled evidence is still retrieved within the top ten at the
 same rate or better, and the very top of the ranking is a few percent looser. No
-threshold is declared, here or in the plan of record, so what that trade is worth is
-the owner's call; what this document fixes is that the call can be made on labelled
-data rather than on a weight cosine.
+threshold was declared when this was written, so the trade was the owner's call;
+it was made on 2026-10-19 and is recorded, with the verdict, in section 9. What
+this document fixes is that the call was made on labelled data rather than on a
+weight cosine.
 
 What it proves:
 
@@ -508,9 +509,12 @@ What it does not prove:
    this gate.
 5. Nothing about the vision or audio towers (phase 8) or about the 914 tensors kept
    verbatim. The cost measured here is the text tower's.
-6. No threshold, and no derived one. None was declared before the run and none is
-   inferred after it: what these numbers mean for shipping is the owner's call, and
-   the tables exist so that call can be made on evidence rather than on a summary.
+6. No threshold was in force when this document was written, and none is derived
+   from these numbers: the tables exist so that the shipping call can be made on
+   evidence rather than on a summary. The owner declared the floor later, on
+   2026-10-19, and it is recorded in section 9 of this same document with the
+   verdict it produces -- four floors, all met by this tier, plus the three things
+   they do not cover (the other widths, other data, and the top-1 change rate).
 7. One set, one language, one genre. SciFact is English scientific claim
    verification: 300 queries and 283 documents is enough to detect a ranking change
    and not enough to bound behaviour on another domain.
@@ -519,3 +523,68 @@ What it does not prove:
    (the oracle's output was proven bit-reproducible in phase 4), so a second run
    would reproduce these rows and would not make them more general.
 
+
+9. The owner's declared floor, and the verdict (recorded 2026-10-19, unit 20)
+---------------------------------------------------------------------------
+
+Sections 1-8 are unchanged and were written with no threshold in force: item 6 of
+"What it does not prove" says so explicitly. On 2026-10-19 the owner declared one,
+tier-tolerant by his own word, and it is now the plan of record's floor for THIS
+tier (dim 4 / nc 4096) rather than a taste. The percentages below are the
+arithmetic of the table at section 7 applied to the same two legs -- not a second
+measurement, and not a re-scoring.
+
+    metric              baseline    artifact    change    floor             verdict
+    MRR@10              0.951778    0.935819    -1.68%    98% of baseline   PASS  0.935819 >= 0.932742
+    recall@1            0.888278    0.861611    -3.00%    >= 0.855          PASS  0.861611 >= 0.855
+    recall@10           0.983333    0.990000    +0.68%    >= 0.983333       PASS  0.990000 >= 0.983333
+    mean vector cosine  1.0         0.956040    -4.40%    >= 0.95 (agree)   PASS  0.956040 >= 0.95
+
+In the change column the three ranking rows are relative to the baseline leg; the
+cosine row's -4.40% is the shortfall from 1.0, i.e. from the vector the original
+itself produces for the same item (95.60% agreement, not "95.60% of a ranking").
+
+The floors, verbatim in intent:
+
+  1. recall@10 must not fall below the baseline's own value (0.983333): the
+     labelled evidence must keep being found inside ten as often as before. The
+     artifact does not fall; it rises.
+  2. MRR@10 must stay within 2% of the baseline: 0.98 x 0.951778 = 0.932742. The
+     artifact sits 0.003077 above the floor.
+  3. recall@1 must stay at or above 0.855: the very top of the ranking may loosen
+     by about 3.3 points of the baseline's 0.888278 and no more. The artifact sits
+     0.006611 above the floor.
+  4. The items' own vectors must keep a mean cosine at or above 0.95 against the
+     baseline's: the floor on the pairwise agreement, which is what a downstream
+     consumer of the vectors (not of a ranking) sees. The artifact sits 0.006040
+     above the floor.
+
+Every floor is deliberately below the baseline's own value, because the floors
+judge the TIER and not the port: the port is held separately, and far tighter, by
+gate 4 (768 mean cosine 0.999996809 against the frozen anchor vectors). A floor
+set at the baseline's own number would reject the tier rather than measure it, and
+that is a different decision -- the owner was offered exactly that (the "hold the
+baseline within 1%" option, which this artifact fails on MRR@10 and on the mean
+cosine) and chose the tier-tolerant set.
+
+What the declared floor does NOT cover, so a later session does not read more into
+it than is there:
+
+  1. The 512, 256 and 128 widths have no floor. Their costs are printed in section
+     7 and are the deepest at 128 (MRR -3.24%, recall@1 -2.81%, recall@5 -4.06%,
+     recall@10 -2.63% relative): MRL truncation and the codec compound there, and a
+     caller who asks for `dimensions: 128` is outside the floor rather than inside
+     a looser one.
+  2. The floor binds this set only. It is not a benchmark score and not
+     transferable: 300 queries and 283 documents of English scientific claim
+     verification is where these four numbers were produced, and a floor met here
+     says nothing about another domain, another language or another task.
+  3. The floor is met on the FIRST measurement of the tier. It is a pass, not a
+     margin to spend: a future change to the recipe (another dim, another codebook
+     size, a different token table) must be re-measured against these floors before
+     it ships, because none of the four numbers is derived from the others.
+  4. The qualitative note stays qualitative: 23 of 300 queries (7.67%) changed their
+     top-1 document. The floor permits that (it is what recall@10 >= baseline and
+     MRR@10 >= 98% of baseline jointly allow), and the margin table in section 7
+     (mean top1-top2 margin 0.085722 at 768) is the reason the changed calls are not
+     all near-ties. No floor is declared on the top-1 change count itself.
