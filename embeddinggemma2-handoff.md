@@ -57,7 +57,8 @@ configured on the outer repo).
 
 - Workspace: /data/embeddinggemma2, branch dev, HEAD d591b9c (unit 14), tree DIRTY BY DESIGN — unit 15's and unit 17's files are uncommitted, and the exact stale inventory is section 8. Nested ds4-rs is CLEAN and FIVE local commits ahead of 5c11fc64: 9a6498da (the five sm_90 guards), ef79b5c2 (the server's missing GemmaVq arm), c7dd3ebb (this card's sm_89 arch recorded), bc353351 (P3.1, the dim-4 VQ device GEMM), 669a8777 (P3.2, the symmetric-mask attention kernel). Nothing is pushed.
 - Unit 15 (phase 5, row X.7) is UNFINISHED and was STOPPED, not cancelled, by the owner: "stop the CPU we fix the GPU now" (2026-10-19 16:28Z) cut both legs of the restarted gate at 255 of 583 items so the machine went to the device path. Evidence and state: out/phase5-gate-stop-note-1628Z.txt, with the killed log kept as out/phase5-gate-stopped-1628Z.log and both partial raws renamed *-raw-stopped-1628Z.txt. A partial raw is not a leg (reuse needs 583 lines plus a matching .meta), so a restart is the full run — measured at ~1.4 s/item per leg on an idle host, i.e. about 15 minutes, against the ~2 hours the earlier contended run implied. The tables arrive with the `gate 5:` line.
-- Unit 18 (phase 7, row P3.3 completed) is THIS unit: the gemma_vq text tower on the device end to end — the adapter ds4-rs/ds4_eg2vq_gpu.cuh, the device contract in ds4_eg2vq.h, eg2vq_device_tables() in ds4_eg2vq_bind.inc, the gate tests/parity/eg2vq_embd_gpu_oracle.c (all ds4-rs 4892fb4b) — plus the honest speedup measurement against an -O3 CPU leg (9.9x on short queries, 18.1x on retrieval-length documents) and an independent awk cross-check of both runs. It also measured two facts that belong to phase 6 rather than to phase 7: the tower has NO entry point in the runtime, and the decode path SEGFAULTS on this family (exit 139, core dumped, identically on cuda and cpu). Evidence docs/eg2vq-device-gate7.txt sections 5-6, logs out/phase7-p33-gate.log and out/phase7-p33-gate-long.log.
+- Unit 19 (phase 6, rows P2.1/P2.2/P2.4 done, P2.3 partial) is THIS unit: the gemma_vq entry point.  It fixes the measured crash (the generation path now refuses family gemma_vq by name through one function called from three C sites plus the Rust CLI, where before `ds4 -m <artifact> -p hello -n 1` died with SIGSEGV, exit 139, on both backends), adds the C engine entry ds4_engine_embed_gemma_vq with the device plan bound once per engine, the bridge slot, the Rust core methods, the --embed CLI verb (JSON out) and the GET /health + POST /v1/embeddings routes.  All of it is ds4-rs fa9d96a0 (1138 insertions, 0 deletions), gated by tools/eg2_embed_cli_gate.sh (frozen-set TEXT through the verb vs the device parity raw: cos 1.000000000 on 12 items, rel_rms <= 5.745e-07, token counts identical) and tools/eg2_embed_route_gate.sh (route vs CLI cos 1.000000000000; dimensions 256 with L2 norm 1.000000045).  It also found and recorded that the C CLI cannot serve this family's text (its legacy vocab loader wants DeepSeek's special tokens; the gemma4 BPE encoder is Rust-side) and that its config validator had never accepted the arch.  Evidence docs/eg2vq-embed-entry-gate6.txt.
+- Unit 18 (phase 7, row P3.3 completed) is the unit before this one: the gemma_vq text tower on the device end to end — the adapter ds4-rs/ds4_eg2vq_gpu.cuh, the device contract in ds4_eg2vq.h, eg2vq_device_tables() in ds4_eg2vq_bind.inc, the gate tests/parity/eg2vq_embd_gpu_oracle.c (all ds4-rs 4892fb4b) — plus the honest speedup measurement against an -O3 CPU leg (9.9x on short queries, 18.1x on retrieval-length documents) and an independent awk cross-check of both runs. It also measured two facts that belong to phase 6 rather than to phase 7: the tower has NO entry point in the runtime, and the decode path SEGFAULTS on this family (exit 139, core dumped, identically on cuda and cpu). Evidence docs/eg2vq-device-gate7.txt sections 5-6, logs out/phase7-p33-gate.log and out/phase7-p33-gate-long.log.
 - Unit 17 (phase 7, rows P3.1/P3.2) is the unit this section describes: two device kernels, each with its own gate, each committed in ds4-rs, with the evidence in docs/eg2vq-device-gate7.txt and the logs out/phase7-p31-gate.log / out/phase7-p32-gate.log. It also found and measured a defect of the CPU path's own decoder (the subnormal halving above, tools/eg2_subnorm.c) and two defects of its own kernels, which the gates caught.
 - Unit 15's gate has now been interrupted twice: the first run started 15:08:12Z and was cancelled by a session interrupt at 16:03:34Z (3322 s) with each leg at 409 of 583 items and about 15 tokens/s under two-leg contention; the restart began 18:21Z and was stopped by the owner's directive at 18:28Z with each leg at 255 of 583 items, at ~1.4 s/item because the host was idle by then. Neither partial raw is reusable (a leg needs 583 lines plus a matching .meta), so the next restart is the full run. The restart's log is out/phase5-gate-stopped-1628Z.log and the note beside it records the state, the reason and the corrected duration.
 - The frozen set (new this unit, committed only at unit 15's commit): tests/retrieval/scifact-test-{queries,pool,qrels}.tsv — the BEIR SciFact test split taken whole, 300 queries / 283 documents / 339 labelled pairs, digests 1247b1f4.. / caf498d9.. / 864141f9... Gate 5 re-runs the builder and refuses unless all three come back byte for byte.
@@ -73,7 +74,7 @@ configured on the outer repo).
 
 3. Next unit plan — run EmbeddingGemma-2 in ds4-rs, phase by phase (2026-10-19)
 
-Status: 1a, 2, 1b, 3 and 4 done (all 2026-10-19); 5 STOPPED by the owner's directive (the CPU legs were cut at 16:28Z to free the machine for the GPU; a restart is a full run — the gate's own -O0 oracle costs ~15 minutes idle, and the SAME tower at the tree's own -O3 flags measured 150.6 tokens/s, so the full 583-item set is ~12 minutes of arithmetic at -O3); 7 COMPLETE (unit 18: P3.3 steps 2-4 landed — the tower runs end to end on the device at parity cos 0.99999995, 414.0 MiB, 9.9x on short queries and 18.1x on retrieval-length documents against the -O3 CPU leg); 6 is now the critical path, and it is no longer only the entry point: the decode path segfaults on this family, so the refusal guard is the first thing to land; 8 ahead. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
+Status: 1a, 2, 1b, 3, 4, 6 and 7 done (all 2026-10-19); 5 STOPPED by the owner's directive (the CPU legs were cut at 16:28Z to free the machine for the GPU; a restart is a full run — the gate's own -O0 oracle costs ~15 minutes idle, and the SAME tower at the tree's own -O3 flags measured 150.6 tokens/s, so the full 583-item set is ~12 minutes of arithmetic at -O3); 6 DONE in unit 19 (the crash guard, the C embedding entry, the --embed verb and the /v1/embeddings route, each gated — see PHASE 6 below); 8 ahead on the owner's word. The one question left is QUALITY, which no unit has touched: gate 5 / row X.7. Goal: the ds4 runtime loads our GGUF artifact (a GGUF carrying a
 `gemma_vq` payload, per the owner's container decision) and emits the 768-dim
 embeddings this model exists for, on the GPU, with the measurements that show the
 port matches the pinned original. Runtime is Rust + C + CUDA; no Python anywhere,
@@ -198,7 +199,52 @@ PHASE 5 — what VQ costs (phase-doc row X.7). UNFINISHED 2026-10-19 (unit 15): 
 - Still to do in this unit, in order: (1) add the phase-4-pair agreement-only step to tools/eg2_phase5_gate.sh — never edit that script while it is running, bash re-reads it; the same scoring is already run and logged at out/phase5-phase4pair.log; (2) re-run the gate so the final log carries every table; (3) fill sections 5b/5c of docs/retrieval-cost-gate5.txt plus its result paragraph; (4) RECIPE.md section 5 (the codec's cost on a task), its section 6 item 3 and its section 7 retrieval row; (5) phase-doc row X.7 to DONE and section 9's sequence; (6) commit the outer repo with the trailer "Unit: 15 complete".
 - The one number already in hand, for orientation only: on the phase-4 sentence pair the artifact's vectors agree with the baseline's at 768 mean cosine 0.960069342 / min 0.829288170 (out/phase5-phase4pair.log, which reproduces phase 4's own table and adds the quantiles). The retrieval delta — whether the ranking changed — is what this phase exists to produce and it is NOT in hand.
 
-PHASE 6 — the entry point (phase-doc rows P2.1-P2.4)
+PHASE 6 — the entry point (phase-doc rows P2.1-P2.4).  Unit 19 (2026-10-19):
+DONE for P2.1, P2.2 and P2.4, PARTIAL for P2.3.  ds4-rs fa9d96a0 is the whole
+change (1138 insertions, 0 deletions over 16 files) and the evidence is
+docs/eg2vq-embed-entry-gate6.txt.
+
+- The crash is gone, measured.  `./ds4 -m <artifact> -p hello -n 1` exited 139
+  with a core dump on BOTH backends (twice each); it now prints one refusal --
+  "family gemma_vq (EmbeddingGemma-2) is an embedding tower ... there is no
+  next-token distribution to decode.  Use the embedding path: POST
+  /v1/embeddings on the server, or --embed on the CLI." -- and exits 1, no core
+  dump (out/phase6-guard-rs-cuda.log, out/phase6-guard-rs-cpu.log).  The guard
+  is one function (ds4_report_embedding_family_refusal) called from three sites:
+  ds4_engine_generate_argmax, ds4_session_create and ds4_engine_boot_prewarm,
+  plus the same refusal at the Rust CLI's own command line.
+- The entry point: ds4_engine_embed_gemma_vq (ds4.c, declared ds4.h) beside
+  ds4_engine_vision_encode_memory -- the tree's own template for a
+  non-generation engine operation.  It binds the device plan and its workspace
+  ONCE per engine (eg2vq_device_ensure; the workspace grows in 256-token steps
+  and never shrinks) and uses the device tower on a graph backend, the same
+  ds4_eg2vq_ref_embed the CPU paths gate, otherwise.  Refuses by name: an empty
+  item, an item past DS4_EG2VQ_MAX_TOKENS (2048, static-asserted equal to the
+  attention kernel's EG2VQ_ATTN_KEYS_MAX), a token id outside the embedding
+  table (whose row count is read from the table), a non-gemma_vq engine.  Bridge
+  slot: ds4_bridge_eg2vq_has_embed / _embed (the v41 has_*/run pair's shape).
+- The CLI verb: `ds4 -m <artifact> --embed TEXT [--task NAME] [--dims N]`, with
+  --embed-file / --embed-stdin / --prompt-map, JSON on stdout.  Gated by
+  tools/eg2_embed_cli_gate.sh, which takes the frozen set's RAW TEXT through the
+  verb and compares it against the device parity raw the phase-7 harness produced
+  from the set's IDS -- two independent drivers: cos 1.000000000 on all 12 items
+  (6 queries, 6 documents of 803-1414 tokens), rel_rms <= 5.745e-07 against a
+  declared 1e-03, and token counts identical to the harness's own ids file.
+- The route: GET /health and POST /v1/embeddings (input string or array, model,
+  task default Retrieval-query, dimensions 768/512/256/128, encoding_format
+  float), OpenAI-compatible, carried to the owner thread through PreparedJob::
+  embed + ParsedRequest::embedding_carrier rather than a new ReqKind (that would
+  have rippled through eight match sites).  Gate tools/eg2_embed_route_gate.sh:
+  /health as above, 768 floats, dimensions 256 with L2 norm 1.000000045, a bad
+  task as a 400 listing the checkpoint's names, and route-vs-CLI cos
+  1.000000000000; checked once more against the device raw directly (cos
+  1.000000000).
+- What is NOT done: P2.3's remainder (no embedding-shaped serving-cap row, no
+  batching several items into one tower call), the C CLI's tokenizer gap (ds4-c
+  needs DeepSeek's special tokens in its legacy vocab loader and the family's
+  gemma4 BPE is Rust-side -- porting it to C would duplicate the encoder), and
+  QUALITY, which this unit does not touch at all: gate 5 / row X.7 is still the
+  open question the owner actually cares about.
 
 - Land: a verb that emits one text's vector, then a `v1/embeddings` route beside the
   server's existing arms, plus the task-prompt selection from
@@ -292,37 +338,24 @@ PHASE 8 — vision and audio towers (phase-doc rows P4.1-P4.4), only if the owne
 
 Order of work, and the first command of the next session:
 
-0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (done, the text tower and the tokenizer) → 5 (STOPPED by the owner's directive of 16:28Z, see the item below; now cheap to restart at -O3: ~12 minutes of arithmetic for the full set) → 6 (the entry point, now the critical path, and now also a correctness fix — the decode path segfaults on this family) → 7 (COMPLETE 2026-10-19: units 17 and 18, P3.1, P3.2 and P3.3 all closed) → 8 if the owner wants it.
+0 (done) → 1a (done) → 2 (done) → 1b (done, the artifact GGUF exists) → 3 (done, the loader) → 4 (done, the text tower and the tokenizer) → 5 (STOPPED by the owner's directive of 16:28Z, see the item below; now cheap to restart at -O3: ~12 minutes of arithmetic for the full set) → 6 (DONE 2026-10-19, unit 19: the crash guard, the C embedding entry, the --embed verb and the /v1/embeddings route, each gated) → 7 (COMPLETE 2026-10-19: units 17 and 18, P3.1, P3.2 and P3.3 all closed) → 8 if the owner wants it.
 
 The owner cut phase 5's CPU run mid-flight on 2026-10-19 16:28Z ("stop the CPU we fix the GPU now") and unit 17 has been the device path since. Phase 5 is therefore UNFINISHED, not failed: both legs stood at 255 of 583 items, no .meta was written, so neither raw is reusable and a restart is the whole run — out/phase5-gate-stop-note-1628Z.txt records the state, and the stopped artifacts are preserved as out/phase5-*-raw-stopped-1628Z.txt. The same note corrects the earlier "~2 hours" estimate: with the host idle the legs ran at ~1.4 s/item, so a full restart is ~15 minutes, not two hours (the earlier figure was measured while the CUDA objects were being built).
 
 First commands of the next session, in this order:
 
-1. Phase 6, the entry point, is the critical path — and its first step is a
-   CORRECTNESS fix, not a feature: the decode/generation path must refuse a
-   gemma_vq model with a message instead of dying. Measured, twice, this unit:
-   `./ds4 -m out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf -p hello
-   -n 1` prints CUDA init, the catalog, the residency ledger and the 0.41 GiB
-   mapping, then SIGSEGV (exit 139, core dumped); `--cpu` behaves identically, so
-   it is a missing arm, not a GPU fault (family 16 has a shape case at ds4.c:2881
-   and a bind arm at :10287, no forward/session arm, and the generic prefill
-   dereferences w->token_embd, which gemma_vq binds under w->eg2vq). Then the glue
-   (a C engine-level embed entry beside ds4_engine_vision_encode_memory, which is
-   the tree's own template for a non-generation engine operation, calling
-   ds4_gpu_eg2vq_* on the CUDA backend and ds4_eg2vq_ref_embed otherwise), then
-   the CLI verb and the /v1/embeddings route, then MRL truncation at 512/256/128
-   with renormalization as the checkpoint's own contract promises. NOTE for
-   whoever does it: the shipped ds4 and ds4-server binaries are the RUST ones
-   (crates/ds4-cli, crates/ds4-server); ds4_cli.c and ds4_server.c build as ds4-c
-   and ds4-server-c.
-2. Restart gate 5 when the machine is free (the owner deferred it, it is not
-   cancelled): `tools/eg2_phase5_gate.sh <artifact.gguf> <baseline.gguf>` in the
-   background. The gate's own oracle is compiled -O0, so the full 583 items costs
-   ~15 minutes of CPU there — but the SAME tower at the tree's -O3 flags ran at
-   150.6 tokens/s this unit, so 107,029 tokens is ~12 minutes at -O3, and the -O3
-   vectors agree with the -O0 ones at cos 1.000000000 / rel_rms 9.5e-07. Legs are
-   only reused when their .meta matches and the raw holds 583 items; the stopped
-   raws do not qualify.
+1. Gate 5 (row X.7) is the only open question of substance, and it is the owner's
+   own premise: does the VQ codec cost retrieval quality? It costs ~12 minutes at
+   the tree's own -O3 flags (150.6 tokens/s measured this unit on the same
+   source; the gate's own oracle is -O0 and takes ~2 hours, and the two agree at
+   cos 1.000000000 / rel_rms 9.5e-07, so an -O3 leg is a legitimate, cheaper
+   baseline). `tools/eg2_phase5_gate.sh <artifact.gguf> <baseline.gguf>` in the
+   background; legs are only reused when their .meta matches and the raw holds
+   583 items, and the stopped raws do not qualify.
+2. Phase 6's remainder, only if the owner asks: the C CLI's tokenizer gap
+   (ds4-c needs an embedding-side tokenizer; the family's gemma4 BPE is Rust-side
+   today, so porting it duplicates the encoder — the shipped binaries are Rust),
+   and P2.3's serving-cap row plus batching several items into one tower call.
 3. Re-confirm the standing gates before trusting any number: `sha256sum -c SHA256SUMS` (all five entries),
    `tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf
    out/artifact-manifest.tsv` (1376 tensors, 8 refusals by name). Gate 4 is the third and costs about 20

@@ -1,0 +1,379 @@
+Phase 6 evidence — the gemma_vq entry point
+===========================================
+
+Unit 19 of embeddinggemma2-handoff.md.  Phase 6 is the step that makes the
+tower reachable from the binaries this project ships: the owner's ask of
+2026-10-19 was "we need to glue it and be able to have embeddings route like you
+said" and "lets fix the decode like you said", after phase 7's device path was
+gated but had no caller.  Its rows are P2.1 (a CLI verb), P2.2 (the route),
+P2.3 (serving limits) and P2.4 (task prompt selection and the request shape).
+
+Sections 1 and 2 are the fix and the C entry; 3 and 4 the two callers; 5 the
+measurements; 6 what none of it proves.  Every number here was produced in this
+unit and the commands are in section 8.
+
+1. The two defects, and what the crash actually was
+---------------------------------------------------
+
+1a. No entry point
+
+The device tower was gated and the device plan was measured (phase 7, sections
+5e-5f), but a repo-wide grep for ds4_eg2vq_ref_embed and ds4_gpu_eg2vq_embed
+found the declarations (ds4_eg2vq.h:132, :247), the definitions
+(ds4_eg2vq_graph.inc:169, ds4_eg2vq_gpu.cuh:395) and nothing outside
+tests/parity/.  ds4.c bound the family (ds4.c:10287, eg2vq_bind) and no runtime
+function called either tower.
+
+1b. The decode path was a CRASH, not an error (measured)
+
+    ./ds4 -m out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        -p hello -n 1
+
+    before this unit: CUDA init, the model catalog, the residency ledger and the
+    0.41 GiB device mapping, then SIGSEGV, exit 139, core dumped.  Reproduced on
+    a second run, and identically with --cpu, so it was never a GPU fault.
+
+    The cause: family gemma_vq has a shape case (ds4.c:2881) and a bind arm
+    (:10287) but no forward or session arm, so the generic prefill reached
+    embed_token_f16 and dereferenced w->token_embd -- a slot gemma_vq never
+    populates, because its token table is bound under w->eg2vq
+    (ds4_eg2vq_bind.inc:233-239).
+
+The checkpoint has no language-model head at all, so there is nothing to decode
+and the fix is a refusal with a reason, not a decoder.  Measured: no lm_head /
+output.weight / language_model.lm tensor among the artifact's 1376, and the
+ported graph's only head is output_norm -> the 768 projection -> mean pool -> L2
+(ds4_eg2vq_graph.inc:339-367).
+
+1c. The refusal, in three places
+
+  ds4_engine_generate_argmax   the generation entry (ds4.c): refuses before it
+                               picks a backend path.
+  ds4_session_create           every decode path needs a session; the guard
+                               stands before the generic KV/logits allocation
+                               and the prefill that NULLs.
+  ds4_engine_boot_prewarm      otherwise it would build a throwaway 512-token
+                               session to warm a decoder graph this family does
+                               not have.
+
+One message, one function (ds4_report_embedding_family_refusal), so the three
+sites cannot drift.  After the fix, the command above prints
+
+    ds4: a generation session is not available for this checkpoint: family
+    gemma_vq (EmbeddingGemma-2) is an embedding tower -- it produces a
+    mean-pooled, L2-normalised 768-dim vector, and the artifact carries no
+    language-model head, so there is no next-token distribution to decode.  Use
+    the embedding path: POST /v1/embeddings on the server, or --embed on the CLI.
+
+and exits 1, on both backends, with no core dump
+(out/phase6-guard-rs-cuda.log, out/phase6-guard-rs-cpu.log).  The Rust CLI also
+refuses before any session exists, so the message arrives at the point of the
+user's own command line.
+
+1d. A third finding: the C path never accepted the family
+
+The C CLI (ds4-c) refused the artifact at open with "unsupported GGUF
+architecture: gemma_vq", because config_validate_model (ds4.c:9024) dispatches by
+arch and had no arm for it (the Rust host sets g_host_shape, so it skips that
+validator entirely -- which is why the Rust CLI got as far as the crash).  The
+arm added here (config_validate_gemma_vq_model) checks the file's own keys
+against the shape: format_version, block_count, embedding_length,
+embedding_length_out, feed_forward_length, head_count, key_length and
+key_length_swa, sliding_window, rope.dimension_count and _swa, vocab_size, the
+RMS epsilon and both rope bases.
+
+The first run of that validator FAILED on a real mismatch, which is recorded
+because the correction went against the code and not against the file: the
+artifact's gemma_vq.rope.dimension_count is 512 (out/artifact-kv.txt), the FULL
+layer's width, and the sliding layer's 256 lives in rope.dimension_count_swa --
+the same convention the file uses for attention.key_length (512) and
+key_length_swa (256).  The shape's own n_rot is 256, the sliding value, exactly
+as its n_head_dim is.  The expectation was corrected to the file.
+
+ds4-c still cannot embed TEXT, and the reason is a separate gap, not a guard: its
+legacy vocab loader requires DeepSeek's <|begin of sentence|> token
+(ds4.c:39561) and the family's gemma4 BPE encoder is Rust-side
+(crates/ds4-core/src/tok/gemma_vq.rs).  Porting the tokenizer into C would create
+a second source of truth for it, so it is recorded rather than duplicated; the
+binaries this project ships (ds4, ds4-server) are the Rust ones.
+
+2. The C entry
+--------------
+
+    int ds4_engine_embed_gemma_vq(ds4_engine *e, const int32_t *ids,
+                                  uint32_t n_ids, float *out768,
+                                  char *error, size_t error_cap);      ds4.h
+
+The template is the tree's own non-generation engine operation,
+ds4_engine_vision_encode_memory (ds4.h:299-307, ds4.c:73467-73502): a family
+check, a readiness check, and a call that never creates a generation session.
+
+2a. One plan per engine, not one per item
+
+eg2vq_device_ensure binds the device plan on the first call and keeps it for the
+engine's life (payloads 55.94 MiB, aux 137.04 MiB, workspace sized by item),
+which is what makes the tower's payloads device-resident across requests rather
+than once per request.  The workspace GROWS in 256-token steps and never shrinks,
+so a process serving a mix of lengths pays one allocation per size class; the
+plan is released in ds4_engine_close (with the adapter's own accounting line).
+
+2b. Refusals, all before any work
+
+  - an engine whose family is not gemma_vq;
+  - weights that are not bound;
+  - an empty item;
+  - an item longer than DS4_EG2VQ_MAX_TOKENS (2048, the attention kernel's key
+    plane; a static assertion in ds4_eg2vq_gpu.cuh holds it equal to
+    EG2VQ_ATTN_KEYS_MAX, so the entry point can never admit an item the launcher
+    would then refuse);
+  - a token id outside the embedding table, whose row count is read from the
+    table itself (w->token_embd->dim[1]) rather than from a constant;
+  - on the CPU path, an unbound dense cache.
+
+2c. Two backends, one arithmetic
+
+ds4_backend_uses_graph and e->metal_ready select the device tower
+(ds4_gpu_eg2vq_embed through the plan above); anything else calls
+ds4_eg2vq_ref_embed -- the same function phase 4 gated.  So the CPU path here is
+not a second implementation, and a CPU run of the route is the reference for the
+device run.
+
+2d. The bridge slot
+
+ds4_bridge_eg2vq_has_embed / ds4_bridge_eg2vq_embed (native/bridge/
+ds4_bridge.{c,h}) follow the v41 pair the bridge already ships
+(ds4_bridge_v41_has_vision, ds4_bridge.h:390): a presence check the caller can
+ask before it builds a request, then the call.  Rust reaches them through
+crates/ds4-sys and exposes two methods on ds4_core::Model: embeds_text() and
+embed_gemma_vq(&[i32]) -> Vec<f32>.
+
+3. The CLI verb (row P2.1)
+--------------------------
+
+    ds4 -m <artifact> --embed TEXT [--task NAME] [--dims N]
+    ds4 -m <artifact> --embed-file FILE   |   --embed-stdin
+    ds4 -m <artifact> --embed TEXT --prompt-map config_sentence_transformers.json
+
+JSON on stdout: family, task, the prefix actually prepended, n_tokens, add_bos /
+add_eos, dims and the vector at seven decimals.  Exactly one item source per call
+(a refusal otherwise), the text taken verbatim (no trimming, because a trailing
+newline from a file or a pipe is the caller's business and the frozen set's items
+carry none).
+
+The two flags a user is most likely to get wrong are refused with the reason:
+
+  --task NoSuchName   the checkpoint's own names are listed
+  --dims 300          the checkpoint's Matryoshka widths are named (768/512/256/128)
+
+The generation guard sits in the same function that dispatches --embed, so
+`--embed` on a generation model and a generation flag on this checkpoint are both
+refused by name at the command line.
+
+4. The route (row P2.2)
+-----------------------
+
+    GET  /health
+    POST /v1/embeddings
+
+/health answers {"status":"ok","model":..,"backend":..,"family":"gemma_vq",
+"embedding":true} as a pure early response: the family, backend and embedding
+facts are read once at boot (crates/ds4-server/src/bin/ds4-server-rs.rs), so the
+route needs no model call to decide.
+
+/v1/embeddings is OpenAI-compatible: input (string or array of strings), model
+(ignored, echoed), task (the checkpoint's names, default Retrieval-query),
+dimensions (768/512/256/128), encoding_format (float).  The response is the
+standard {"object":"list","data":[{"object":"embedding","index":i,"embedding":
+[...]}],"model":..,"usage":{"prompt_tokens":n,"total_tokens":n}}.
+
+How it reaches the model is the part worth recording: the port runs inference on
+an owner thread that holds the decoder, and prepare_client cannot call the model
+itself.  Rather than add a ReqKind::Embedding variant (which ripples through
+eight match sites: trace.rs, generate.rs, route/mod.rs, stream.rs, chat_input.rs,
+serve_cont.rs, serve_static_settle.rs, admit.rs), the job rides the existing
+plumbing as PreparedJob::embed plus a minimal ParsedRequest carrier
+(parse.rs, ParsedRequest::embedding_carrier), and run_prepared takes the embed
+branch before any generation routing.  Embeddings therefore share the inference
+admission gate (queue depth, bytes, clients) and the same lease path as chat, and
+errors use the port's OpenAI error envelope: 400 for a request-shape problem, 500
+for a mid-run engine failure, 503 when no model is loaded, and a plain refusal
+when the served model is a generation model.
+
+5. Measured
+-----------
+
+5a. The crash, fixed (out/phase6-guard-rs-{cuda,cpu}.log)
+
+    before   exit 139, core dumped, cuda AND cpu, twice
+    after    exit 1, the refusal message naming --embed and /v1/embeddings,
+             zero core dumps, cuda and cpu
+
+5b. The verb against the device raw, by raw text
+(tools/eg2_embed_cli_gate.sh; bounds declared before the run: cos >= 0.999999,
+rel_rms <= 1e-03)
+
+    out/phase6-embed-cli-gate.log        6 frozen-set queries
+      every item cos 1.000000000, rel_rms 3.162e-07 .. 5.568e-07
+      token counts identical to the harness's own ids file on all six
+    out/phase6-embed-cli-gate-docs.log   6 documents (803-1414 tokens) + 2 queries
+      every item cos 1.000000000, rel_rms 3.464e-07 .. 5.745e-07
+      token counts identical on all six
+
+This is the gate that matters, because the comparison is between two independent
+drivers: the CLI takes the frozen set's TEXT, applies the prompt prefix, tokenizes
+and runs the tower; the raw it is compared against was produced by the phase-7
+harness from the set's IDS, and that raw is itself cross-checked by
+tools/eg2_parity_check.awk.  Text-to-vector agreement at cos 1.000000000 (nine
+digits) is what says the new entry point is wired to the same tower arithmetic.
+
+5c. The route (tools/eg2_embed_route_gate.sh, out/phase6-route-gate.log)
+
+    GET  /health             200, {"status":"ok",...,"family":"gemma_vq","embedding":true}
+    POST /v1/embeddings      200, 768 floats
+    POST dimensions: 256     200, 256 floats, L2 norm 1.000000045 (declared 1e-5)
+    POST task: NoSuchTask    400, the checkpoint's names listed
+    route vs CLI (same text and task)   cos 1.000000000000
+
+and, outside the CLI, the route's vector for frozen query 1 against the device
+parity raw: cos 1.000000000.
+
+5d. Builds
+
+    make ds4-c, make ds4 and make ds4-server all exit 0; cargo check --tests is
+    clean for ds4-core, ds4-cli and ds4-server.  The diff is additive: 1138
+    insertions, 0 deletions across 16 files.
+
+6. What this does not prove
+---------------------------
+
+1. NOTHING ABOUT QUALITY.  This unit is plumbing: every vector here is the tower
+   the phase-4 and phase-7 gates already measured, so the codec's cost is exactly
+   as unmeasured as it was -- gate 5 / row X.7 is still OPEN, and it is the
+   owner's actual premise ("not less smart").
+
+2. No batching, no concurrency.  An array input embeds its items in sequence on
+   the one bound plan; two concurrent requests are serialized by the owner thread
+   like any generation job, and no throughput under load was measured.
+
+3. The C CLI cannot embed text (section 1d).  The finding is recorded, not fixed.
+
+4. No serving-cap entry for the family (row P2.3 is PARTIAL): the limit is stated
+   and enforced in C (2048 tokens, refused) but the serving caps table still has
+   no embedding-shaped row, and the server exposes no way to ask what the limit
+   is other than the refusal itself.
+
+5. The route's own error paths were exercised by hand (bad task, bad dimensions,
+   bad encoding_format, empty array, non-embedding model) but not under a test
+   harness in the tree: the port's unit tests cannot link standalone here (the
+   debug test binary lacks the bridge's mem/spec symbols; only the Makefile links
+   them), so the gate script is the record.
+
+6. Portability: the C entry inherits phase 7's sm_89-only position; nothing here
+   was run on another device.
+
+7. Risk analysis (global rule 20)
+---------------------------------
+
+Decision: make the gemma_vq tower reachable from the CLI and the server, and
+replace the decode-path crash with a refusal.
+
+External risks, each evidenced:
+- The route's shape is a compatibility claim about other people's clients.
+  Evidence checked: the request/response fields follow the OpenAI embeddings API
+  the port already speaks for chat (error.rs:44-50 keeps the same envelope), and
+  the only extension is `task`, which the checkpoint's own configuration makes
+  necessary.  A client that sends neither `task` nor `dimensions` gets the
+  checkpoint's default retrieval prompt and the full 768 dims.  UNVERIFIED
+  against a specific third-party client (none was run).
+- The C CLI's gap (section 1d) is visible to anyone who tries ds4-c with this
+  artifact: they get a tokenizer error, not a crash.  Recorded here so it is not
+  discovered as a surprise.
+
+Decision risks, each evidenced:
+- The plan is bound lazily and kept: a process that embeds one short item holds
+  55.94 + 137.04 + (workspace for its size class) MiB of device memory for its
+  life.  Measured earlier at 2048 tokens: 414.0 MiB total.  Prevention: the
+  workspace grows in 256-token steps, so a short-item service holds far less than
+  the 2048-token case; nothing here shrinks it back.
+- The embedding job shares the generation admission gate, so an embedding request
+  can be shed under queue pressure exactly like a chat request (measured only by
+  reading the gate, not by loading the server).
+- Tokenization on the server is per request and re-reads the prompt table from
+  ds4-core (no file access), but the BOS/EOS flags were read from the artifact at
+  boot: if the artifact is swapped underneath a running server those two booleans
+  are stale.  Prevention: the server opens its model at boot; a swap has never
+  been supported.
+
+Prevention in place: the entry point refuses rather than truncates (long item,
+bad id, empty item); MRL only accepts the checkpoint's own four widths; a
+non-gemma_vq model is refused by name on both surfaces; and the prompt table and
+the truncation live in one crate so the CLI and the route cannot drift.
+
+Rollback: this unit is additive (1138 insertions, 0 deletions).  `git revert` of
+ds4-rs fa9d96a0 restores the previous behaviour exactly -- the crash included --
+and no existing object, header or binary changed shape.  The C guard alone can be
+dropped by deleting the three call sites; the entry point by deleting
+ds4_engine_embed_gemma_vq and its declaration.
+
+Residual risk, and the signal that would reverse the decision: if gate 5 shows
+the VQ codec costs retrieval quality beyond what the owner accepts, then this
+entry point is a well-built door to a tower that should not ship, and the
+decision to reverse is the CODEC's, not this unit's.  The measurement that
+settles it is gate 5 on the frozen set.
+
+8. Files and commands
+----------------------
+
+New in ds4-rs (committed fa9d96a0): the C entry and its guard (ds4.c, ds4.h,
+ds4_eg2vq.h, ds4_eg2vq_gpu.cuh), the bridge slot
+(native/bridge/ds4_bridge.{c,h}), the Rust plumbing (crates/ds4-sys/src/lib.rs,
+crates/ds4-core/src/lib.rs), the CLI verb (crates/ds4-cli/src/lib.rs) and the two
+routes (crates/ds4-server/src/{serve.rs,generate.rs,parse.rs,bin/ds4-server-rs.rs}).
+
+New in the outer repo: tools/eg2_embed_cli_gate.sh, tools/eg2_embed_route_gate.sh,
+docs/eg2vq-embed-entry-gate6.txt (this file), and the logs
+out/phase6-embed-cli-gate.log, out/phase6-embed-cli-gate-docs.log,
+out/phase6-route-gate.log, out/phase6-guard-rs-cuda.log, out/phase6-guard-rs-cpu.log.
+
+Commands:
+
+    # the crash, before and after
+    ./ds4-rs/ds4 -m <artifact> -p hello -n 1                 (refusal, exit 1)
+    # the verb
+    ./ds4-rs/ds4 -m <artifact> --embed "hello world"
+    ./ds4-rs/ds4 -m <artifact> --embed-file item.txt --task Retrieval-document
+    ./ds4-rs/ds4 -m <artifact> --embed "hello" --dims 256
+    # the route
+    ./ds4-rs/ds4-server -m <artifact> --port 18108 &
+    curl -s localhost:18108/health
+    curl -s -X POST localhost:18108/v1/embeddings \
+         -H 'Content-Type: application/json' \
+         -d '{"input":"hello world","task":"Retrieval-query","dimensions":256}'
+    # the gates
+    tools/eg2_embed_cli_gate.sh <artifact> 6
+    tools/eg2_embed_cli_gate.sh <artifact> 6 out/phase7-long-gpu-raw.txt
+    tools/eg2_embed_route_gate.sh <artifact> [port]
+
+9. Rows closed, and the next slice
+-----------------------------------
+
+P2.1 the CLI verb                       DONE 2026-10-19 (ds4-rs fa9d96a0)
+P2.2 the embeddings route + /health     DONE 2026-10-19 (ds4-rs fa9d96a0)
+P2.3 serving caps and native limits     PARTIAL -- the limit is enforced in C
+                                        (2048 tokens, refused) and the route
+                                        shares the admission gate; no
+                                        embedding-shaped serving-cap row and no
+                                        batching
+P2.4 prompt selection, MRL, request shape  DONE 2026-10-19
+
+What comes next, in order:
+
+1. Gate 5 (row X.7), the quality answer -- now cheap: the CPU leg at the tree's
+   own -O3 flags runs at 150.6 tokens/s, so the frozen set's 107,029 tokens is
+   about twelve minutes instead of the two hours the -O0 oracle needs.
+2. P2.3's remainder, if the owner wants it: an embedding-shaped serving cap and
+   batching several items into one tower call (the plan an item uses is already
+   shared, so the batch is a workspace question, not a weights question).
+3. The C CLI's tokenizer gap (section 1d), only if ds4-c must serve this family;
+   the alternative (porting gemma4 BPE into C) duplicates the Rust encoder.
+4. Phase 8 (vision and audio towers), on the owner's word only.
