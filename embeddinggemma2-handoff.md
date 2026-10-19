@@ -93,7 +93,8 @@ committed golden snapshots, device parity — with llama.cpp read and cited as t
 authority for the arithmetic (docs/ds4-gemma-port-reference.md section 6). The
 runtime stays Rust + C + CUDA with no Python anywhere.
 
-Goal: a runtime that loads our DQVD artifact and produces the 768-dim embeddings
+Goal: a runtime that loads our GGUF artifact (the gemma_vq payload form, per the
+owner's 2026-10-19 container decision) and produces the 768-dim embeddings
 this model exists for, with the measurement that shows the port matches the
 original.
 
@@ -110,13 +111,16 @@ graph, CUDA kernels consuming the payload in-kernel).
 
 Phases, each ending in a gate:
 
-P0 — container and decode. Add a DQVD release reader as a third container
-identity (identify.rs:199-207 routes a directory today; ours is one file, so the
-routing is on the file path and a magic check). Validate the 64-byte header, the
-recipe string, the slot table (name hash, alignment, payload ranges, kinds 0/1/2/3)
-and reject anything unexpected, then bind a flat record table to C. Gate: a
-ds4-side dump of all 1376 slots equals the encoder's own verify output
-(bin/eg2_pack_cpu check + the per-slot re-encode comparison).
+P0 — container and decode. The container is a GGUF with a gemma_vq payload (owner
+decision, 2026-10-19), so this is a payload extension, not a third container: the
+family's metadata key routes it through the existing GGUF path (identify.rs
+:183-186 is the glm_vq.format_version precedent), Rust validates the payload
+exactly as glm_vq validates its release, and C binds a flat record table
+(ds4_glmvq_bind.inc:1-3 states the split). The contract to mirror is extracted
+first (phase doc X.8); the encoder is then changed to write GGUF instead of DQVD
+and the artifact is re-encoded. Gate: a ds4-side dump of all 1376 tensors equals
+the encoder's own verify output (bin/eg2_pack_cpu check + the per-slot re-encode
+comparison).
 P1 — the text-tower forward on the CPU reference path (ds4vq_dequant_f32 where the
 VQ payloads are decoded host-side; the kernel path is P3). 24 layers, hidden 512,
 bidirectional attention with sliding window 512 on twenty layers and full
@@ -146,11 +150,13 @@ P4 — vision and audio towers (16 and 12 layers; their graphs live in llama.cpp
 gemma4 code, and our inventory already carries embed_vision/embed_audio
 projections), only if the owner wants them.
 
-Measure order: X.6 (the container decision) first, then X.5 (the baseline GGUF)
-alongside P0, then P1. The denominator of P1's gate is our own C reference path
-reading that baseline, checked against the cited llama.cpp code; the optional
-external anchor (llama.cpp itself, run once) is a second opinion, never the
-denominator. Reference doc section 6, phase doc section 9.
+Measure order: X.8 (extract the gemma_vq payload contract from glm_vq and
+ling31_vq) → X.5 (the GGUF writer; first slice is metadata plus one tensor with a
+proven round trip) → the encoder change and the re-encode → P0 → P0 gate → P1. The
+denominator of P1's gate is our own C reference path reading the baseline GGUF,
+checked against the cited llama.cpp code; the external anchor (llama.cpp itself,
+run once, owner-approved) is a second opinion, never the denominator. Reference
+doc section 6, phase doc section 9.
 
 Fallback kept from the previous revision of this plan: a reconstruct mode in
 eg2_pack (eg2_pack_cpu reconstruct <hf-dir> <in.bin> <out-dir> writing a
@@ -232,14 +238,16 @@ original is.
   runtime or in verification. The chain is the ds4 method — C oracle against the
   Rust candidate, committed golden snapshots, device parity (reference doc
   section 6, phase doc X.1).
-- OPEN (owner): the container decision, phase doc X.6 — keep DQVD, or move the
-  artifact onto GGUF plus a gemma_vq payload as glm_vq and ling31_vq do. P0 is not
-  written until it is answered; the re-encode is affordable (about 14.5 min of
-  wall time for the shard phase, measured from out/encode-run.txt).
-- OPEN (owner): whether the external anchor is wanted at all (phase doc X.5) —
-  llama.cpp built at the pinned revision over the frozen set. It needs the native
-  GGUF writer, which the CPU reference path needs anyway; the converter llama.cpp
-  ships is out of the question (convert_hf_to_gguf.py:12 imports torch).
+- DECIDED (owner, 2026-10-19): the container moves onto GGUF with a gemma_vq
+  payload, as glm_vq and ling31_vq do; DQVD is dropped (phase doc X.6). The
+  re-encode is affordable (about 14.5 min of shard wall time, measured from
+  out/encode-run.txt).
+- DECIDED (owner, 2026-10-19): the external anchor run is wanted (phase doc X.5),
+  to be made once the baseline GGUF exists — llama.cpp built at the pinned
+  revision over the frozen set, a second opinion beside our own chain. The native
+  GGUF writer it needs is required anyway, for the CPU reference path's input; the
+  converter llama.cpp ships is out of the question (convert_hf_to_gguf.py:12
+  imports torch).
 - OPEN (owner): whether the dim-4 VQ device kernel (P3) is in scope now or whether
   the device path waits for a dim-8 sibling artifact. Dim 4 / K=4096 is the
   higher-quality tier (text tower 0.9869 against 0.9218 at the same 12-bit index).

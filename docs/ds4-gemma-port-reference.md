@@ -267,26 +267,30 @@ at `:70`), its output committed as data with the GGUF's sha256 and the build's
 revision. The anchor is a second opinion, never the denominator: the denominator
 is our own C reference path, checked against a cited implementation.
 
-Why the container is a decision rather than a given (phase doc X.6). GGUF is
-ds4's native container, not a foreign one. The C host parses it itself
-(`ds4.c:1607` carries `DS4_GGUF_MAGIC`, the parser starts at `:2348`), the Rust
-host opens it (`crates/ds4-core/src/identify.rs:199-208`), and both VQ families
-extend it with their own payload instead of replacing it (`glm_vq`, `ling31_vq`,
-each a GGUF with a format-version key). The ds4 VQ recipe our own
-`RECIPE-deepseek41-vq.md` follows writes a `.gguf` too (`v41_to_gguf ... .gguf`).
-Our DQVD container is a deviation from that pattern and is named as one.
+The container, decided (owner, 2026-10-19, phase doc X.6): the artifact becomes a
+GGUF carrying a `gemma_vq` payload, as `glm_vq` and `ling31_vq` do — not a
+container of our own, and DQVD is dropped. GGUF is ds4's native container, not a
+foreign one. The C host parses it itself (`ds4.c:1607` carries `DS4_GGUF_MAGIC`,
+the parser starts at `:2348`) and the Rust host opens it
+(`crates/ds4-core/src/identify.rs:199-208`); the VQ families extend it with their
+own metadata namespaces and custom tensor types rather than replacing it
+(`glm_vq.format_version` and the `glm_vq.*` namespaces in
+`crates/ds4-core/src/glm_vq.rs:276-466`, custom types bound in
+`ds4_glmvq_bind.inc`). The ds4 VQ recipe our own `RECIPE-deepseek41-vq.md`
+follows writes a `.gguf` too (`v41_to_gguf ... .gguf`), so DQVD was the deviation.
+The same writer serves the baseline model (X.5), which is why the two are one work
+item rather than two.
 
 ## 7. Consequences for the port
 
-- The Rust host learns a new container identity: our DQVD file (rooted where a
-  directory release currently routes, `crates/ds4-core/src/identify.rs:199-207`),
-  read and validated before any pointer reaches C — the same split as
-  `ling31_vq` (validate in Rust, bind a flat record table in C). This is a
-  deviation from the ds4 pattern, in which the container stays GGUF and a family
-  adds only a payload; section 6 and phase doc row X.6 carry the decision, and the
-  answer decides whether this bullet survives. If the artifact moves to GGUF plus
-  a `gemma_vq` payload, the reader work folds into the existing GGUF path and the
-  identity rows (P0.1-P0.4) shrink to the payload extension.
+- The artifact is a GGUF (section 6, decided 2026-10-19), so the host's container
+  work is a family payload rather than a new container. Rust validates the payload
+  and binds a flat record table for C — the split `ds4_glmvq_bind.inc` states about
+  itself in its opening comment: "Rust validates the complete GVQ1 release before
+  this pointer adapter" (`ds4_glmvq_bind.inc:1-3`). Identity needs no new
+  signature: the family's own metadata key carries it through the existing GGUF
+  route (`crates/ds4-core/src/identify.rs:183-186` is the `glm_vq.format_version`
+  gate). The contract to mirror is extracted first, in phase doc row X.8.
 - The family id lands in `ModelFamily`/`Variant`
   (`crates/ds4-core/src/shape.rs:20-35`, `:84-104`), the five Rust dispatch
   tables, the C family enum (`ds4.c:383`), the catalog (`ds4.c:659`) and the

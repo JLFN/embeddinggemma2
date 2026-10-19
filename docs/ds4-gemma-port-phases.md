@@ -94,17 +94,27 @@ the ones row P0.2 must reproduce.
 
 ## 3. P0 — container, identity, registration
 
+Container decision applied (owner, 2026-10-19, row X.6): the artifact is a GGUF
+carrying a `gemma_vq` payload, so the rows below change shape. P0.1 to P0.3
+described a container of the project's own — DQVD, with its own magic, header and
+checker rules — and are re-scoped to the payload extension; their DQVD text is
+kept because that reading is what the encoder does today and what the new writer
+must reproduce. What the payload must carry is derived first, in X.8, from the two
+VQ families that already do this. One consequence is a saving: identity no longer
+needs a new container signature, because the GGUF metadata carries it (the route
+`glm_vq.format_version` takes at `crates/ds4-core/src/identify.rs:183-186`).
+
 Gate for the phase: a ds4-rs dump of all 1376 slots equals the encoder's own
 verify output (`bin/eg2_pack_cpu check` plus the per-slot re-encode comparison in
 `docs/artifact-verify-summary.txt`, 1376 slots across 14 shards).
 
 | id | Item to port | Reference | Lands in | Status |
 |---|---|---|---|---|
-| P0.1 | DQVD v1 reader: 64 B header, recipe string, NUL-terminated name blob, 48 B slot table, 16 B-aligned payload region; fields in the order `tools/eg2_pack.c:51-88` documents | `tools/eg2_pack.c:51-88`, `:221-225`, plan writer `:666-724` | new `crates/ds4-core/src/eg2vq.rs`; shape of the reader follows `crates/ds4-core/src/ling31_vq/release.rs` (single-file variant) | OPEN |
-| P0.2 | Validation, exactly the reference's rules: magic `:986`, version `:987`, container kind `:990`; file size == `payload_off + payload_bytes` `:1007`; per slot name range `:1030`, `strlen` = `name_len` and `fnv1a64` = `name_hash` `:1032`, payload offsets monotone `:1033`, inside the region `:1034`, 16-aligned `:1035`, container kind ≤ 3 `:1037`, VQ metadata usable and `payload_len == vq_payload_bytes(rows, cols, dim, nc)` `:1040-1046`, q4_K/q8_0 `cols % block == 0` and `row_size × rows == payload_len` `:1047-1057`, verbatim dtype known and elements ≥ rows × cols `:1059-1068`, names strictly ascending `:1070`; region not padded past its end `:1072` | `tools/eg2_pack.c:980-1077`, `:302` (`fnv1a64`), payload accounts `tools/eg2_pack.c:18-19` → `gguf-tools/quantize/vq_qc_bytes.h:15` (`vq_idx_bytes`), `:20` (`vq_payload_bytes`) | same file; block/row size via the existing host helpers used at `tools/eg2_pack.c:1049-1051` | OPEN |
-| P0.3 | Container error surface: a per-family variant on the host error type plus its `token()` arm, following the two VQ families already there | template `crates/ds4-core/src/tensors.rs` (`TensorError`, its `GlmVq`/`Ling31Vq` variants and tokens), `fail()` helper convention `crates/ds4-core/src/glm_vq.rs:82`, `crates/ds4-core/src/ling31_vq.rs:168` | `crates/ds4-core/src/tensors.rs` + `eg2vq.rs` | OPEN |
+| P0.1 | DQVD v1 reader: 64 B header, recipe string, NUL-terminated name blob, 48 B slot table, 16 B-aligned payload region; fields in the order `tools/eg2_pack.c:51-88` documents | `tools/eg2_pack.c:51-88`, `:221-225`, plan writer `:666-724` | new `crates/ds4-core/src/eg2vq.rs`; shape of the reader follows `crates/ds4-core/src/ling31_vq/release.rs` (single-file variant) | RE-SCOPED (X.8) |
+| P0.2 | Validation, exactly the reference's rules: magic `:986`, version `:987`, container kind `:990`; file size == `payload_off + payload_bytes` `:1007`; per slot name range `:1030`, `strlen` = `name_len` and `fnv1a64` = `name_hash` `:1032`, payload offsets monotone `:1033`, inside the region `:1034`, 16-aligned `:1035`, container kind ≤ 3 `:1037`, VQ metadata usable and `payload_len == vq_payload_bytes(rows, cols, dim, nc)` `:1040-1046`, q4_K/q8_0 `cols % block == 0` and `row_size × rows == payload_len` `:1047-1057`, verbatim dtype known and elements ≥ rows × cols `:1059-1068`, names strictly ascending `:1070`; region not padded past its end `:1072` | `tools/eg2_pack.c:980-1077`, `:302` (`fnv1a64`), payload accounts `tools/eg2_pack.c:18-19` → `gguf-tools/quantize/vq_qc_bytes.h:15` (`vq_idx_bytes`), `:20` (`vq_payload_bytes`) | same file; block/row size via the existing host helpers used at `tools/eg2_pack.c:1049-1051` | RE-SCOPED (X.8) |
+| P0.3 | Container error surface: a per-family variant on the host error type plus its `token()` arm, following the two VQ families already there | template `crates/ds4-core/src/tensors.rs` (`TensorError`, its `GlmVq`/`Ling31Vq` variants and tokens), `fail()` helper convention `crates/ds4-core/src/glm_vq.rs:82`, `crates/ds4-core/src/ling31_vq.rs:168` | `crates/ds4-core/src/tensors.rs` + `eg2vq.rs` | RE-SCOPED (X.8) |
 | P0.4 | Family ids: `ModelFamily` value and `Variant` value, the oracle-name parser and the `as_str` arm | last values in use are `Glm53Vq = 14` / `Ling31Vq = 15` (`crates/ds4-core/src/shape.rs:35`) and `Ling31FlashVq = 18` (`:104`); name arms at `:49` and `:71` | `crates/ds4-core/src/shape.rs` | OPEN |
-| P0.5 | File identity: a file (not a directory) carrying the DQVD magic routes to the new family; today `identify_gguf` hands every directory to a release reader and every file to the GGUF parser | routing decision `crates/ds4-core/src/identify.rs:200-205`; `Identified` `:54`; family-specific gate at `:183` | `crates/ds4-core/src/identify.rs` | OPEN |
+| P0.5 | File identity, reduced by X.6: no new container signature — the GGUF holds the family's own metadata key and the existing GGUF route carries it, exactly as `glm_vq.format_version` does. The row is now "assert our key, then hand to the family reader", not a new magic | routing `crates/ds4-core/src/identify.rs:169-207`; the `glm_vq.format_version` gate at `:183-186`; `Identified` `:54` | `crates/ds4-core/src/identify.rs` | OPEN (reduced) |
 | P0.6 | Layout + bind dispatch: the family's `layouts()` and its bind names | `crates/ds4-core/src/layout.rs:3791`, `crates/ds4-core/src/bind.rs:993`; `LayoutSpec` `crates/ds4-core/src/layout.rs:119` | `crates/ds4-core/src/layout.rs`, `bind.rs`, plus `crates/ds4-core/src/eg2vq/layout.rs` if it mirrors the Ling-3.1 split | OPEN |
 | P0.7 | Inventory: DQVD slots become `TensorInfo` rows (name, dim, typ, rel/abs offset, elements, bytes) over one file-backed shard plan; the shape (`ndim`, `dim[]`) comes from the declared family layout, not from the slot's `rows`/`cols` (see the trap in section 2) | `crates/ds4-core/src/tensors.rs` (`TensorInfo`, `ShardPlan`, `TensorInventory` at `:153-180`); `ling31_vq/release.rs:139` fills the same types from `release.json` | `crates/ds4-core/src/eg2vq.rs` + the family's `layouts()` | OPEN |
 | P0.8 | Host wiring: the family's arms in the model/host open path | the `Glm53Vq` arms at `crates/ds4-core/src/lib.rs:1248`, `:1274`, `:1528`, `:2405`, `:2982`; payload layout `crates/ds4-core/src/payload.rs:78`, `:99` (only if checkpoints are in scope — see X.3) | `crates/ds4-core/src/lib.rs`, `payload.rs` | OPEN |
@@ -198,21 +208,28 @@ leg 2), per tower, on the tower's own inputs.
 | X.2 | Guardrails in force for every row: no Python in the runtime and no ONNX or PyTorch anywhere (P-1, five zero-hit greps, the fifth added this session) and references are citations or one-shot instruments, never dependencies (P-2, item 5) | `/data/embeddinggemma2/AGENTS.md` | DONE (rules written, commit `fd63233` plus this session's P-2 item 5; all five greps return zero) |
 | X.3 | Decide whether key-value checkpoints matter for an embeddings model at all before wiring `payload.rs` (row P0.8). An embeddings route has no decode loop, so a checkpoint format may be pure cost | `crates/ds4-core/src/payload.rs` (the GLM/Ling VQ arms) | OPEN |
 | X.4 | Before any push from ds4-rs: rule 12 graphify graph, rule 19 QA evidence, rule 10 OSV scan (ds4-rs carries a `Cargo.lock`); ds4-rs's remotes are shared with the live ds4 project, so a push is shared state and needs confirmation | `~/.opengrok/project-work-rules.md` rules 10/12/19/23 | OPEN |
-| X.5 | The baseline model in GGUF, written natively: the pinned checkpoint re-expressed as GGUF with the metadata and tensor names the loader resolves, so the reference's embedding example and our own C reference path can load the same file. Needed by the external anchor in X.1, and needed anyway as the CPU reference path's own input. llama.cpp's own converter is not usable: `convert_hf_to_gguf.py:12` imports torch, which rule P-1 forbids | `src/models/gemma-embedding2.cpp:3-71` (the key and tensor set), `src/llama-arch.cpp:64` (arch string), format authority `ggml/include/gguf.h` + `ggml/src/gguf.cpp`, our own reader `ds4.c:1607`, `:2348`; the tokenizer arrays come from our `tokenizer.json` (P1.19) | OPEN |
-| X.6 | Container decision: keep DQVD, or move the artifact onto GGUF plus a `gemma_vq` payload as `glm_vq` and `ling31_vq` do. GGUF is ds4's native container (`ds4.c:1607`, `crates/ds4-core/src/identify.rs:199-208`), and the ds4 VQ recipe writes GGUF (`RECIPE-deepseek41-vq.md`, `v41_to_gguf ... .gguf`). Keeping DQVD means new reader and identity code in both hosts (P0.1-P0.4); moving means a re-encode, measured today at about 14.5 minutes of wall time for the shard phase (14 shards in parallel, 1017-1155 s each) plus the merge | `crates/ds4-core/src/identify.rs:199-208`; `RECIPE-deepseek41-vq.md`; `out/encode-run.txt` (`19:47:47Z` -> `20:02:16Z`) | OPEN (owner) |
+| X.5 | The baseline model in GGUF, written natively: the pinned checkpoint re-expressed as GGUF with the metadata and tensor names the loader resolves, so the reference's embedding example and our own C reference path can load the same file. Owner-approved route (2026-10-19): the external anchor run happens once this file exists, as a second opinion beside our own chain. llama.cpp's own converter is not usable: `convert_hf_to_gguf.py:12` imports torch, which rule P-1 forbids. First slice: read the format authority, then emit metadata plus one tensor and prove a round trip | `src/models/gemma-embedding2.cpp:3-71` (the key and tensor set), `src/llama-arch.cpp:64` (arch string), format authority `ggml/include/gguf.h` + `ggml/src/gguf.cpp`, our own reader `ds4.c:1607`, `:2348`; the tokenizer arrays come from our `tokenizer.json` (P1.19) | OPEN (next work item) |
+| X.6 | Container: DECIDED by the owner, 2026-10-19 — the artifact moves onto GGUF with a `gemma_vq` payload, as `glm_vq` and `ling31_vq` do; DQVD is dropped. GGUF is ds4's native container (`ds4.c:1607`, `crates/ds4-core/src/identify.rs:199-208`) and the ds4 VQ recipe writes GGUF (`RECIPE-deepseek41-vq.md`, `v41_to_gguf ... .gguf`), so DQVD was the deviation. Cost accepted: a re-encode, measured at about 14.5 minutes of wall time for the shard phase (14 shards in parallel, 1017-1155 s each) plus the merge. Because the baseline model (X.5) is also a GGUF, one writer serves both | `crates/ds4-core/src/identify.rs:199-208`; `RECIPE-deepseek41-vq.md`; `out/encode-run.txt` (`19:47:47Z` -> `20:02:16Z`) | DONE (owner decision; builds on rows X.5 and X.8) |
+| X.8 | Derive the `gemma_vq` payload contract before writing any reader or encoder code: the metadata namespaces and custom tensor types a ds4 VQ family puts in its GGUF, and the exact split of work between host and device. Read, not invented: `glm_vq.format_version` / `.codebooks` / `.fp8_scales` / `.logical_shapes` / `.residuals` / `.native_policy` (`crates/ds4-core/src/glm_vq.rs:276-466`), the arch and recipe keys (`crates/ds4-core/src/ling31_vq.rs:23-29`), the custom types bound in C (`DS4_TENSOR_GLM_VQ`, `DS4_TENSOR_GLM_BOOK` in `ds4_glmvq_bind.inc`), and the division of responsibility stated there: "Rust validates the complete GVQ1 release before this pointer adapter" (`ds4_glmvq_bind.inc:1-3`). The recipe string our encoder writes goes in this namespace, and `logical_shapes` is the mechanism that carries rank for tensors a payload cannot express (the section 2 trap) | `crates/ds4-core/src/glm_vq.rs`, `crates/ds4-core/src/ling31_vq.rs`, `ds4_glmvq_bind.inc:1-3`, `ds4_glmvq.h`, `crates/ds4-core/src/glm_vq/layout.rs` | OPEN (first task of the container unit) |
 | X.7 | What VQ costs, measured on our own engine: the same sentences through the port's path with the baseline weights (X.5) and with the VQ artifact, compared as a cosine agreement distribution (mean, min, quantiles) and as retrieval quality on a frozen labelled set (recall@k, MRR), at 768 and at each MRL truncation. This is the "not less smart" number, and it needs no third party | our own engine on both container paths; the MRL contract in the checkpoint README `:155-185` | OPEN |
 
 ## 9. Order of work and the first gate
 
-X.6 (the container) comes first, because P0 is written against its answer. X.5
-(the baseline in GGUF) and P0 (the compressed artifact's reader) can then proceed
-in parallel, and both precede P1's gate: without a baseline there is no C
-reference path to serve as the oracle of X.1 leg 2, and without P0 there is
-nothing to run.
+The container decision is in (X.6), so the order is now fixed:
 
-Sequence: X.6 → (X.5 in parallel with P0.1-P0.3 → P0.4-P0.10) → P0 gate → P1 →
-P1 gate → X.7 → P2 → P3 → P4 (owner's call) → the external anchor run of X.1 if
-the owner wants the second opinion.
+Sequence: X.8 (derive the `gemma_vq` payload contract from `glm_vq` and
+`ling31_vq`) → X.5 (the GGUF writer; first slice is metadata plus one tensor with
+a proven round trip) → the encoder change that emits GGUF plus payload, and the
+re-encode → P0 (payload reader, identity, registration) → P0 gate → P1 → P1 gate
+→ X.7 → P2 → P3 → P4 (owner's call) → the external anchor run, owner-approved,
+once the baseline GGUF exists.
+
+X.8 comes first because both the writer and the reader are written against the
+contract it extracts, and because that is the difference between a design taken
+from the reference and one invented: the two VQ families already shipping in ds4
+carry their payload in a GGUF namespace, and project rule 0.2 says to mirror that
+rather than approximate it. P1's gate still depends on P0 for something to run,
+and on X.5 for the baseline that serves as X.1 leg 2's oracle.
 
 First gate to run, concretely: `./bin/eg2_pack_cpu check
 out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin` (the encoder's verdict,
@@ -222,17 +239,11 @@ payload lengths.
 
 ## 10. Open owner decisions carried by this doc
 
-1. The container (X.6): keep DQVD, or move the artifact onto GGUF plus a
-   `gemma_vq` payload as `glm_vq` and `ling31_vq` do. ds4's native container is
-   GGUF and the ds4 VQ recipe writes GGUF, so keeping DQVD is a named deviation
-   that costs new reader and identity code in both hosts. The re-encode is
-   affordable: about 14.5 minutes of wall time for the shard phase, measured.
-2. Whether the external anchor run is wanted at all (X.5): llama.cpp built at the
-   pinned revision, over the frozen set. The GGUF writer it needs is required
-   either way, for the CPU reference path's own input; the anchor itself is a
-   second opinion, not the denominator. Its converter is out of the question
-   (`convert_hf_to_gguf.py:12` imports torch).
-3. Whether the dim-4 device kernel (P3.1) is in scope now, or the device path
+1. DECIDED (owner, 2026-10-19): the container becomes a GGUF with a `gemma_vq`
+   payload, as `glm_vq` and `ling31_vq` do (X.6), and the external anchor run is
+   wanted (X.5), to be made once the baseline GGUF exists. The re-encode the
+   decision costs is measured at about 14.5 minutes of shard wall time.
+2. Whether the dim-4 device kernel (P3.1) is in scope now, or the device path
    waits for a dim-8 sibling artifact. Dim 4 / K=4096 is the higher-quality tier.
-4. Whether P4 (vision and audio towers) is wanted at all.
-5. Whether key-value checkpoints are in scope for an embeddings family (X.3).
+3. Whether P4 (vision and audio towers) is wanted at all.
+4. Whether key-value checkpoints are in scope for an embeddings family (X.3).
