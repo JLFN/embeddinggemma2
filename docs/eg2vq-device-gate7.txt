@@ -9,8 +9,10 @@ bidirectional attention kernel with the symmetric sliding mask) and P3.3 (the
 tower end to end, with latency and VRAM printed by the run).
 
 This document is the evidence for the slices as they land; each section names the
-row it belongs to.  Nothing in it is a speed claim: the measured numbers here are
-single-kernel throughput, and the tokens-per-second comparison belongs to P3.3.
+row it belongs to.  Sections 1 to 4 are single-kernel measurements (arithmetic and
+throughput, no item-level claim); section 5 is the end-to-end tower, where the
+tokens-per-second, VRAM and parity numbers live, and section 6 is what even that
+does not prove.
 
 1. Row P3.1 — the dim-4 DQVQ device GEMM
 ----------------------------------------
@@ -328,30 +330,278 @@ first.
 4. The GELU bound is the fast-math tanh's, not the arithmetic's; the tower gate may
    need a precise tanh and that is a change, not an assumption.
 
-5. What the three device slices do not prove, jointly
------------------------------------------------------
+5. Row P3.3, steps 2-4 — the tower end to end on the device
+-----------------------------------------------------------
 
-1. No tower and no end-to-end number.  Two kernels are gated separately; nothing
-   yet composes them, so there is no tokens/s, no VRAM figure and no cosine
-   against the CPU path's own vectors.  Those are P3.3's gate by definition.
-2. No answer to the owner's premise yet.  "It should be much faster" is a claim
-   about an item's wall time, and no item has been run on the device.  What is
-   measured so far is one kernel's arithmetic (3.1 TFLOP/s) and one kernel's
-   agreement with the reference.
-3. No device-resident weights yet.  Both kernels take payload and activation
-   pointers that the *test* allocates; nothing in this tree yet binds the
-   artifact's 461 payloads into device tensors once and reuses them across items.
-   That binding is what makes the re-read cost in section 5 real or not.
-4. No quality statement.  Neither slice consumes a different payload than the CPU
-   path does; the codec's cost stays phase 5's subject.
-5. No optimization claim for either kernel, and no cross-check between the two
-   (attention's key plane, the GEMM's token tile and the payload re-read are all
-   first-cut choices).
-6. No portability claim.  Both kernels are gated on this card at sm_89; the
-   instructions they use are sm_80-era, which is an argument for other devices,
-   not a measurement (the same distinction row X.9 keeps).
+5a. What exists now
 
-6. Risk analysis (global rule 20, for the device path as a whole)
+  ds4-rs/ds4_eg2vq_gpu.cuh                     the family device adapter, included
+                                               once by ds4_cuda.cu (the pattern
+                                               ds4_glmvq_gpu.cuh ships)
+  ds4-rs/ds4_eg2vq.h                           the device contract: the record
+                                               order, the aux slot table, the
+                                               KV-width assertion, the device API
+  ds4-rs/ds4_eg2vq_bind.inc                    eg2vq_device_tables(), which fills
+                                               that contract from the CPU binder
+  ds4-rs/cuda/eg2vq_ops.cuh                    + half widening, scale, add and the
+                                               strided PLE gelu-mul
+  ds4-rs/tests/test_eg2vq_ops.cu               + their cases
+  ds4-rs/tests/parity/eg2vq_embd_gpu_oracle.c  the end-to-end gate
+  ds4-rs/Makefile                              the oracle's object rule (WITHOUT
+                                               -DDS4_NO_GPU) and its link rule
+  ds4-rs/ds4_cuda.cu                           one include, after ds4_glmvq_gpu.cuh
+
+The CPU reference the gate compares against is unchanged: ds4_eg2vq_graph.inc's
+ds4_eg2vq_ref_embed (:169), the one phase 4 gated.
+
+5b. The contract, and why it is a header
+
+The adapter never reaches into the CPU binder's structs; the two sides agree
+through ds4_eg2vq.h, and the agreement is data, not convention:
+
+  records  217 in DS4_EG2VQ_REC_* order — PLE_PROJ (0), then nine per layer from
+           1 + il*9 (Q, K, V, O, FFN_GATE, FFN_UP, FFN_DOWN, PLE_GATE, PLE_PROJ).
+           eg2vq_device_tables() builds them from tensor->abs_offset and dim[0]
+           for the same tensors the CPU binder walks, so the device plan and the
+           CPU plan are the same 217 tensors or neither.
+  aux      196 slots = 4 + 24*8: four globals (OUTPUT_NORM, PLE_NORM, OUTPUT,
+           TOKEN_EMBD) then eight per layer (INPUT_NORM, ATTN_POST, FFN_NORM,
+           FFN_POST, PLE_POST, Q_NORM, K_NORM, SCALAR).
+  KV width a static assertion that the sliding layers' KV width (2 heads x 256)
+           equals the full layers' (1 x 512) = 512.  That equality is what lets
+           ONE KV plane serve both layer kinds (5c), so the assertion is why the
+           buffer is legal rather than lucky.
+
+Three type rules, each decided by what the CPU path reads:
+
+  q8_0      the token table stays q8_0 on the device and is dequantized in the
+            gather kernel: a row is read per token id, and the table is
+            136.02 MiB (262,144 x 512), so expanding it would cost more than the
+            entire text tower.
+  bf16      the 768 projection stays bf16 and is read in-kernel, as the graph
+            reads it.
+  f32       everything else is widened ON THE HOST from its file type, because the
+            CPU path reads the norm vectors as f32 (graph:57-59) and a narrow
+            in-kernel read would add rounding the reference does not have, for a
+            few hundred floats per layer.  The widening is the IEEE reading for
+            both: bf16 as u << 16, f16 through eg2vq_ops_half_to_f32.
+
+5c. Design: one payload arena, one workspace, one table pair
+
+Binding checks before it copies, and each check refuses rather than clamps:
+
+  - every record's file span, so a truncated or misplaced tensor is caught at
+    bind rather than decoded into plausible garbage;
+  - the payload's own header against the record it came from (magic "DQVQ",
+    dim 4, nc 4096, rows, cols), so a payload cannot run at the wrong geometry;
+  - rows % 64 and cols % 256, the GEMM's tile, so no partial tile reaches the
+    kernel;
+  - the q8_0 table's byte length against rows*(cols/32)*34, and the bf16
+    projection's shape against [768][512].
+
+Then one device arena holds all 217 payloads and a second holds the aux slots,
+and the process keeps both for its lifetime.  This is where "weights
+device-resident" stops being an intention: measured, payload 55.94 MiB, weights
+137.04 MiB.
+
+The workspace is the 17 planes eg2vq_gpu_layout_of computes — ids, out, h, x, f,
+a, q_swa, q_full, kv, attn_swa, attn_full, fg, fu, fd, pg, pp, ple — each 16-byte
+aligned and scaled by max_tokens.  The KV plane is max_tokens * 512 * 4 B on both
+layer kinds, on the strength of the 5b assertion.  At max_tokens 2048 it is
+212.01 MiB, the largest single item of the run's 414.0 MiB.
+
+The RoPE table pair ([swa cos][swa sin][full cos][full sin]) is built once per
+context, on the host, with the graph's own f32 angle accumulation and
+double-precision trig — the section-4 deviation applied per layer.  The 24 layer
+scalars are read back to the host and passed as kernel arguments.
+
+Refusals, all before any work is done: max_tokens > 2048 at create
+(EG2VQ_ATTN_KEYS_MAX), and an out-of-range id, n_ids == 0 and n_ids > max_tokens
+at embed.
+
+5d. Design: the sequence IS the CPU graph's op order
+
+ds4_gpu_eg2vq_embed runs one item through 24 layers and the head in
+ds4_eg2vq_graph.inc:169-370's exact order:
+
+  embed     q8_0 gather of the ids, scaled by sqrt(n_embd)              :196-208
+  PLE       PLE_PROJ gemm, scale 1/sqrt(512), row RMS over n_tok*24     :211-232
+  per layer
+            a. rms(x, ln_in)                                            :240-243
+            b. k, q, v gemms                                            :246-256
+            c. per-head RMS on q and k (weighted) and on v (weightless),
+               then RoPE on q and k                                     :264-292
+            d. attention: the symmetric window on the five sliding layers,
+               the full mask on 5/11/17/23                              :295-306
+            e. o gemm                                                   :308
+            f. rms(a, ln_ap) + add — the post-attention residual        :313-318
+            g. rms(f, ln_fn), gate and up gemms, gelu-mul, down gemm    :321-333
+            h. rms(fd, ln_fp) + add — the post-FFN residual             :336
+            i. ple_gate gemm, gelu_mul_strided against the PLE block,
+               ple_proj gemm, rms(pp, ln_pp) + add                      :340-360
+            j. scale by layer_scalar[il]                                :362
+  head      output_norm RMS, the 768 bf16 projection, the mean pool, L2 :339-367
+
+Every call in that list is a gated primitive: section 4's ops, section 1's GEMM,
+section 3's attention.  The tower contains no new arithmetic at all — the
+adapter's contribution is the order, the buffers and the binding.
+
+5e. Measured — run A, the frozen set's query partition (out/phase7-p33-gate.log)
+
+    300 items, 8,059 tokens
+
+    parity, device against CPU, same process, same ids
+      min cos(device, cpu)                       0.999999950   (declared >= 0.999999)
+      max rel_rms                                3.149e-04     (declared <= 1e-03)
+    against the committed oracle raw, 255 comparable items
+      min cos(cpu, ref)                          1.000000000
+      min cos(device, ref)                       0.999999950
+    time
+      device             5.39 s, 0.018 s/item,  1494.8 tokens/s
+      device, steady state (first item excluded) 0.018 s/item, 1499.0 tokens/s
+      cpu, -O0          350.73 s, 1.169 s/item,   23.0 tokens/s
+                        (the harness's own print: "this harness's -O0 reference entry")
+      cpu, -O3           53.53 s, 0.178 s/item,  150.6 tokens/s
+                        (out/eg2vq_embd_c_oracle_o3, the same source compiled with
+                         the tree's own CFLAGS: -O3 -ffast-math -march=native)
+    memory, printed by the run
+      payload 55.94 MiB, weights 137.04 MiB, workspace 212.01 MiB
+      cudaMemGetInfo   5230.4 MiB free before, 4816.4 MiB after, 11893.9 MiB
+                       total — delta 414.0 MiB
+      the CPU leg's dense f32 decode, which the device leg never builds 520.0 MiB
+
+The honest ratio is the -O3 one: 53.53 s against 5.39 s is 9.9x per item, not the
+65.1x the gate prints, because the gate compares against its own -O0 build.  The
+-O3 leg is the same source file compiled with the tree's flags, and it agrees with
+the -O0 leg at cos 1.000000000 and rel_rms 9.539e-07, so the faster build is the
+same arithmetic and the comparison is apples to apples.
+
+Two reasons the win is small on this set, both visible above: the items average
+26.9 tokens, so the fixed cost of a payload pass is amortised over very few tokens,
+and 212.01 MiB of the 414.0 MiB is workspace sized by max_tokens rather than by the
+item.  The long sample (5f) is the regime a retrieval document lives in.
+
+5f. Measured — run B, the twelve longest frozen-set documents
+(out/phase7-p33-gate-long.log)
+
+    item          ntok  cos(dev,cpu)     rel_rms    cpu_ms    gpu_ms
+    11614737       803  0.999999913   4.172e-04  35298.94    277.02
+    195689316      834  0.999999898   4.525e-04  36841.40    274.40
+    29564505       856  0.999999933   3.669e-04  39006.87    303.06
+    13619127       860  0.999999942   3.413e-04  37803.00    299.83
+    13071728       934  0.999999911   4.230e-04  42093.11    324.87
+    27873158       934  0.999999923   3.920e-04  43225.39    342.27
+    3898784        948  0.999999910   4.239e-04  42267.20    330.85
+    13770184      1085  0.999999928   3.795e-04  50569.35    416.95
+    27768226      1334  0.999999924   3.887e-04  63423.20    511.21
+    9764256       1414  0.999999876   4.978e-04  68056.09    564.94
+    1               19  0.999999992   1.265e-04    696.11     14.48
+    48              31  0.999999984   1.556e-04   1008.78     16.65
+
+    parity     min cos(device, cpu) 0.999999876   max rel_rms 4.978e-04
+    time       device    3.68 s,  0.306 s/item,  2733.1 tokens/s
+               device, steady state (first item excluded)  0.309 s/item, 2955.4 t/s
+               cpu, -O0  460.57 s, 38.380 s/item,   21.8 tokens/s
+               cpu, -O3   66.54 s,  5.545 s/item,  151.1 tokens/s
+                         (same build as 5e; agrees with the -O0 leg at cos
+                          1.000000000 and rel_rms 9.592e-07)
+    ratio      -O0 125.2x per item, -O3 18.1x per item
+
+The two regimes are in the table's own shape: the two short items (19 and 31
+tokens) cost 14.48 and 16.65 ms on the device, essentially flat and dominated by
+the fixed payload pass, while the 1414-token document costs 564.94 ms at 2503
+tokens/s.  A retrieval document is the second regime, and 18.1x is the number to
+quote for it.
+
+What the payload traffic implies, and what it does not: the GEMM re-reads each
+payload once per 64-token tile, so the 1414-token item reads the tower's
+58,658,409 B about 23 times, about 1.35 GB, in 564.94 ms — an achieved payload rate
+of 2.4 GB/s.  That is arithmetic on the payload size and the item's wall time, not
+a traffic counter, so it is evidence that the item is NOT bandwidth-bound, not a
+measurement of traffic: no Nsight or counter was read, and no other geometry was
+tried.
+
+5g. The independent cross-check, and the corrections this unit made
+
+The gate's summary is not the only reporter of its own result.  tools/
+eg2_parity_check.awk recomputes the parity from the two raws the run writes
+(--out, --out-cpu) in awk double arithmetic:
+
+    awk -F'\t' -f tools/eg2_parity_check.awk out/phase7-cpu-raw.txt out/phase7-gpu-raw.txt
+    items cpu=300 device=300  min cos 0.999999950 (item 1089)  max rel_rms 3.149e-04 (item 1089)  malformed 0
+    awk -F'\t' -f tools/eg2_parity_check.awk out/phase7-long-cpu-raw.txt out/phase7-long-gpu-raw.txt
+    items cpu=12 device=12    min cos 0.999999876 (item 9764256) max rel_rms 4.979e-04 (item 9764256) malformed 0
+
+Run A reproduces the gate exactly; run B differs in the last printed digit of the
+rel_rms (4.979e-04 against 4.978e-04), which is the awk double against the
+harness's own accumulation — agreement to the precision both print.
+
+Two corrections this unit made, both recorded where they belong rather than
+quietly:
+
+  1. Section 7's payload figure said 437 MB for the tower's payload set.  437,508,416 B
+     is the whole artifact FILE; the TEXT TOWER uses 217 of the artifact's 461
+     payloads, 58,658,409 B / 55.9 MiB.  All 461 together are 237,289,117 B / 226.3 MiB.
+     The correction is in section 7 with the same note.
+  2. The cross-check instrument itself was wrong first: it split fields on
+     whitespace instead of tabs, which left it comparing one value per item and
+     still printing a plausible "min cos 1.000000000".  Run with -F'\t', and its
+     malformed counter is what catches that class of error; both facts are in the
+     tool's header.
+
+6. What the device path does not prove
+--------------------------------------
+
+1. No entry point, and no tower in the runtime.  The tower's only callers in the
+   tree are the two parity harnesses: a repo-wide grep for ds4_eg2vq_ref_embed and
+   ds4_gpu_eg2vq_embed finds the declarations (ds4_eg2vq.h:132, :247), the
+   definitions (ds4_eg2vq_graph.inc:169, ds4_eg2vq_gpu.cuh:395) and nothing
+   outside tests/.  The device adapter is not registered in ds4.c's family path
+   either: the family BINDS (ds4.c:10287-10290, eg2vq_bind) but no runtime
+   function calls the device tower.  So every number above is reachable only by
+   building and running the gate.
+
+2. The decode path does not refuse; it dies.  Measured, twice, on the artifact:
+
+       ./ds4 -m out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf -p hello -n 1
+
+   initializes CUDA on the 4070 SUPER, prints the catalog (1376 tensors, 0
+   routed-expert, 1 artifact-additive), the residency ledger and the 0.41 GiB
+   device mapping, and then dies with SIGSEGV (exit 139, core dumped).  The second
+   run reproduced it, and --cpu does the same, so it is not a GPU fault.  The
+   cause is a missing guard for family 16 in the generation path: the variant has
+   a shape case (ds4.c:2881) and a bind arm (:10287) but no forward or session arm,
+   so the generic prefill reaches embed_token_f16, which dereferences
+   w->token_embd — a slot gemma_vq never populates, because its token table is
+   bound under w->eg2vq (ds4_eg2vq_bind.inc:233-239).  Recorded here because the
+   obvious command a reader will type produces a core dump instead of an error;
+   the fix (a refusal, plus the embed verb and route that make the checkpoint
+   usable) is phase 6.
+3. The gate's own speedup is against its -O0 build, so its 23.0 tokens/s is a
+   debug-shaped CPU number.  The fair comparison is in 5e and 5f: 9.9x on short
+   queries, 18.1x on retrieval-length documents.  What does NOT depend on the CPU
+   build is the parity column: the device leg computes the CPU leg's arithmetic,
+   and the CPU leg reproduces the committed oracle raw exactly.
+4. One item at a time, on the default stream, in one process.  No batching and no
+   concurrency is measured; ds4_current_stream() returns 0 (the legacy default
+   stream) unless a capture or side stream is active, which is why the per-item
+   blocking copies are correctly ordered.
+5. The workspace is sized by max_tokens, not by the item: at 2048 it is
+   212.01 MiB, 51% of the run's 414.0 MiB, while the longest item in this
+   project's tests is 1414 tokens.  A smaller max_tokens would cut it roughly
+   linearly (the KV plane dominates) and nothing tried that.
+6. No quality statement.  The device leg consumes the same payloads the CPU leg
+   does, so it cannot move the codec's cost; that stays phase 5's subject (row
+   X.7, still OPEN).
+7. Run B is a twelve-item sample, not the frozen set.  The full 583 items at -O0
+   is roughly two hours of CPU, which is why the sample exists; at the -O3 rates
+   above it is about 11.8 minutes of arithmetic (107,029 tokens at 150.6
+   tokens/s), which is an inference, not a measurement.
+8. No portability claim: sm_89, this card, as row X.9 keeps it.  And no variant of
+   the kernels was tried — the token tile, the key plane and the payload re-read
+   are all first-cut choices — so the device numbers are a floor, not a best case.
+
+7. Risk analysis (global rule 20, for the device path as a whole)
 -----------------------------------------------------------------
 
 Decision: move the gemma_vq text tower's compute onto this card's GPU, with the
@@ -373,8 +623,16 @@ External risks, each with the evidence that was checked:
 Decision risks, each with its evidence:
 - The payload is re-read once per 64-token tile (measured above as the GB/s
   column): a long item reads each matrix ceil(tokens/64) times.  For a 1414-token
-  document that is 23 passes over 437 MB.  Not yet measured at tower scale; the
-  mitigation (a larger token tile) is a one-constant change.
+  document that is 23 passes over the text tower's 55.9 MiB of payload
+  (58,658,409 B over 217 payloads, summed from out/artifact-manifest.tsv), about
+  1.3 GB.  Measured at tower scale now (unit 18): the 1414-token document took
+  564.94 ms on the device (section 5f), an achieved payload rate of 2.4 GB/s, so
+  the re-read is not what bounds the item and the mitigation (a larger token tile)
+  is a one-constant change nothing has needed yet.  CORRECTION (unit 18): this line said "23 passes over
+  437 MB" until the device plan measured it; 437,508,416 B is the whole artifact
+  FILE (docs/artifact-gguf-gate1b.txt), not the payloads, and the tower uses 217 of
+  the 461 payloads (the artifact also VQs the audio and vision towers).  All of
+  them together are 237,289,117 B / 226.3 MiB.
 - In-kernel decode costs instructions that a pre-decoded dense matrix would not.
   The plan of record forbids expanding the payloads to dense on the device, and
   this slice keeps that rule; the alternative was not measured, so no claim is
@@ -387,6 +645,13 @@ Decision risks, each with its evidence:
   differ slightly at the tower gate even when both are correct.  Measured size:
   2.3e-09 of the weight L1 mass, i.e. far below any parity bound in use.
 
+- The device path is unreachable from the runtime, and the unguarded decode path
+  is a crash rather than an error (section 6, items 1 and 2 — both measured).  A
+  reader who tries the shipped binary on this artifact gets a core dump, and none
+  of the device work is reachable without the entry point.  Prevention, in this
+  order: the refusal guard first, so the failure is a message instead of a
+  segfault; then the embed verb and the route, which is phase 6.
+
 Prevention in place: the kernel refuses a payload whose header disagrees with the
 caller's geometry (measured: the wrong-geometry case leaves the output untouched),
 so a mis-bound tensor cannot decode silently; the gate re-derives both references
@@ -397,81 +662,108 @@ Rollback: this slice is additive.  `git revert` of the ds4-rs commit, or simply
 not building tests/test_eg2vq_vq — no existing object, header or binary changed,
 and the CPU path is untouched.
 
-Residual risk, and the signal that would reverse the decision: if P3.3's
-end-to-end device run does not beat the CPU path's wall time by a wide margin, the
-premise of this phase ("it should be much faster") is wrong for this workload and
-the device path should be re-scoped rather than tuned.  The one measurement that
-settles it is the same item set through both paths, which is exactly P3.3.
+Residual risk, and how this unit resolved it: the premise of this phase ("it
+should be much faster") is now measured rather than argued — 9.9x per item on the
+frozen set's short queries and 18.1x on retrieval-length documents, against the
+same CPU source compiled with the tree's own flags (sections 5e, 5f).  The phase is
+not re-scoped, and the earlier version of this paragraph ("if P3.3 does not beat
+the CPU path by a wide margin, re-scope rather than tune") is answered: it does.
+What remains residual is not speed but REACH — with no entry point and no guard,
+the only way to obtain a vector today is to build and run the gate, and the obvious
+CLI command segfaults (section 6, items 1-2).  That is a defect of the integration,
+not of the device path, and it is phase 6's first job.
 
-7. Files and commands
+8. Files and commands
 ----------------------
 
-New in ds4-rs:
+New in ds4-rs (units 17 and 18):
 
-    cuda/eg2vq_vq.cuh          the dim-4 DQVQ GEMM (this slice)
-    tests/test_eg2vq_vq.cu     its gate
-    Makefile                   tests/test_eg2vq_vq, test-eg2vq-vq (the tree's own
-                               device-test pattern, Makefile:2170-2175)
+    cuda/eg2vq_vq.cuh          the dim-4 DQVQ GEMM (section 1)
+    cuda/eg2vq_attn.cuh        the symmetric-mask attention (section 3)
+    cuda/eg2vq_ops.cuh         the tower's remaining primitives (sections 4, 5)
+    ds4_eg2vq_gpu.cuh          the family device adapter (sections 5b-5d)
+    ds4_eg2vq.h                the device contract, grown by this unit
+    ds4_eg2vq_bind.inc         + eg2vq_device_tables() (the record/aux tables)
+    ds4_cuda.cu                + one include for the adapter
+    tests/test_eg2vq_vq.cu     the P3.1 gate
+    tests/test_eg2vq_attn.cu   the P3.2 gate
+    tests/test_eg2vq_ops.cu    the P3.3 step-1 gate, + the step-2 cases
+    tests/parity/eg2vq_embd_gpu_oracle.c   the end-to-end gate
+    Makefile                   the device-test pattern, the oracle object rule
+                               (without -DDS4_NO_GPU) and its link rule
 
 New in the outer repo:
 
     tools/eg2_subnorm.c        the subnormal measurement (section 2)
-    out/eg2_subnorm            its build
+    tools/eg2_parity_check.awk the independent cross-check (section 5g)
     docs/eg2vq-device-gate7.txt  this document
-    out/phase7-p31-gate.log    the gate's own output
-    out/artifact-subnormal.log the measurement's output
+    out/phase7-p31-gate.log         the P3.1 gate's output
+    out/phase7-p32-gate.log         the P3.2 gate's output
+    out/phase7-p33-ops-gate.log     the step-1 gate's output
+    out/phase7-p33-gate.log         run A: 300 items, both legs, both raws
+    out/phase7-p33-gate-long.log    run B: the twelve longest documents
+    out/phase7-{cpu,gpu}-raw.txt, out/phase7-long-{cpu,gpu}-raw.txt   the raws
+    out/phase7-ids300.tsv           the 300-item id file the -O3 leg used
+    out/phase7-cpu-o3-raw.txt, out/phase7-long-cpu-o3-raw.txt         the -O3 legs
+    out/artifact-subnormal.log      the measurement's output
 
 Commands:
 
     (cd ds4-rs && make test-eg2vq-vq)                  the P3.1 gate, exit 0
     (cd ds4-rs && make test-eg2vq-attn)                the P3.2 gate, exit 0
-    (cd ds4-rs && nvcc -O3 -g -lineinfo --use_fast_math -std=c++17 \
-        -arch=sm_89 -Xcompiler -march=native -Xcompiler -pthread -I. \
-        -o tests/test_eg2vq_vq tests/test_eg2vq_vq.cu)  the tree's own flags
+    (cd ds4-rs && make test-eg2vq-ops)                 the step-1 gate, exit 0
+    (cd ds4-rs && make tests/parity/eg2vq_embd_gpu_oracle)   build the tower gate
+    ./ds4-rs/tests/parity/eg2vq_embd_gpu_oracle \
+        out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/phase5-ids.tsv --items 300 \
+        --ref out/phase5-artifact-raw-stopped-1628Z.txt \
+        --out out/phase7-gpu-raw.txt --out-cpu out/phase7-cpu-raw.txt     run A
+    ./ds4-rs/tests/parity/eg2vq_embd_gpu_oracle <artifact> \
+        out/phase7-long-ids.tsv --out out/phase7-long-gpu-raw.txt \
+        --out-cpu out/phase7-long-cpu-raw.txt                            run B
+    awk -F'\t' -f tools/eg2_parity_check.awk out/phase7-cpu-raw.txt \
+        out/phase7-gpu-raw.txt                        the cross-check (tabs!)
+    cc -O3 -ffast-math -march=native -Wall -Wextra -std=c99 -D_GNU_SOURCE \
+        -fno-finite-math-only -DDS4_NO_GPU -ffunction-sections -fdata-sections \
+        -Wno-unused-function -I ds4-rs -o out/eg2vq_embd_c_oracle_o3 \
+        ds4-rs/tests/parity/eg2vq_embd_c_oracle.c -Wl,--gc-sections -lm -pthread
+        the CPU leg at the tree's own optimisation level (section 5e)
     cc -O2 -o out/eg2_subnorm tools/eg2_subnorm.c -lm
     ./out/eg2_subnorm out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
         cont out/artifact-manifest.tsv
 
-8. Next slice, and what it takes
----------------------------------
+9. Rows closed, and the next slice
+-----------------------------------
 
 P3.1 the dim-4 VQ GEMM                      DONE 2026-10-19 (ds4-rs bc353351)
 P3.2 the symmetric-mask attention kernel    DONE 2026-10-19 (ds4-rs 669a8777)
 P3.3 step 1, the tower's small ops          DONE 2026-10-19 (ds4-rs 467f5431)
-P3.3 the tower end to end, on the device     OPEN — the gate of this phase, and
-                                             the one the owner's premise is
-                                             settled by
+P3.3 steps 2-4, the tower end to end        DONE 2026-10-19 (ds4-rs 4892fb4b):
+                                            parity cos 0.99999995, device
+                                            1494.8-2955.4 tokens/s, 414.0 MiB,
+                                            9.9x (short) and 18.1x (long) against
+                                            the -O3 CPU leg
 
-What is left, in order:
+Phase 7 is complete.  What comes next, in order:
 
-1. The adapter: out-of-tree-but-in-family, following the shipping pattern of
-   ds4_glmvq_gpu.cuh — included once by ds4_cuda.cu, a model/ctx pair, the API
-   declared beside the family's own header (ds4_glmvq.h does it for GLM VQ).  Two
-   jobs it owns that nothing written so far does:
-     - binding: copy the artifact's 461 payloads to the device ONCE per process
-       (437 MB), with the record table the CPU binder already builds
-       (ds4_eg2vq.h's ds4_eg2vq_record), so the GEMM reads device memory instead of
-       the file map.  This is where "weights device-resident" stops being an
-       intention.
-     - the per-layer facts the kernels need: the f32 norm vectors and the 24
-       layer scalars (a few hundred floats per layer), the bf16 768 projection, and
-       the RoPE tables per layer (cos/sin, [n_pos][head_dim/2], built on the host
-       with the graph's own angle accumulation — about 1.4 MB per item on the full
-       layers and half that on the sliding ones).
-2. The tower's op sequence per layer, which is exactly the CPU graph's
-   (ds4_eg2vq_graph.inc:169-337): embedding, the per-layer input block, then per
-   layer attn_norm, q/k/v, per-head RMS + RoPE, attention, o_proj, the post-attention
-   residual, the FFN, the post-FFN residual, the PLE block, the layer scalar; then
-   output_norm, the 768 projection, the mean pool and L2.
-3. The end-to-end gate: the artifact's real payloads and real item ids through the
-   device tower, against the CPU path's own committed vectors, with the parity
-   bound stated before the run, plus tokens/s and the VRAM the run actually holds.
-   The CPU reference for it already exists and is committed: the oracle's jsonl for
-   the frozen set (gate 5's inputs), so the comparison needs no new reference.
-4. The numbers recorded, and the rows closed — no threshold invented after seeing
-   the result.
+1. Phase 6, the entry point — which is now also a correctness fix, because the
+   decode path segfaults on this family (section 6, item 2).  In order: the
+   refusal guard in the runtime's generation/session path (so the failure is a
+   message), then the glue that makes the device tower reachable from the
+   runtime (a C entry point beside ds4_engine_vision_encode_memory, the SDK's own
+   template for a non-generation engine operation, plus registration so the
+   runtime picks it), then the CLI verb and the /v1/embeddings route, then MRL
+   truncation at 512/256/128 with renormalization, which is what the checkpoint's
+   own contract promises.
+2. Gate 5 (row X.7), the quality answer, which this unit also made cheaper: the
+   CPU leg at the tree's -O3 flags is 150.6 tokens/s, so the frozen set's 107,029
+   tokens is about 12 minutes of CPU instead of the -O0 estimate of two hours.
+   The CPU-versus-VQ quality claim ("not less smart") is still unmeasured, and it
+   is the owner's actual premise for the whole project.
+3. Phase 8 (the vision and audio towers), on the owner's word only.
 
-Two facts the adapter must be built around, both already measured: the CPU path's
-subnormal decoder defect means CPU and GPU will differ at ~1e-08 of the weight mass
-(section 2a), and the GEMM re-reads each payload once per 64-token tile, so a
-1,414-token document reads all 437 MB about 23 times (section 6).
+Two facts the next unit builds around, both measured: the CPU path's subnormal
+decoder defect makes CPU and device differ at ~1e-08 of the weight mass (section
+2a, inside the 3.1e-04 parity both legs already show), and the GEMM re-reads each
+payload once per 64-token tile, which at tower scale is 2.4 GB/s of achieved
+payload traffic and not a bottleneck (section 7).
