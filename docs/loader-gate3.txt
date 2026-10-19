@@ -1,0 +1,210 @@
+Loader gate — phase 3 evidence (2026-10-19, unit 13)
+
+What this records: the `gemma_vq` loader — the family gate, the per-payload
+validator, the family layout and the identity — plus the gate that shows the
+ds4 host reads the artifact exactly as the writer wrote it and refuses eight
+tampered copies by name. Everything below was run in this session; every number
+is quoted from the command shown beside it.
+
+Files
+  ds4-rs/crates/ds4-core/src/gemma_vq.rs         the family: `requested`, the
+                                 payload validator, the metadata contract and
+                                 `layouts()`; no directory form, the artifact is
+                                 one GGUF
+  ds4-rs/crates/ds4-core/src/gemma_vq/layout.rs  the family's shape authority: all
+                                 1376 tensors with the rank and dimensions the
+                                 FILE declares, and the reference's payload byte
+                                 account computed from each tower's architecture
+  ds4-rs/crates/ds4-core/src/tensors.rs          `TensorError::GemmaVq`, and the
+                                 dispatch in `parse_one` beside the two shipping
+                                 VQ families
+  ds4-rs/crates/ds4-core/src/{identify,shape,layout,bind}.rs
+                                 the family gate on `gemma_vq.format_version`,
+                                 `ModelFamily::GemmaVq` (16) and
+                                 `Variant::GemmaVqFlash` (19), `SHAPE_GEMMA_VQ`,
+                                 the arch route, the layout arm, the bind names
+  ds4-rs/crates/ds4-core/src/{validate,serving,serving_host,tok}.rs
+                                 `validate_metadata` per family (the role
+                                 `validate_glm53` plays for GLM), the serving
+                                 profile, the native chunk bound, and the tokenizer
+                                 refusal that keeps this family from being
+                                 tokenized with another model's rules
+  ds4-rs/crates/ds4-core/examples/gguf_inventory.rs
+                                 `--family`: identify, the metadata contract, the
+                                 bind set and the layout, against the reader's own
+                                 dump
+  ds4-rs/crates/ds4-core/src/shape.rs            `dump_oracle` gained the family
+  ds4-rs/tests/parity/shape_c_oracle.c           the oracle's third copy of the
+                                 shape, so `test-catalog-parity` compares all
+                                 three and a hand-copied shape cannot drift
+  ds4-rs/ds4.c                                   `DS4_MODEL_FAMILY_GEMMA_VQ` (16),
+                                 `DS4_VARIANT_GEMMA_VQ` (19), `DS4_SHAPE_GEMMA_VQ`,
+                                 the shape switch arm and the `weights_bind` arm
+  ds4-rs/ds4_eg2vq.h, ds4-rs/ds4_eg2vq_bind.inc  the C half: the record table the
+                                 host fills, and a bind that stops by name rather
+                                 than letting the family fall into the DeepSeek
+                                 binding
+  ds4-rs/Makefile                                `EG2VQ_NATIVE_DEPS`
+  tools/eg2_loader_check.sh                      gate 3, the three-legged check
+
+0. The inputs still verify before anything is written against them (run first)
+
+  $ tools/eg2_artifact_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/artifact-manifest.tsv out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
+        .models/EmbeddingGemma-2-914f7f8 out/artifact-inventory.txt
+  checked 1376 tensors: writer and ds4-rs reader agree on name/type/rank/dims/bytes/offset;
+    1376 copied byte-for-byte from the container,
+    914 verbatim tensors equal the checkpoint's own bytes,
+    461 VQ tensors begin with the DQVQ payload magic
+  $ sha256sum -c SHA256SUMS        (all five entries OK, unchanged by this unit)
+
+Gate 1b passing unchanged is the point of the check: the reader that used to
+read the file generically now runs the family validator on the same path, and
+still agrees with the writer tensor for tensor.
+
+1. The loader on the artifact
+
+  $ cd ds4-rs && cargo run -q -p ds4-core --release --example gguf_inventory -- \
+        /data/embeddinggemma2/out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        --no-kv --family
+  DATA_POS 15881824 ALIGN 32 PAGE 4096 SHARDS 1 N 1376
+  T <name> ndim=.. dims=.. type=<n>(<name>) elems=.. bytes=.. rel=.. abs=.. shard=..   x1376
+  IDENTIFY EmbeddingGemma-2 VQ family=16 variant=19
+  META ok
+  BIND ok slots=1376
+  LAYOUT ok specs=1376
+
+Four verdicts, each a different check:
+
+- IDENTIFY: the arch route finds `gemma_vq` and the family gate accepts
+  `gemma_vq.format_version` 1 (identify.rs, the gate beside GLM's).
+- META: 16 integer hparams, 3 floats, the `attention.causal` flag, and the two
+  per-layer arrays — their lengths, the KV head counts (2 sliding, 1 on layers
+  5/11/17/23) and the sliding-window pattern's 20/4 split on exactly those four
+  layers — were all read back and matched `SHAPE_GEMMA_VQ`.
+- BIND: the 1376 names the family's bind list declares are all present.
+- LAYOUT: the family table's 1376 (name, type, rank, dims) tuples equal the
+  file's, which for the 461 VQ tensors means the table's byte length — computed
+  from the tower architecture by the reference's own account — equals the payload
+  length the writer wrote. The table was written by hand from the checkpoint's
+  architecture and matched on the first run; that is the check working, not a
+  coincidence of the gate being weak: `validate_layouts` compares ndim and every
+  dim exactly for this class.
+
+2. Gate 3
+
+  $ tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        out/artifact-manifest.tsv
+  tamper cases (each must be refused by name):
+    refused wrong magic          GemmaVq("vq payload magic")
+    refused wrong dim            GemmaVq("vq payload byte account")
+    refused wrong rows           GemmaVq("vq payload byte account")
+    refused zero row gain        GemmaVq("zero row gain")
+    refused nonfinite codebook   GemmaVq("nonfinite codebook")
+    refused nonzero padding      GemmaVq("nonzero padding")
+    refused metadata value       "metadata: gemma-vq metadata gemma_vq.block_count"
+    refused truncated file       OutsideFile
+  checked 1376 tensors: the writer's manifest and the ds4-rs reader agree on
+    name/type/rank/dims/bytes/offset; the family leg reports identity, metadata
+    contract, bind set and layout; two loads are identical; and 8 tampered
+    copies were refused by name
+
+The harness copies the artifact once, and for each case reflinks a fresh copy,
+patches one field and requires (a) a non-zero exit and (b) the named refusal. The
+last thing it does is load the untouched copy again and compare the dump, so it
+cannot pass by failing everything. The patch offsets are the manifest's own
+absolute offsets and the first padding byte the manifest implies; no offset is
+hardcoded except the payload header's 16 bytes and its 32768-byte codebook, both
+of which section 2 of the contract measured.
+
+3. What the validator checks, and the one check this tier cannot make
+
+Per VQ tensor (`gemma_vq.rs::payload`), in order:
+
+- rank 1, and the payload's first four bytes are `DQVQ` (ds41_vq_fmt.h:32);
+- `dim` and `nc` nonzero, `cols % dim` zero, rows and cols nonzero;
+- the reference's byte account `vq_payload_bytes(rows, cols, dim, nc)` equals the
+  length the FILE declares for this tensor — the same expression the writer and
+  the size allocator share (vq_qc_bytes.h:15, :20);
+- every codebook word finite (16384 words per payload);
+- every row gain finite and nonzero (the contract's section 6 wording).
+
+Then the file-wide rules the two shipping families share: unique names, ranks
+1..4, no zero dimension, 32-byte alignment, zero padding up to the data position
+and between tensors, the first tensor exactly at `DATA_POS`, the last ending
+exactly at the file's end, and no split.
+
+The index-stream bound is settled by the account rather than by a scan, and here
+is the arithmetic rather than an assertion. At this tier `nc` is 4096, so the
+index width is 12 bits (`vq_qc_bytes.h:15`, and the decoder's identical loop at
+ds41_vq_fmt.h:87), the mask is 0xFFF and every 12-bit value lies in `0..4096`.
+**An out-of-range index is not representable at nc = 4096**: the index space and
+the codebook are the same size. The reachable tamper is a header whose geometry
+no longer reproduces the declared length, which is exactly what the account
+refuses — cases 2 and 3 of the gate. A future tier whose codebook is not a power
+of two would have slack above `nc - 1` and would need the scan; that is recorded
+as an open item rather than implemented against a case that cannot occur.
+
+4. The C half
+
+  $ make ds4.o ds4_cpu.o
+  (ds4.o 38.9 s, ds4_cpu.o 10.7 s; the only warnings are the tree's pre-existing
+   unused-static-function ones, none naming eg2vq)
+  $ make tests/parity/shape_c_oracle && cargo test -q -p ds4-core --test shape
+  test result: ok. 1 passed; 0 failed
+
+The C identity is the family enum value 16, the variant 19, `DS4_SHAPE_GEMMA_VQ`,
+the shape switch arm and the `weights_bind` arm. The shape now exists in three
+places — ds4.c, `crates/ds4-core/src/shape.rs` and `tests/parity/shape_c_oracle.c`
+— and `dump_oracle` prints the Rust copy while the oracle prints its own, so the
+parity test compares them field by field. That test passed on the first run of
+the three-way copy, which is the only mechanical guard against a hand-copied shape
+drifting.
+
+The bind is a stop, not a stub, and the reason is in the file: `weights_bind`
+falls through to the DeepSeek binding when a family has no arm, so a `gemma_vq`
+artifact would otherwise be bound as another architecture and load a shape of
+garbage instead of failing. The weight struct and the graph arrive with phase 4
+(`ds4_eg2vq_graph.inc`); until then the arm refuses by name.
+
+Two pre-existing environment facts, both measured here, neither caused by this
+change and both material to phases 4 and 7:
+
+- `make ds4-c ds4-server` cannot relink in this working copy. `ds4_cuda.o`
+  (2026-10-14 20:15) is older than the CUDA sources it depends on
+  (`cuda/glm_vq.cuh`, `cuda/l31_flash.cuh`, `ds4_glmvq.h`, all 2026-10-18), so
+  make rebuilds it, and that rebuild fails in ptxas with
+  `Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher` and
+  `cp.async.bulk.prefetch` errors — the tree's `.ds4-cuda-config.mk` pins
+  `CUDA_ARCH := native` (sm_89 on this machine). `ds4.o` and `ds4_cpu.o` build
+  fine; the CUDA object is a separate, larger question about the copied tree.
+- `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses this
+  project's binaries: `error: target ds4-agent-rs in package ds4-cli requires the
+  features: native`. The canonical builder has no way to pass `--features native`,
+  which every `ds4-cli` binary needs, so this tree's Rust deliverables are built
+  by the Makefile plus `cargo` with that feature (rule 5's documented
+  iterative-development exception). Both facts belong in the handoff.
+
+5. Tests run
+
+  $ cargo test -q -p ds4-core
+  443 unit tests (436 passed, 7 ignored) and 29 integration targets, no failures
+  $ cargo check -q --workspace --all-targets
+  (clean: every binary, test and example target in the workspace type-checks)
+  $ the five P-1 guardrail greps, in /data/embeddinggemma2
+  0, 0, 0, 0, 0 hits
+
+6. What this proves, and what it does not
+
+Proves: the ds4 host identifies the artifact as its own family, validates every
+one of its 1376 tensors and each of the 461 payloads against the payload's own
+header and the reference's byte account, agrees tensor for tensor with the
+writer's manifest, loads identically twice, and refuses eight named tamper cases
+including a bad metadata value and a bad payload byte. The C side's copy of the
+shape is compared against the Rust copy by the existing parity test.
+
+Does not prove: that a single number the model computes is right. There is no
+graph, no tokenizer and no forward pass yet — the tokenizer refuses by name and
+the bind stops by name, both deliberately, both phase 4. The layout proves the
+shapes, not the arithmetic. And the C `DS4_SHAPE_GEMMA_VQ` is verified only as a
+table: nothing consumes it until phase 4 builds the graph.

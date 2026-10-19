@@ -149,10 +149,18 @@ Read these before doing port work in this workspace:
    sixth correction (the file's rank is never 0), and the fact that ds4's private
    type 42 is why the reference loader accepts the baseline and refuses the
    artifact.
-7. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
+7. `docs/loader-gate3.txt` — the phase-3 evidence: the `gemma_vq` loader (the
+   family gate, the per-payload validator, the family layout of all 1376 tensors,
+   the Rust identity and the C identity), gate 3's three legs — the reader's dump
+   against the writer's manifest, two identical loads, and eight tampered copies
+   refused by name — the arithmetic showing that an out-of-range index cannot be
+   encoded at this tier's 12-bit index width, and the two pre-existing environment
+   findings (the stale CUDA object and the canonical builder's missing `native`
+   feature). Gate script: `tools/eg2_loader_check.sh`.
+8. `docs/ds4-gemma-port-reference.md` — the port map: shape, tensor naming,
    arithmetic, and the four-leg native verification method.
-8. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
+9. `RECIPE.md` — how the artifacts in `out/` were made, and their measured quality;
    `RECIPE-deepseek41-vq.md` — the ds4 VQ recipe this project follows.
-9. Cross-session memory for this workspace lives under
+10. Cross-session memory for this workspace lives under
    `~/.opengrok/memory/embeddinggemma2-1200866d/MEMORY.md`; a fresh session's
    memory_search for "embeddinggemma2" must surface it.

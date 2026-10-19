@@ -77,6 +77,15 @@ matter for us:
   against `vq_qc.h:250`). The stale "dim4 -> 9bit" note in the file header
   describes the old hardcoded path, not this code.
 
+  MEASURED 2026-10-19 (phase 3): 12 bits is exactly the codebook's address
+  space, so at this tier **no out-of-range index can be encoded** — the mask is
+  `0xFFF` and `nc` is 4096, so the index range and the codebook are the same
+  size. A loader therefore cannot refuse an out-of-range index here, and the
+  reachable tamper is a header whose geometry stops reproducing the declared
+  length, which the byte account refuses. A future tier whose `nc` is not a power
+  of two has slack above `nc - 1` and would need a scan; that is an open item,
+  not a check that was skipped.
+
 ## 2. Determination 1 — our kind-0 payloads ARE DQVQ payloads, byte for byte
 
 Settled by measurement, both at the source and on disk.
@@ -206,6 +215,19 @@ and `LayoutSpec` at `crates/ds4-core/src/layout.rs:119`) is the shape authority,
 never the container geometry. That is phase-doc row P0.7, and GGUF makes the
 `logical_shapes` mechanism unnecessary here, measured:
 
+WRITTEN 2026-10-19 (phase 3): `crates/ds4-core/src/gemma_vq/layout.rs` is that
+table — all 1376 tensors, their rank and their dimensions as the FILE declares
+them, with "as the file declares them" doing real work for the 461 VQ tensors:
+their single dimension is the payload byte length, computed here from the tower's
+architecture through the reference's own account (`vq_payload_bytes(rows, cols,
+4, 4096)`, `vq_qc_bytes.h:15`/`:20`). The loader computes the same number from
+the payload's own header, so the two are compared on every load and a mistyped
+geometry on either side is a load-time failure. The table matched the artifact
+tensor for tensor on its first run (`docs/loader-gate3.txt` section 1); the
+family's rank census in the file is 1354 rank 1 / 7 rank 2 / 13 rank 3 / 2 rank 4,
+so the table states a rank-1 VQ payload and the file's true rank for everything
+else.
+
 - the checkpoint carries 1376 tensors; all 461 VQ tensors are rank 2
   (`docs/encode-plan.tsv`, `kind = vq`), and all 15 tensors of rank > 2 (13 rank
   3, 2 rank 4 — the audio `lconv1d` kernels, the two subsample convolutions and
@@ -243,11 +265,12 @@ The shipping families state the rule in the first line of their bind include:
   codebook (finite) — the checks the DQVD checker makes now
   (`tools/eg2_pack.c:1044-1045`) plus the finiteness checks GLM's header parser
   makes (`glm_vq.rs:168` for the row gains, `:260-270` for the book). It fills
-  `TensorInfo`/`TensorInventory` (`crates/ds4-core/src/tensors.rs`).
-- The Rust-to-C hand-off is a flat record table, the shape of
+  `TensorInfo`/`TensorInventory` (`crates/ds4-core/src/tensors.rs`).- The Rust-to-C hand-off is a flat record table, the shape of
   `ds4_gvq_record` (`ds4-rs/ds4_glmvq.h:31-34`: offset, bytes, type, rows, cols,
   scale, book, res) with `res` and `scale` unused by this family. C never parses
-  the container.
+  the container; `ds4-rs/ds4_eg2vq.h` declares the family's version of that record
+  (offset, bytes, type, rows, cols) and its tier constants, and nothing consumes
+  one yet.
 - The device consumes the payload in-kernel, never expanded to dense: the
   artifact's payload region is 421,618,528 B while its dense equivalent would be
   a multiple of that (one 4096x1024 matrix alone decodes to 8,388,608 elements).
@@ -443,3 +466,21 @@ values and differed from the baseline's in exactly the two intended keys
 (section 4's table); the file is bit-reproducible; and the writer's baseline path
 was re-emitted byte-for-byte identical, so the shared metadata functions changed no
 existing byte. Evidence: `docs/artifact-gguf-gate1b.txt`.
+
+Gate 3: PASSED 2026-10-19. The family loader exists
+(`crates/ds4-core/src/gemma_vq.rs` with its layout module) and the ds4 host reads
+the artifact four ways: `IDENTIFY EmbeddingGemma-2 VQ family=16 variant=19`,
+`META ok` (the artifact's hparams against `SHAPE_GEMMA_VQ`), `BIND ok slots=1376`
+and `LAYOUT ok specs=1376`. Gate 1b still passes on the same file with the family
+validator in the path, the reader's tensor dump and the writer's manifest agree for
+all 1376, two loads are identical, and eight tampered copies are refused by name
+(a wrong payload magic, a wrong `dim`, a wrong `rows`, a zero row gain, a
+nonfinite codebook word, a nonzero padding byte, a truncated file, and a wrong
+metadata value). The C side gained the family enum value 16, the variant 19,
+`DS4_SHAPE_GEMMA_VQ` and a bind that stops by name; the shape exists in three
+copies and `test-catalog-parity` compares them. Evidence:
+`docs/loader-gate3.txt`; gate: `tools/eg2_loader_check.sh`.
+
+Gate 4 and onward are open: there is no graph, no tokenizer and no forward pass
+yet. `Vocab::load` refuses this family by name and `eg2vq_bind` stops by name, so
+nothing can silently run the artifact through another family's mathematics.

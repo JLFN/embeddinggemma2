@@ -247,6 +247,19 @@ cd ds4-rs && cargo run -q -p ds4-core --release --example gguf_inventory -- \
 tools/eg2_artifact_check.sh $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
    $OUT/artifact-manifest.tsv $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin \
    $HF $OUT/artifact-inventory.txt
+
+# 20. Gate 3: the family loader (~1.5 s). The reader identifies the family, checks
+#     the artifact's hparams against the family shape, resolves all 1376 bind names,
+#     checks the family layout against the file, loads twice, and refuses eight
+#     tampered copies by name. The `--family` leg is the four verdict lines.
+tools/eg2_loader_check.sh $OUT/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+   $OUT/artifact-manifest.tsv
+
+# 21. The C half of the family identity: the object compiles and the three copies of
+#     the shape (ds4.c, crates/ds4-core/src/shape.rs, tests/parity/shape_c_oracle.c)
+#     are compared by the existing parity test
+cd ds4-rs && make ds4.o tests/parity/shape_c_oracle && \
+   cargo test -q -p ds4-core --test shape && cd ..
 ```
 
 Two deliberate properties of the file. First, its hparams carry the `gemma_vq.`
@@ -327,11 +340,20 @@ the rest are single-element scalars, where cosine is meaningless).
    value rule the repository already implements in `crates/ds4-core/src/vq.rs`, one
    `q8_0` token table through the reference decoder (`src/common/ds4_quantfmt.h:45`),
    914 `bf16` tensors at their true rank.
+
+   DONE 2026-10-19: `crates/ds4-core/src/gemma_vq.rs` with its layout module, the
+   `ModelFamily::GemmaVq` family, the C identity and the family arms. The reader
+   identifies the file, checks its hparams, resolves all 1376 bind names and
+   validates every payload (`docs/loader-gate3.txt`); decoding a payload and the
+   tower's arithmetic are the next unit.
 3. An embedding API. The repository has no `v1/embeddings` route today; the composition
    the checkpoint expects is mean pooling over the last hidden state followed by L2
    normalization (`1_Pooling/config.json`, `2_Normalize`).
 
 Until that port exists, the artifact is verifiable but not runnable in `ds4-dfm-rs`.
+As of 2026-10-19 it is loadable and validated: the family refuses at the tokenizer
+and the bind by name rather than running the file through another family's
+mathematics.
 
 ## 7. Identity and verification
 
@@ -355,6 +377,11 @@ means reproducibility and byte accounting:
 | Determinism | 14 parallel `verify` runs covering all 1376 slots re-encoded each payload from the checkpoint and compared it byte for byte with the file: all identical |
 | Encode cost | 14 shard encodes 19:42:39Z to 20:02:16Z, merge 1.4 s, 14 parallel verifies to 20:21:45Z; 39 minutes wall for the whole pipeline on 14 cores |
 | Re-wrap cost | 0.94 s wall for the whole artifact GGUF (a copy of the container's bytes, no re-encode) |
+| Family identity | `IDENTIFY EmbeddingGemma-2 VQ family=16 variant=19` — the arch route, the `gemma_vq.format_version` gate, and the family's own metadata contract (`META ok`: 16 integer hparams, 3 floats, the causal flag, and both per-layer arrays) |
+| Family layout | `LAYOUT ok specs=1376`: the family's table (rank and dims as the FILE declares them, a VQ payload's single dimension being the byte length the reference's own account computes from the tower architecture) equals the artifact tensor for tensor |
+| Bind set | `BIND ok slots=1376`: every name the family's bind list declares is present |
+| Tamper refusal | 8 tampered copies refused by name — wrong payload magic, wrong `dim`, wrong `rows`, zero row gain, nonfinite codebook word, nonzero padding byte, truncated file, wrong metadata value — while two loads of the untouched file are identical (`tools/eg2_loader_check.sh`) |
+| C identity | `DS4_MODEL_FAMILY_GEMMA_VQ` 16 / `DS4_VARIANT_GEMMA_VQ` 19 / `DS4_SHAPE_GEMMA_VQ`; `ds4.o` builds in 38.9 s, `ds4_cpu.o` in 10.7 s, and `test-catalog-parity` compares the shape's three copies |
 
 ## 8. Build notes
 
