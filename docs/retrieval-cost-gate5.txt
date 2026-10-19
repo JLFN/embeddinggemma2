@@ -15,8 +15,13 @@ Created by this unit:
 
   tools/eg2_retrieval_set.sh              the frozen labelled set's builder
   tools/eg2_oracle_to_jsonl.sh            the oracle dump -> the anchor jsonl shape
-                                          (the awk body is byte-identical to the
-                                          to_jsonl() function in the phase-4 gate)
+                                          (the same transform as the to_jsonl()
+                                          function in the phase-4 gate, not a
+                                          byte-for-byte copy of it: this one adds
+                                          the optional id prefix and its own error
+                                          message, and the rule-19 QA pass checked
+                                          that the two produce identical rows at no
+                                          prefix — qa-evidence/qa-report.md)
   tools/eg2_retrieval_score.sh            the scorer: the agreement distribution and
                                           recall@k / MRR@k, with the invariants
                                           that would make the numbers wrong
@@ -166,12 +171,14 @@ Makefile's -O0 entry; section 7 measures what that choice costs (nothing at the
 print precision: min cos 1.000000000, max rel_rms 9.0e-07 over 24 items) and what
 it saves (~16 minutes per leg instead of ~80). Both legs use the SAME binary, so
 the build cannot bias the artifact-versus-baseline delta in either direction, and
-each leg's .meta records the binary's sha256, so a reused leg is bound to it. The
-oracle is multi-threaded through the tree's persistent pool (n_threads = min(12,
-online cpus), ds4.c:2238-2241; measured 716% CPU on a four-item run), and the two
-legs ran concurrently, about 15 cores of the 28-core host: the per-leg `secs=` in
-their logs (977.48 s baseline, 967.81 s artifact, 109.5 and 110.6 tokens/s) are
-contended wall time, not a latency claim.
+each leg's .meta records the binary's sha256 (by content, not by path), so a reused
+leg is bound to it. The oracle is multi-threaded through the tree's persistent pool
+(n_threads = min(12, online cpus), ds4.c:2238-2241; the QA pass measured 558-671%
+CPU over six four-item runs, qa-evidence/qa-report.md, and pinning one such run to a
+single CPU makes it 5.4x slower at 99% CPU, which is the proof of the threading), and
+the two legs ran concurrently, about 15 cores of the 28-core host: the per-leg
+`secs=` in their logs (977.48 s baseline, 967.81 s artifact, 109.5 and 110.6
+tokens/s) are contended wall time, not a latency claim.
 
 5. The numbers
 --------------
@@ -335,6 +342,21 @@ that would have flattered the answer.
 5. The self-test corrected an expectation of its own: in case B both documents tie
    with the query, so the baseline's mean top1-top2 margin is 0, not 1 as the first
    version of the test asserted. The scorer was right.
+6. The rule-19 QA pass for this unit (deepseek-v4.1-CC-flash, qa-evidence/qa-report.md,
+   verdict overall PASS) found no error in any number — it re-derived every digit of
+   sections 5b and 5c from the raws with the project's own scorer, cross-checked with
+   the parity instrument, re-ran the gate in a /tmp sandbox to watch the leg-reuse and
+   refusal paths (a 580-line raw is not reused, a changed oracle sha forces a re-run,
+   a tampered qrels file exits 2), and rebuilt both oracle builds from source — but it
+   falsified three prose claims, all fixed in the same commit: (a) the jsonl helper's
+   header called its awk body "byte-identical" to the phase-4 gate's and claimed a
+   mechanical diff of the two, and neither was true (the same transform, different
+   text; no diff code exists anywhere); (b) the threading figure was a single sample
+   (716% CPU) presented as the measurement — the pass's six repeats read 558-671%, so
+   the figure is now a range and the real proof of threading (5.4x slower pinned to one
+   CPU) is named beside it; (c) the .meta's oracle binding is by sha256 only, and the
+   prose now says so instead of implying a path. Nothing else changed: the rows the
+   helper produces are identical for the same input, which is what the pass checked.
 
 7. The -O2 aside, and where the timing came from
 ------------------------------------------------
@@ -395,9 +417,9 @@ print precision. The two builds are the same source, and the -O0 entry's own
 arithmetic is what gate 4 validated against the anchor (section 8, item 2).
 
 Two corrections to the gate script's header, both measured in this unit and both
-fixed in the same commit: the oracle is NOT single-threaded (716% CPU on a four-item
-run; the tower uses the tree's persistent pool, n_threads = min(12, online cpus),
-ds4.c:2238-2241), and the gate is no longer fixed to the -O0 entry —
+fixed in the same commit: the oracle is NOT single-threaded (558-716% CPU on
+four-item runs; the tower uses the tree's persistent pool, n_threads = min(12,
+online cpus), ds4.c:2238-2241), and the gate is no longer fixed to the -O0 entry —
 EG2_PHASE5_ORACLE selects the build, with each leg's .meta recording the binary's
 own sha256, so a reused leg is bound to the exact build that produced it.
 

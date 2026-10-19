@@ -8,10 +8,14 @@
 # re-normalized after the cut, which is the checkpoint README's MRL rule
 # ("Re-normalize after truncating") and the same rule tools/eg2_anchor.sh applies
 # to the reference's vectors and tools/eg2_phase4_gate.sh applies to this
-# oracle's. The awk body is byte-identical to the to_jsonl() function in
-# tools/eg2_phase4_gate.sh (that script keeps its own copy so a gated script is
-# never edited retroactively); the phase-5 gate diffs the two bodies and reports
-# the result.
+# oracle's. The awk body is the SAME TRANSFORM as the to_jsonl() function in
+# tools/eg2_phase4_gate.sh — the same row shape and the same MRL renormalization —
+# but it is not a byte-for-byte copy of it: this one carries the optional id prefix
+# and its own error message, while the phase-4 gate keeps its copy inside a shell
+# function (a gated script is never edited retroactively). Nothing diffs the two
+# bodies mechanically; the rule-19 QA pass for unit 15 ran both over the same raw
+# with no prefix and found the rows identical (qa-evidence/qa-report.md), and an
+# earlier version of this comment wrongly claimed a byte-identity and a diff check.
 #
 # Usage: tools/eg2_oracle_to_jsonl.sh <oracle-raw.txt> [id-prefix]
 #   id-prefix, when given, is prepended to each item id in the output.

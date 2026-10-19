@@ -24,9 +24,12 @@
 #
 # Flags, declared: the oracle is the tree's own -O0 entry, the same binary gate 4
 # used, with the tree default thread count (min(12, online cpus), ds4.c:2238-2241)
-# — measured in unit 15 at 716% CPU on 4 items, so about seven cores of work in
-# flight per leg. A measured aside says the same entry at -O2 runs 3.5x faster and
-# moves the printed vectors by at most 3e-07.
+# — measured in unit 15 at 558-716% CPU across four-item runs (the QA pass's six
+# repeats: 558-671%, qa-evidence/qa-report.md), so about six or seven cores of work
+# in flight per leg; pinning one such run to a single CPU makes it 5.4x slower at
+# 99% CPU, which is what proves the threading rather than the percentage. A measured
+# aside says the same entry at -O2 runs 3.5x faster and moves the printed vectors by
+# at most 3e-07.
 #
 # EG2_PHASE5_ORACLE runs the legs with another build of the SAME source instead
 # (both legs use it, so the choice cannot bias the artifact-versus-baseline delta).
@@ -36,7 +39,7 @@
 # rel_rms 9.0e-07 on the independent instrument, min cos 0.999999926 and no item
 # below 0.99 on the scorer, at 21.87 s against 149.17 s, i.e. ~12 minutes per leg
 # on the frozen set instead of ~80 (out/phase5-oracle-o0-vs-o3.log). Whichever
-# build is used, its sha256 goes into each leg's .meta.
+# build is used, its sha256 (by content, not by path) goes into each leg's .meta.
 #
 # The legs run concurrently by default (two processes, up to 12 threads each, on a
 # 28-core host; the per-leg secs are therefore contended wall time, not a latency

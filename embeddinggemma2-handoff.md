@@ -55,7 +55,7 @@ configured on the outer repo).
 
 2. Current state (2026-10-19, re-verified at the 07e0ccd boundary: every phase through 7 is landed and phase 5 closed in this unit, so both repositories are clean and the only unpushed work is this unit's two outer-repo commits)
 
-- Workspace: /data/embeddinggemma2, branch dev, HEAD 07e0ccd (unit 15, gate 5), tree CLEAN apart from this handoff. The outer repo has no origin remote, only publish = https://github.com/JLFN/embeddinggemma2, whose dev stands at e16c820: this unit's 07e0ccd and the handoff commit after it are LOCAL and unpushed, so offer the push. Rule 19's QA gate did NOT run for the previous push (the waiver is recorded in section 7) and should run before the next one. Nested ds4-rs is CLEAN at 29873445 on feat/ds41-dsml-carriage, EIGHTEEN commits ahead of fork/feat/ds41-dsml-carriage; its publish = https://github.com/JLFN/embeddinggemma2-ds4-rs carries that same tip on ITS dev branch, so publish it with `git push publish feat/ds41-dsml-carriage:refs/heads/dev` — plain `git push publish dev` fails, because the working copy's local dev tracks fork/dev and is behind. origin and the fork are untouched, and unit 15 changed NOTHING in ds4-rs.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD 07e0ccd (unit 15, gate 5) plus 99efb30 (this handoff), tree CLEAN. The outer repo has no origin remote, only publish = https://github.com/JLFN/embeddinggemma2, whose dev stands at 46741d5 — MEASURED this session with `git ls-remote --heads publish`, and NOT at e16c820 as an earlier version of this card said. So the unpushed range is 46741d5..HEAD = the two commits of this unit (07e0ccd, 99efb30), and the push is offered, not taken. Rule 19's QA gate did NOT run for the previous push (that waiver is recorded in section 7) and DID run for this unit: deepseek-v4.1-CC-flash, qa-evidence/qa-report.md, verdict overall PASS, committed with this handoff, and it corrected three prose claims (section 7). Nested ds4-rs is CLEAN at 29873445 on feat/ds41-dsml-carriage, EIGHTEEN commits ahead of fork/feat/ds41-dsml-carriage, and its publish = https://github.com/JLFN/embeddinggemma2-ds4-rs carries that same tip at refs/heads/dev (measured this session), so publish it with `git push publish feat/ds41-dsml-carriage:refs/heads/dev` — plain `git push publish dev` fails, because the working copy's local dev tracks fork/dev and is behind. origin and the fork are untouched, and unit 15 changed NOTHING in ds4-rs.
 - Unit 15 (phase 5, row X.7) is DONE, and it is this unit's subject: gate 5 ran to completion in 1000 s wall with both legs concurrent, and the codec's task-level cost is measured on labels this project did not write. Same CPU reference tower, both weight sources, one ids file: the vectors agree at mean cosine 0.956039571 / min 0.898186175 at 768 over the 583 items (0.972493258 mean at 128), and the rankings move by MRR@10 0.951778 -> 0.935819 and recall@1 0.888278 -> 0.861611, with recall@10 0.983333 -> 0.990000 and 23 of 300 queries changing their top-1 document against a baseline mean top1-top2 margin of 0.085722; at 128 dims truncation and quantization compound (MRR -0.029414, recall@5 0.954667 -> 0.915889). Evidence docs/retrieval-cost-gate5.txt (5b, 5c and the result paragraph filled in this unit), log out/phase5-gate.log.
 - The two legs ran with the -O3 build of the oracle, not the Makefile's -O0 entry: EG2_PHASE5_ORACLE is new in tools/eg2_phase5_gate.sh, both legs use the SAME binary so the level cannot bias the artifact-versus-baseline delta, and the two builds were measured equivalent before use (min cos 1.000000000, max rel_rms 9.0e-07 over 24 items / 3297 tokens) at 21.87 s against 149.17 s — about 12 minutes per leg instead of ~80, which is what made the restart affordable (out/phase5-oracle-o0-vs-o3.log). Two false claims in that gate's header were found and fixed while doing it: the oracle is NOT single-threaded (716% CPU on a four-item run; the tower uses the tree's persistent pool, ds4.c:2238-2241), and the two legs share this host, so their secs= are contended wall time.
 - What is left, in the order the plan sets: (1) phase 6's P2.3 remainder — an embedding-shaped serving cap and batching several items into one tower call; (2) the C CLI's tokenizer gap, which unit 19 recorded as by-design for now (the family's gemma4 BPE is Rust-side, so ds4-c refuses the artifact by name rather than duplicating the encoder); (3) phase 8, the vision and audio towers, only on the owner's word; (4) the owner's reading of the quality numbers above, for which no threshold was ever declared and none is implied. Nothing is in flight.
@@ -431,10 +431,33 @@ First commands of the next session, in this order:
       content was published.  The frozen retrieval set redistributes BEIR SciFact, which the
       dataset owner's own card states is CC BY-NC 2.0; tests/retrieval/PROVENANCE.md records
       the source, digest and that non-commercial term.
-  WAIVED: rule 19's QA-tester gate did NOT run for this push.  The owner was asked for the
-  QA model and answered "no QA", and for the gate itself chose "push now, with your explicit
-  waiver recorded".  This bullet is that record: the publication carries no fresh
-  qa-evidence/qa-report.md, and the next unit should run the gate before the next push.
+  WAIVED for the PREVIOUS push only: rule 19's QA-tester gate did not run for the push of
+  2026-10-19 that published 46741d5.  The owner was asked for the QA model and answered
+  "no QA", and for the gate itself chose "push now, with your explicit waiver recorded".
+  That waiver covered that push and nothing else; for THIS unit the owner chose "run the
+  QA gate, then push", and the per-project QA model is now recorded (below).
+- RULE 19, THIS UNIT (2026-10-19): the QA-tester ran on deepseek-v4.1-CC-flash — the model
+  the owner selected for this project, registered in ~/.opengrok/config.toml as
+  [model."deepseek-v4.1-CC-flash"], which is now this project's qa model.  Report
+  qa-evidence/qa-report.md, committed with this handoff, verdict `overall PASS`.  It
+  re-derived every number of the evidence doc's sections 5b/5c from the two raws with the
+  project's own scorer, cross-checked them with the parity instrument, rebuilt both oracle
+  builds from source, and drove the gate in a /tmp sandbox to watch its reuse and refusal
+  paths (a 580-line raw is not reused, a changed oracle sha forces a re-run, a tampered
+  qrels file exits 2, the real out/ raws untouched).  It found no wrong number and three
+  wrong sentences, all corrected in the QA commit: the jsonl helper's "byte-identical awk
+  body / the gate diffs the two bodies" claim (neither was true; the rows ARE identical),
+  the threading figure (a single 716% sample where six later runs read 558-671%), and the
+  .meta's oracle binding, which is by sha256 and not by path.  What the pass could NOT
+  test: a full 583-item re-run (it re-ran three items and reused the committed legs).
+- OPEN (owner, NEW): the rule 19 item-4 mount.  This repo ships gate scripts but has no
+  tests/qa-gate.sh and no tests/run.sh, so nothing MECHANICALLY blocks a push without fresh
+  QA evidence — the gate is only as good as the agent honoring it.  The owner was asked and
+  chose to record it rather than add it now: the next unit that ships code should copy
+  ~/.opengrok/templates/qa-gate.sh into tests/qa-gate.sh, parameterize it for this repo
+  (QA_BASE must be the PUBLISHED dev tip, since this repo has no origin; QA_MODEL=deepseek-v4.1-CC-flash;
+  QA_SURFACE_PATHS must cover tools/, tests/retrieval/ and ds4-rs's crates, which the
+  generic defaults do not), wire it into tests/run.sh, and re-run it before the next push.
 - The three guard edits in ds4-rs are committed (9a6498da, ef79b5c2, c7dd3ebb) and phase 7
   was built on them; nothing is left open there.
 
@@ -481,16 +504,18 @@ First commands of the next session, in this order:
 
 Trust git over this document's headings: continue with the first phase whose work is
 not in the diff. Every phase through 7 is landed as of this boundary, so nothing is in
-flight and the diff d6da366..HEAD is the whole record: the outer repo's HEAD is 07e0ccd
-(unit 15's completion) with its publish/dev at e16c820, so unit 15's last two commits
-are LOCAL and unpushed — 07e0ccd carries tools/eg2_phase5_gate.sh (the EG2_PHASE5_ORACLE
-selector and the corrected header), docs/retrieval-cost-gate5.txt (5b, 5c, 7a, 7b and
-the result paragraph), RECIPE.md (4e/5/5b/6 item 3/7) and docs/ds4-gemma-port-phases.md
-(row X.7 DONE, section 9, section 10), and the commit after it carries this file. Its
-parent e16c820 was the post-unit-19 correction and 8ddd057 was unit 15's first slice
+flight and the diff d6da366..HEAD is the whole record: the outer repo's HEAD is 99efb30
+(07e0ccd unit 15's completion plus 99efb30 this handoff, and the QA-evidence commit on
+top of them) with its published dev at 46741d5 (measured with `git ls-remote --heads
+publish`), so the unpushed range is 46741d5..HEAD — 07e0ccd carries tools/eg2_phase5_gate.sh
+(the EG2_PHASE5_ORACLE selector and the corrected header), docs/retrieval-cost-gate5.txt
+(5b, 5c, 7a, 7b and the result paragraph), RECIPE.md (4e/5/5b/6 item 3/7) and
+docs/ds4-gemma-port-phases.md (row X.7 DONE, section 9, section 10); 99efb30 and the
+commit after it carry this file and the QA evidence. 46741d5 was the previous unit's
+handoff correction and 8ddd057 was unit 15's first slice
 (the frozen set and the harness). ds4-rs is CLEAN at 29873445 on
-feat/ds41-dsml-carriage — THIS UNIT TOUCHED NOTHING THERE — and its publish/dev is the
-same tip; the CUDA guards, the server family arm and the build wiring are older local
+feat/ds41-dsml-carriage — THIS UNIT TOUCHED NOTHING THERE — and its publish/dev is that
+same tip (measured); the CUDA guards, the server family arm and the build wiring are older local
 commits (9a6498da, ef79b5c2, c7dd3ebb) on that branch. Anything else in either diff must be read before
 sections 2-6 are trusted. Note that the artifacts, the retrieval source, every
 out/phase5-* file, out/eg2vq_embd_c_oracle_o3 and the CUDA objects live under gitignored
