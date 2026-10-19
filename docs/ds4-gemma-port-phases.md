@@ -70,8 +70,21 @@ norm/scalar tensors (`input_layernorm`, `pre_feedforward_layernorm`,
 
 Two facts worth carrying into the design: the largest single verbatim payload in
 the whole container is `vision_tower.patch_embedder.position_embedding_table`
-(2 × 10240, 31,457,280 B), and the text tower's VQ tier is dim 4 while the only
-device VQ kernel in ds4-rs today is dim 8 (row P3.1).
+(31,457,280 B), and the text tower's VQ tier is dim 4 while the only device VQ
+kernel in ds4-rs today is dim 8 (row P3.1).
+
+One trap measured while writing this: a DQVD slot records only `rows` and `cols`,
+so a tensor of rank 3 loses its rank in the container. That vision position table
+is `2x10240x768` in the checkpoint inventory (`docs/tensor-inventory.tsv`) while
+its slot records `rows=2, cols=10240` — and the container's own verbatim rule
+accepts that, because it only requires `payload_bytes / dtype_size >= rows * cols`
+(`tools/eg2_pack.c:1059-1068`). For a VQ slot the geometry is fully pinned (the
+byte account has to close), but for a verbatim slot it is a floor, not a shape.
+The port must therefore take tensor shapes from a declared per-family layout — the
+mechanism ds4-rs already uses, `layouts()` building `LayoutSpec` with an explicit
+`ndim` (`crates/ds4-core/src/glm_vq/layout.rs`), fed from the reference's own
+`create_tensor` calls (`src/models/gemma-embedding2.cpp:34-71`) and our
+`docs/tensor-inventory.tsv` — never from the slot geometry.
 
 Container layout and the validation contract, both read from the encoder that
 wrote it (`tools/eg2_pack.c`): header 64 B at `:51-88` (documented) and `:221-225`
@@ -93,7 +106,7 @@ verify output (`bin/eg2_pack_cpu check` plus the per-slot re-encode comparison i
 | P0.4 | Family ids: `ModelFamily` value and `Variant` value, the oracle-name parser and the `as_str` arm | last values in use are `Glm53Vq = 14` / `Ling31Vq = 15` (`crates/ds4-core/src/shape.rs:35`) and `Ling31FlashVq = 18` (`:104`); name arms at `:49` and `:71` | `crates/ds4-core/src/shape.rs` | OPEN |
 | P0.5 | File identity: a file (not a directory) carrying the DQVD magic routes to the new family; today `identify_gguf` hands every directory to a release reader and every file to the GGUF parser | routing decision `crates/ds4-core/src/identify.rs:200-205`; `Identified` `:54`; family-specific gate at `:183` | `crates/ds4-core/src/identify.rs` | OPEN |
 | P0.6 | Layout + bind dispatch: the family's `layouts()` and its bind names | `crates/ds4-core/src/layout.rs:3791`, `crates/ds4-core/src/bind.rs:993`; `LayoutSpec` `crates/ds4-core/src/layout.rs:119` | `crates/ds4-core/src/layout.rs`, `bind.rs`, plus `crates/ds4-core/src/eg2vq/layout.rs` if it mirrors the Ling-3.1 split | OPEN |
-| P0.7 | Inventory: DQVD slots become `TensorInfo` rows (name, dim, typ, rel/abs offset, elements, bytes) over one file-backed shard plan | `crates/ds4-core/src/tensors.rs` (`TensorInfo`, `ShardPlan`, `TensorInventory` at `:153-180`); `ling31_vq/release.rs:139` fills the same types from `release.json` | `crates/ds4-core/src/eg2vq.rs` | OPEN |
+| P0.7 | Inventory: DQVD slots become `TensorInfo` rows (name, dim, typ, rel/abs offset, elements, bytes) over one file-backed shard plan; the shape (`ndim`, `dim[]`) comes from the declared family layout, not from the slot's `rows`/`cols` (see the trap in section 2) | `crates/ds4-core/src/tensors.rs` (`TensorInfo`, `ShardPlan`, `TensorInventory` at `:153-180`); `ling31_vq/release.rs:139` fills the same types from `release.json` | `crates/ds4-core/src/eg2vq.rs` + the family's `layouts()` | OPEN |
 | P0.8 | Host wiring: the family's arms in the model/host open path | the `Glm53Vq` arms at `crates/ds4-core/src/lib.rs:1248`, `:1274`, `:1528`, `:2405`, `:2982`; payload layout `crates/ds4-core/src/payload.rs:78`, `:99` (only if checkpoints are in scope — see X.3) | `crates/ds4-core/src/lib.rs`, `payload.rs` | OPEN |
 | P0.9 | C identity: family enum value, shape catalog entry, and the `weights_bind` arm | `ds4.c:382-383` (enum), `ds4.c:657-660` (shape catalog shape), `ds4.c:10240-10250` (bind dispatch: `glmvq_bind` / `ling31_bind`) | `ds4.c` | OPEN |
 | P0.10 | C bind table: the flat record table the Rust reader hands to C, one `.inc` per family | `ds4_glmvq_bind.inc` (201 lines) as the pattern; header `ds4_glmvq.h` (179) | new `ds4_eg2vq_bind.inc`, `ds4_eg2vq.h` | OPEN |
