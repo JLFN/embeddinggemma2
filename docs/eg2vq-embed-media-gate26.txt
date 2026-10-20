@@ -279,3 +279,21 @@ spec parked at docs/eg2vq-batch21-plan.txt), the C CLI's tokenizer gap (the owne
 call; the Rust host owns encoding), the AUDIO tower (the owner's call), the final
 rule 19 pass over the whole port once the code is complete, and the two pushes
 (offers only).
+
+
+LATER NOTE (2026-10-20, added after the unit-28 QA pass, not by unit 26):
+
+Section 8 above is superseded, and this note exists so a later reader does not take
+its present tense for the state of the tree.  The deferral was DISCHARGED the same
+day: unit 27 completed the plan's last code row (the batch), unit 28 then deleted
+qa-evidence/qa-deferral.txt (commit 9f252ef) and ran the ONE rule 19 pass over the
+whole accumulated port.  qa-evidence/qa-report.md is that pass's own report, it ends
+with "verdict: overall PASS", and tests/qa-gate.sh run with the deferral bypassed
+(QA_DEFERRAL=/dev/null, the exact check once the file is gone) prints
+"QA GATE: overall PASS" over 15 checks and exits 0.  So the fast path's step 11 now
+holds a REAL verdict instead of a deferral, every surface section 8 lists as
+uncovered is covered by that pass, and the surface list the deferral branch printed
+was the pass's own input -- which is why the multi-line entries this document added
+(ds4_engine_embed_gemma_vq_image, ds4_bridge_eg2vq_embed_image,
+ds4_bridge_model_vision_encode_rows) are named in the report's hand-read F6 set.
+Nothing else in this document changes: it stays the record of unit 26.

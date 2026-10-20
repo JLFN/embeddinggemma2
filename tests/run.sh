@@ -53,8 +53,12 @@
 #      tokens (the 8192-row budget) accepted while one item more is a 400
 #      (tools/eg2_embed_batch_gate27.sh; it also starts and stops a server per
 #      backend, and its 8192-row call allocates the 912 MiB workspace size class)
-#  11. tests/qa-gate.sh (rule 19; DEFERRED by the owner's recorded instruction
-#      until the port is code-complete — qa-evidence/qa-deferral.txt)
+#  11. tests/qa-gate.sh (rule 19) — runs for real and holds a real verdict: the
+#      owner's deferral was discharged by the unit-28 pass (qa-evidence/
+#      qa-deferral.txt deleted, qa-evidence/qa-report.md reads "verdict: overall
+#      PASS"), so this step re-checks the report's freshness and verdict over
+#      every surface newer than the last pushed commit, and fails the fast path
+#      when a new surface has not been QA'd yet
 #
 # Deep path (tests/run.sh --deep, about half an hour):
 #  12. the artifact gate 1b (byte-identical to the container, metadata read back)

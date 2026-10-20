@@ -261,3 +261,17 @@ code is ds4-rs, branch feat/ds41-dsml-carriage.
    ds4_engine_embed_gemma_vq_batch, ds4_gpu_eg2vq_embed_batch,
    ds4_eg2vq_ref_embed_batch, eg2vq_ops_proj768_pool_batch,
    ds4_bridge_eg2vq_embed_batch, and Model::embed_gemma_vq_batch's Rust checks.
+
+   LATER NOTE (2026-10-20, added after the unit-28 QA pass, not by unit 27):
+
+   Section 9's condition was met the same day, by the very next unit.  The single
+   rule 19 pass over the whole accumulated port ran as unit 28: qa-evidence/
+   qa-deferral.txt is deleted (commit 9f252ef), qa-evidence/qa-report.md is fresh
+   and ends with "verdict: overall PASS", and tests/qa-gate.sh prints
+   "QA GATE: overall PASS" (15 checks, exit 0) as the fast path's step 11 -- so the
+   deferral this section calls "a rule 19 violation with the deferral as its alibi"
+   is gone, and step 11 fails again for any surface newer than the report.  Every
+   multi-line entry listed above is named in the report's hand-read F6 set.  The
+   report also says, and this note repeats so the state is not overread: any NEW
+   commit that adds a surface makes the report stale and step 11 red again, which is
+   the rule working rather than a defect.
