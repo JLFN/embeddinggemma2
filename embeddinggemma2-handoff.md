@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d42fc8fdf8cef8dc0f6806d249160ae5472abe77
-last_updated_commit: 41811ae4c898102120b0e2b0ac1375f359f1048d
+last_updated_commit: 3d12c9e2df8bfeef4a1c822ad464d940d7c3433c
 branch: dev
 remote: 
 handoff_written_at_context_usage: 37%   (read from signals.json at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T11:04:10+02:00
+handoff_written_at: 2026-10-20T12:02:21+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -65,102 +65,81 @@ produced that matters is committed data.
    and the commits are in place, call the compact_session tool as the last action
    of that turn. The handoff write itself also parks a compaction.
 
-2. Current state (2026-10-20, at the unit-24 close: the vision tower runs on BOTH legs — the CPU reference path and the device — gates 23 and 24 are green in the fast path, and what is left of phase 8 is the serving surface)
+2. Current state (2026-10-20, at the unit-25 close: the image path runs end to end — the vision tower on both legs, its soft tokens spliced into the text tower, and the engine entry that the bridge and the route call — and what is left of phase 8 is the WIRE decision)
 
-- OWNER DIRECTIVE, 2026-10-19 (verbatim intent): "we need to add vision also see how the other model variant handle it". This answers the long-open phase-8 decision in favour of vision (the audio tower is NOT in scope; the audio decision stays open). It defers, and does not cancel, unit 21 (batching): its complete executable spec is parked at docs/eg2vq-batch21-plan.txt, together with the reference reading already done for it, so the resumed unit does not repeat either.
-- WHAT THE ARTIFACT CARRIES (docs/tensor-inventory.tsv + out/artifact-kv.txt): of 1376 tensors, 208 are vision_tower.encoder.layers.* (16 layers x 13), 2 are vision_tower.patch_embedder.*, and 744 are audio_tower.*; the text tower is 217 of the 461 vqblob payloads, the VISION TOWER IS DENSE BF16 (not VQ), and the two tie-in projections are in-file (embed_vision 512x768, embed_audio 512x1536). THE IMAGE PATH end to end is image -> the port's own preprocessing (gate 23's contract) -> the 16-block tower -> 3x3 pool + sqrt(768) -> weightless RMS -> 768-to-512 projection -> N soft tokens, which unit 25 splices into the text tower's image-token spans; the graph is /data/llama.cpp @ 31288c9c tools/mtmd/models/gemma4v.cpp (133 lines) and the variant is GEMMA4V (conversion/gemma.py:1001, :1055). THE ARTIFACT MUST NOT BE RE-ENCODED, and the owner's 2026-10-20 GPU-rebuild question is answered by RECIPE.md section 8 (read live): a CUDA build of the packer exists (-DEG2_CUDA with vq_gpu.o and the pinned-host path, the container then recording `encoder=cuda+pinned`), but at this tier the kernels cannot run at all (dim 4 / 4096 entries needs 81920 bytes of shared memory against vq_qc.h's 49152-byte gate) and where they can run they are 1.25-3x SLOWER per tensor here (89.6 s vs 58.8 s over a 92-tensor subset, identical cosines); the committed file records `encoder=cpu (eg2_pack)` and its digest defines the release.
-- THE OWNER'S QUALITY FLOOR is RECORDED and MET (docs/retrieval-cost-gate5.txt section 9; RECIPE.md 5b): recall@10 >= 0.983333, MRR@10 >= 98% of baseline (0.932742), recall@1 >= 0.855, mean cosine >= 0.95 — margins 0.006667 / 0.003077 / 0.006611 / 0.006040, all PASS. The floor covers the 768 width only; 512/256/128 have none.
-- UNIT 23 (phase-doc row P4.1) IS DONE: the vision tower on the CPU reference path, ds4-rs f459e924 + 0dd35319, gate 23 in the fast path, MEASURED against the frozen dumps at pattern 0.10275560 / 0.008235 / 0.99978457 and gradient 0.06645030 / 0.005285 / 0.99988406.
-- UNIT 24 (phase-doc row P4.5) IS DONE except its fourth step, the engine entry and the caps (section 3): the DEVICE tower. ds4-rs 5183cd50 adds cuda/eg2vq_vis.cuh (the tower's device primitives), ds4_eg2vq_vision_gpu.cuh (the plan: 211 slots bound by name, bf16 matrices uploaded as the file carries them — 289.88 MiB against the CPU leg's 576.0 MiB f32 cache — the workspace and the 16 blocks), the device entries, the slot table, the CPU leg's three stage buffers (NULL in every shipping path) and tests/parity/eg2vq_vision_cuda_oracle.c (9e1e987a corrects its prose only); outer 3a5f008 adds tools/eg2_vision_gate24.sh (fast-path step 7) and docs/eg2vq-vision-tower-gate24.txt, 0225fe3 the QA pass.
-- UNIT 24'S NUMBERS, in one process over the two frozen fixtures: device vs the CPU leg maxabs 0.15841668 / relrms 0.009006 / min row cosine 0.99933243 (worst); stages patch 1e-6, l0 7.8e-5 / 3.4e-5, pooled 8.8e-3 / 5.0e-3; device vs the FROZEN dumps 0.22244230 / 0.010428 / 0.99861157 and 0.05363610 / 0.005155 / 0.99992922, inside gate 23's own declared bound; 0.229 s per image against the CPU leg's 4.336 s in the same process (about 19x); plan bind 0.04-0.22 s; workspace 566.64 MiB at max_patches 10080; VRAM delta 922.0 MiB.
-- THE DEVICE LEG'S 0.9% FROM THE CPU LEG IS THE TOWER'S OWN ROUNDING BAND, MEASURED, NOT A DEFECT, and must not be chased: the tower deletes differences below its bf16 activation-quantization granularity and amplifies the ones that cross it (an input kick of 1e-7 on one canvas value moves the output by EXACTLY ZERO; 1e-5 moves it 0.005481 / 0.004198), which is the same size as the CPU leg's own 0.82% from the frozen dumps and its re-measured build-to-build spread (0.78%, reproduced by the QA at 0.74% / 0.50%). The gate declares the envelope 0.30 / 0.025 / 0.998 (gate 23's bound for ONE leg), records the tighter first declaration (0.15 / 0.010 / 0.9990) it replaced with the measurement that exceeded it, and runs four attribution flips: 1.66x (NO_ACT_BF16), 3.27x (CONV_BF16), 1.08x (NO_GELU_F16) and 0.96x (f32 K/V, recorded as NOT discriminated, below that floor).
-- ONE DEFECT WAS FOUND AND FIXED IN UNIT 24, and the stage attribution is what found it: the first device run had the patch stage at 1e-6 and l0 at 3.2%, and the rope paired (i, i+32) where each of the reference's two rope calls pairs (i, i+16) inside its own 32 dimensions.
-- RULE 19 IS MECHANICAL: tests/qa-gate.sh (the canonical template with three recorded deviations: QA_BASE = publish/dev because there is no origin; the three surface patterns retargeted at C/Rust/shell; it scans BOTH repositories) plus tests/run.sh (fast path: digests, DQVD container, scorer self-test, loader gate 3, gate 22, gate 23, gate 24, QA gate; --deep adds gate 1b, cargo test -p ds4-core and gate 4). The UNIT-24 QA pass ran under the recorded model (deepseek-v4.1-CC-flash): verdict overall PASS, seven low/informational findings, all dispositions in docs/eg2vq-vision-tower-gate24.txt section 9. Its F6 stands: the surface extractor still sees only `embed_caps` for this window, so the QA report covers the new C surfaces by hand.
-- Workspace: /data/embeddinggemma2, branch dev, HEAD = the commit that carries this handoff, tree clean; the outer repo's publish is https://github.com/JLFN/embeddinggemma2 with dev at d45394f, so EIGHTEEN commits are unpushed. Nested ds4-rs: clean at 9e1e987a on feat/ds41-dsml-carriage, SIX commits ahead of its publish 29873445 (`git push publish feat/ds41-dsml-carriage:refs/heads/dev`; plain `git push publish dev` fails). Both pushes are OFFERS (section 7), never executed on the session's own initiative.
-- WHAT IS LEFT, in order: (1) the serving surface — the engine entry and the caps (unit 24's step 4), together with the image splice, which is unit 25 / phase-doc row P4.6 (section 3); (2) unit 21, batching, DEFERRED with its spec at docs/eg2vq-batch21-plan.txt; (3) the C CLI's tokenizer gap — owner's call; (4) the AUDIO tower — owner's call; (5) the two pushes, when the owner answers.
-- Machine-facing facts RE-RUN this session (2026-10-20): tests/run.sh fast path GREEN with gate 24 in it (123 s with gate 24 rebuilding its oracle, 84-91 s warm; gate 23 unchanged at 0.10275560 / 0.008235 / 0.99978457 and 0.06645030 / 0.005285 / 0.99988406, 19.2 s); `make ds4.o` and `make ds4_cuda.o` compile clean; `sha256sum -c SHA256SUMS` all FOURTEEN entries OK; the vision device gate `EG2VQ_VISION_GATE24_PASS`; rule 19 QA gate overall PASS on the unit-24 report. Carried over from the previous boundary and NOT re-run here: the artifact sha256 5bcf2216.., the -O3 oracle's digest, CUDA_ARCH sm_89, rule 10 OSV (140 packages / 0 vulnerable in both repos — re-run before an actual push), and gate 4/5/20's numbers; they are recorded in those gates' own out/ logs and evidence docs.
-- Nothing measured to date claims: an MTEB-comparable score; a serving-shaped latency or concurrency number for the vision path or for a batch; anything about the audio tower; or any quality verdict past the four declared floors.
+- OWNER DIRECTIVE, 2026-10-19 (verbatim intent): "we need to add vision also see how the other model variant handle it". This answers the long-open phase-8 decision in favour of vision (the audio tower is NOT in scope; the audio decision stays open). It defers, and does not cancel, unit 21 (batching): its complete executable spec is parked at docs/eg2vq-batch21-plan.txt.
+- WHAT THE ARTIFACT CARRIES (docs/tensor-inventory.tsv + out/artifact-kv.txt): of 1376 tensors, 208 are vision_tower.encoder.layers.*, 2 are vision_tower.patch_embedder.*, 744 are audio_tower.*; the text tower is 217 of the 461 vqblob payloads, the VISION TOWER IS DENSE BF16, and the two tie-in projections are in-file (embed_vision 512x768, embed_audio 512x1536). THE IMAGE PATH end to end is image -> preprocessing (gate 23's contract) -> the 16-block tower -> 3x3 pool + sqrt(768) -> weightless RMS -> 768-to-512 projection -> 88 soft tokens spliced into the text tower's image span -> the 768-dim pooled embedding. Graph: /data/llama.cpp @ 31288c9c tools/mtmd/models/gemma4v.cpp (133 lines), variant GEMMA4V (conversion/gemma.py:1001, :1055).
+- THE ARTIFACT MUST NOT BE RE-ENCODED, and the owner's 2026-10-20 GPU-rebuild question is answered by RECIPE.md section 8 (read live): a CUDA build of the packer exists (-DEG2_CUDA with vq_gpu.o and the pinned-host path) but at this tier the kernels cannot run at all (81920 bytes of codebook against vq_qc.h's 49152-byte shared-memory gate) and where they can run they are 1.25-3x SLOWER here (89.6 s vs 58.8 s over a 92-tensor subset, identical cosines). The committed file records `encoder=cpu (eg2_pack)` and its digest defines the release.
+- THE OWNER'S QUALITY FLOOR is RECORDED and MET (docs/retrieval-cost-gate5.txt section 9): recall@10 >= 0.983333, MRR@10 >= 98% of baseline (0.932742), recall@1 >= 0.855, mean cosine >= 0.95 — margins 0.006667 / 0.003077 / 0.006611 / 0.006040, all PASS. The floor covers the 768 width only.
+- UNIT 23 (row P4.1) IS DONE: the vision tower on the CPU reference path (ds4-rs f459e924 + 0dd35319), gate 23 in the fast path, against the frozen dumps at pattern 0.10275560 / 0.008235 / 0.99978457 and gradient 0.06645030 / 0.005285 / 0.99988406.
+- UNIT 24 (row P4.5) IS DONE: the DEVICE tower (ds4-rs 5183cd50 + 9e1e987a, outer 3a5f008 + 0225fe3), gate 24 in the fast path. Device vs the CPU leg 0.15841668 / 0.009006 / 0.99933243 worst; stages patch 1e-6, l0 7.8e-5, pooled 8.8e-3; device vs the frozen dumps 0.010428 / 0.005155 relrms inside gate 23's bound; 0.229 s per image against the CPU leg's 4.336 s (~19x). The 0.9% is the tower's own bf16-quantization-boundary band, measured with an input kick (1e-7 moves the output by EXACTLY ZERO); do not chase it.
+- UNIT 25 (row P4.6) IS DONE except its WIRE half (section 3): the image SPLICE and the ENGINE ENTRY. ds4-rs d8e3aded (the splice in both legs, DS4_EG2VQ_IMAGE_TOKEN_ID 258880, the gemma_vq_vocab example), 6d07611d (the engine entries + the vocabulary case that made the engine openable at all), 5bd18880 (media_serial true); outer c124896 (gate 25) and 6765944 (this doc + the fast path). MEASURED by gate 25, four legs: the SPLICE on the BASELINE weights with the reference's own soft rows maxabs 0.00018850 / relrms 0.001579 / cosine 0.99999875 (pattern) and 0.00011922 / 0.001068 / 0.99999943 (gradient); the baseline with the PORT's soft rows cosine 0.99999091 / 0.99999824; the ARTIFACT with the port's rows 0.03693355 / 0.242372 / 0.97062788 and 0.02680407 / 0.202138 / 0.97957005 (the 4-bit tier's own loss, gate 5's 0.956 mean); the artifact's device leg vs its CPU leg 0.00057164 / 0.004348 / 0.99999055 and 0.00025823 / 0.002304 / 0.99999735. Engine entry: probe source 512x384 / content 512x384 / padded 528x384 / grid 11x8 / 88 tokens; encode_memory on the device leg vs the CPU leg 0.15841668 / 0.009006 / 0.99995945 and 0.04474682 / 0.004954 / 0.99998773. The text tower does NOT amplify its input (a 1e-2 kick on one soft value moves the pooled vector 6e-6 to 1.3e-5) — the opposite of the vision tower.
+- TWO TRAPS THIS UNIT CAUGHT, recorded so they are not re-learned: (1) THE FROZEN SPLICES ARE BASELINE-MODEL VECTORS (the anchor's second argument is the baseline bf16 file), so comparing the shipped ARTIFACT's splice with them measures the tier (24% relrms / cosine 0.9706), not the splice — the splice itself lands at 0.16% on the baseline weights. (2) THE ENGINE COULD NOT OPEN THIS ARTIFACT AT ALL: the vocabulary's family chain had no gemma_vq case and demanded another family's tokens; the new case takes the artifact's own bos/eos and leaves the role ids absent. The CLI's generation refusal by name is unchanged, and the C tokenizer gap (the gemma4 BPE is Rust-side) is still exactly the open item it was.
+- RULE 19 IS MECHANICAL: tests/qa-gate.sh + tests/run.sh (fast path: digests, DQVD container, scorer self-test, loader gate 3, gate 22, gate 23, gate 24, gate 25, QA gate; --deep adds gate 1b, cargo test -p ds4-core and gate 4). Unit 24's QA pass returned PASS with seven low findings (all dispositions in docs/eg2vq-vision-tower-gate24.txt section 9); unit 25's pass is the current report once it lands. F6 stands: the surface extractor still sees only `embed_caps`, so the QA report covers the new C surfaces by hand.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD = the commit that carries this handoff, tree clean at write time. THE UNIT-25 QA PASS WAS IN FLIGHT: if the tree carries a fresh qa-evidence/qa-report.md when the next session starts, that is it landing — commit it, read its findings, and only then begin unit 26. Unpushed: outer TWENTY-ONE commits over publish/dev d45394f (tip = this handoff's commit); ds4-rs NINE over 29873445 (tip 5bd18880). Both pushes are OFFERS (section 7).
+- WHAT IS LEFT, in order: (1) the WIRE (section 3): the /health vision row and the route accepting an image with a text item, through the engine entries that now exist; (2) unit 21, batching, DEFERRED with its spec at docs/eg2vq-batch21-plan.txt; (3) the C CLI's tokenizer gap — owner's call (the Rust host owns encoding); (4) the AUDIO tower — owner's call; (5) the two pushes, when the owner answers.
+- Machine-facing facts RE-RUN this session (2026-10-20): tests/run.sh fast path GREEN in 171 s with gates 23, 24 and 25 in it (gate 23 unchanged at 0.10275560 / 0.008235 / 0.99978457 and 0.06645030 / 0.005285 / 0.99988406; gate 24 unchanged; gate 25 `EG2VQ_SPLICE_GATE25_PASS`, ~70 s warm with the engine section); `cargo test -q -p ds4-core` green; `make ds4.o` and `make ds4_cuda.o` clean; `sha256sum -c SHA256SUMS` all FOURTEEN entries OK. Carried over and NOT re-run here: the artifact sha256 5bcf2216.., CUDA_ARCH sm_89, rule 10 OSV (re-run before an actual push), gate 4/5/7/20's numbers.
+- Nothing measured to date claims: an MTEB-comparable score; a serving-shaped latency or concurrency number for the image path; anything about the audio tower; or any quality verdict past the four declared floors.
 
-3. Next unit plan — unit 25: the serving surface (phase-doc row P4.6: the engine entry, the caps and the splice), which also carries unit 24's fourth step
+3. Next unit plan — unit 26: the WIRE (the serving route and the /health row for the image path; unit 25's last half, phase-doc row P4.6's serving side)
 
-Goal: an image in, the SPLICED text-tower embedding out, through the engine and the
-serving route, with the two frozen splices reproduced — and nothing faked to reach
-them.
+Goal: a caller can send an image (with a text item) to the serving route and get the
+spliced embedding back, and /health tells it what the family accepts — through the
+one mechanism unit 20 built, not a second one.
 
-STEP 0 — what unit 24 leaves, which unit 25 must carry verbatim:
+STEP 0 — what unit 25 leaves, verbatim:
 
- 1. The device leg is inside gate 23's envelope against the frozen dumps
-    (0.010428 / 0.005155 relative RMS), so the soft tokens may come from EITHER
-    leg.  Do not chase the 0.9% device-vs-CPU band: docs/eg2vq-vision-tower-gate24.txt
-    section 5 measures it as the tower's own quantization-boundary propagation
-    (an input kick of 1e-7 moves the output by exactly zero), and it is the same
-    size as the CPU leg's own distance from the reference and its re-measured
-    build-to-build spread.
- 2. The soft tokens' contract, verbatim: ds4_gpu_eg2vq_vision_forward(ctx, image
-    bytes, len, opts, soft, soft_cap, geo, err, errlen) on the device and
-    ds4_eg2vq_vision_forward(m, weights, image bytes, len, opts, soft, soft_cap,
-    geo, stages, err, errlen) on the CPU (stages = NULL in every shipping path);
-    both fill n_soft x 512 floats with the rows in the pooler's own order
-    (q = x' + (grid_w/3)*y'), n_soft = (grid_w/3)*(grid_h/3) from the geometry,
-    and both call the SAME preprocessing (ds4_eg2vq_vision_prepare).
- 3. The device size class: ds4_gpu_eg2vq_vision_workspace(max_patches, max_soft) =
-    566.64 MiB at the family's maximum (10080 patches, 1120 soft tokens), with the
-    plan at 289.88 MiB (bf16 matrices) + 62.70 MiB (the f32 norms and the position
-    and rope tables).  It is a SECOND context beside the text tower's eg2vq_ctx:
-    mirror eg2vq_device_ensure (ds4.c:73499-73528) for the vision side and release
-    it wherever the text one is released.
- 4. The mechanisms and their one named place each, so a later reader does not
-    re-derive them: the activation's bf16 quantization is eg2vq_vis_gemm's
-    act_round (ON for the seven per-block matrices and the tie-in projection, OFF
-    for the patch conv, whose f32 im2col drives vec_dot_type); the gelu_quick f16
-    in/out chain; the f16 K/V cast; no mask and kq_scale exactly 1.0.  The gate's
-    four flips are the switches, and only those switches change a mechanism.
- 5. The reference for the splice, read first-hand before writing: the frozen
-    target is tests/vision/reference/eg2-vision-*.text.tsv, the 768-dim pooled
-    embedding of the SPLICED sequence (88 soft tokens + the fixture's text = 92
-    positions), which nothing has reproduced yet.  The markers and ids are the
-    ones our tokenizer already emits: "<|image>" and "<image|>" (mtmd.cpp:953-959),
-    image_token_id 258880, boi 255999, eoi 258882.
+ 1. The engine entry exists and is gated: ds4_engine_vision_probe (the decoding
+    geometry: source, content, padded, the POOLED grid, token_count) and
+    ds4_engine_vision_encode_memory (a ds4_vision_embedding of n_soft x 512 soft rows,
+    freed by ds4_vision_embedding_free).  It runs the device leg when the graph
+    backend is live, the CPU leg otherwise, and it takes the mmproj through
+    opt->vision_path (the load switch's gemma_vq case).
+ 2. The splice exists and is gated: ds4_eg2vq_ref_embed_image / ds4_gpu_eg2vq_embed_image
+    take (ids, n_ids, soft, n_soft) where the ids carry ONE contiguous run of
+    DS4_EG2VQ_IMAGE_TOKEN_ID placeholders (258880) and the soft rows enter UNSCALED;
+    the sequence the reference uses is [bos 2, boi 255999] + 88 placeholders +
+    [eoi 258882, eos 1] = 92 positions (span [2, 90)).
+ 3. The measured tier facts, so the wire's numbers are stated rather than guessed:
+    the SPLICE lands at 0.16% of the frozen baseline splice; the artifact at 3%
+    (the tier's loss); the device at 0.43% of the CPU leg.  Gate 25 prints all four.
+ 4. The serving caps vocabulary: crates/ds4-core/src/serving.rs's family-keyed
+    lookup (embed_caps) -> the server's /health render (crates/ds4-server/src/serve.rs
+    around :1232) -> the route's refusal by name (:1618-1632).  GemmaVq now says
+    media_serial = true (one vision workspace per engine).
+ 5. The wire's tokenizer is RUST-SIDE by design (the C CLI refuses the artifact by
+    name): the marker ids are 255999 / "<|image>" and 258882 / "<image|>", the span's
+    placeholder is 258880, bos 2, eos 1 -- read from the artifact's own vocabulary
+    (crates/ds4-core/examples/gemma_vq_vocab.rs).  The wire must build the sequence
+    there, not in C.
 
 THE WORK, in the order it has to land:
 
- A. THE ENGINE ENTRY (unit 24's step 4).  Open the mmproj as the engine's second
-    model: the switch at ds4.c:72548-72617 already opens opt->vision_path per
-    family (v41, mimo2, ling3vl, step37, glm53); add the gemma_vq case binding
-    ds4_eg2vq_vision_bind (the CPU weights) and/or the device plan, and add the
-    two engine-level vision entries the owner decided on (ds4.h:297-310, whose
-    worked example is ds4_engine_vision_encode_memory): ds4_engine_vision_probe
-    filling ds4_vision_image_info from the preprocessing geometry, and
-    ds4_engine_vision_encode_memory returning the soft tokens in a
-    ds4_vision_embedding (data, token_count, grid_width, grid_height), each with
-    the readiness checks and refusals-by-name ds4_engine_embed_gemma_vq already
-    has (empty image, a geometry the size solver refuses, an image past the
-    workspace's size class, no CUDA device when the graph backend is asked for).
- B. THE CAPS QUESTION.  Read how unit 20's caps are enforced BEFORE adding
-    anything — crates/ds4-core/src/serving.rs:206 (embed_caps, a family-keyed
-    lookup rather than a field on ServingCaps), advertised in /health's "embed"
-    object at :1823, and refused by name on the route — and extend that ONE
-    mechanism, never a second: the family's image budget is already bounded by its
-    own size solver (70..1120 soft tokens, 161280..2580480 pixels, align 48), so
-    the NEW number a refusal has to name is the device workspace's size class
-    (max_patches 10080 / max_soft 1120) and, if the route takes several images,
-    the same row-budget idea the text tower's BATCH_ROWS_MAX uses.
- C. THE SPLICE.  Read ds4_eg2vq_graph.inc:196-208 (the embedding step) before
-    writing anything: the spliced row is the vision tower's 512-dim output, NOT a
-    token-table row, and the reference's own mechanism is span replacement at the
-    embedding (mtmd.cpp:953-959's markers, the ids in STEP 0.5).  The text tower's
-    forward takes `ids`; how the caller passes the image's rows (a parallel
-    embedding array, or ids that the engine substitutes) is this unit's design
-    decision, and it must be stated in the evidence rather than implied.
- D. THE GATES: a native gate for the splice against both *.text.tsv dumps, with
-    the bound declared and printed before the run, plus the expected refusals
-    (an image past the budget, a malformed image, a text-only item); then the
-    evidence doc, the fast path, and the rule 19 QA pass under the recorded model.
+ A. THE /health ROW.  Read how the "embed" object is rendered and enforced (serve.rs
+    :1232, :1618) and add the image half the same way: the family accepts images, the
+    soft-token ceiling (1120), the pixel ceiling (2580480), and media_serial's
+    meaning.  A Rust test that pins the rendered JSON, in the shape unit 20's
+    eg2vq_serving_caps.rs uses.
+ B. THE ROUTE.  Decide and implement how an image reaches the embedding path: the
+    bridge already carries vision_probe/encode_memory (native/bridge/ds4_bridge.c
+    :462+), and the engine entries now answer for gemma_vq.  The route must (i) probe,
+    (ii) encode the soft rows, (iii) build the 92-position sequence in Rust with the
+    ids in STEP 0.5, (iv) call the embedding entry with the splice (a bridge entry for
+    ds4_gpu_eg2vq_embed_image / ds4_eg2vq_ref_embed_image is the piece that does not
+    exist yet -- name it in the bridge rather than inventing a second path), and
+    (v) refuse by name an image past the ceiling, an item with no text around the
+    image, and a text-only route that gets an image.
+ C. THE GATE: an HTTP-level gate in the shape of the recorded POST /v1/embeddings
+    one (docs/eg2vq-embed-entry-gate6.txt): start the server on the artifact with
+    --vision, POST the two frozen fixtures with a fixed text item, and compare the
+    returned vectors against the port's own CPU splice (not the frozen baseline rows:
+    that comparison is gate 25's and is not the wire's).
+ D. THE EVIDENCE + the fast path step + the rule 19 QA pass.
 
-WHAT UNIT 25 MUST NOT DO: re-tune the preprocessing (gate 23 pins it), re-derive
-the graph or the vision mechanisms (unit 23's and unit 24's evidence pin them),
-chase the 0.9% band, invent a second caps mechanism, re-encode the artifact, or
-write the *.text.tsv dumps from anything but the port's own forward.
+WHAT UNIT 26 MUST NOT DO: re-derive the splice or the vision tower, expose the image
+on the text-only path in a way that changes a text request's answer, invent a second
+caps mechanism, or claim a latency or concurrency number for the image path without
+measuring it under the condition it claims.
 
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
@@ -266,7 +245,7 @@ write the *.text.tsv dumps from anything but the port's own forward.
 - P-1 (no Python in the runtime, ever) and P-2 (references are citations or one-shot instruments; no ONNX/PyTorch) hold; all five P-1 checks return zero and `sha256sum -c SHA256SUMS` passes (re-verified at this boundary).
 - Owner decisions in force: the container is GGUF + `gemma_vq` payload; the anchor run was approved; quality is paramount, "not less smart, just compact"; CUDA must actually be used (phase 7 did, 9.9x/18.1x per item); and (2026-10-19) the tier-tolerant quality floor recorded in section 9 of the gate-5 doc.
 - CLOSED (rule 19 item 4, unit 20): the project now has tests/qa-gate.sh and tests/run.sh, so a push without fresh QA evidence fails MECHANICALLY. What it does NOT do: assert the REPORT's content beyond the surface names and the verdict line; the QA-tester's own judgement is still what makes the evidence worth anything.
-- CLOSED (owner directive 2026-10-20, "We will not use llama it must be ported all"): measured that ds4-rs never called or linked the pin, and the two default-path executions were moved to opt-in — commit 3729ec4. Gate 22 is native (our reader), the anchor is `tools/eg2_vision_anchor.sh` (run once, green, 211/211 + all four frozen dumps reproduced), the tokenizer reference is committed data (`tests/expected/tok-anchor-ids.tsv`), and the fast path was 5.1 s at that boundary (84-91 s now, with gates 23 and 24 in it). What is NOT claimed: that the pin is gone from the machine (it is still the authority we read, and the anchor still links it when asked) — only that nothing the port builds, runs or gates by default touches it.
+- CLOSED (owner directive 2026-10-20, "We will not use llama it must be ported all"): measured that ds4-rs never called or linked the pin, and the two default-path executions were moved to opt-in — commit 3729ec4. Gate 22 is native (our reader), the anchor is `tools/eg2_vision_anchor.sh` (run once, green, 211/211 + all four frozen dumps reproduced), the tokenizer reference is committed data (`tests/expected/tok-anchor-ids.tsv`), and the fast path was 5.1 s at that boundary (171 s now, with gates 23, 24 and 25 in it). What is NOT claimed: that the pin is gone from the machine (it is still the authority we read, and the anchor still links it when asked) — only that nothing the port builds, runs or gates by default touches it.
 - CLOSED (row P2.3's cap half, unit 20): the embedding-shaped caps exist, are advertised, are enforced by name and are parity-tested across the three files that carry the item ceiling. CLOSED (quality): the floor is declared and met.
 - OPEN (owner, NEW): the C CLI's tokenizer gap — ds4-c refuses the artifact by name because the family's gemma4 BPE lives Rust-side, so porting it duplicates the encoder. The shipped binaries are Rust.
 - DECIDED (owner, 2026-10-19): the vision tower (phase 8) IS wanted and is now the
@@ -282,9 +261,9 @@ write the *.text.tsv dumps from anything but the port's own forward.
   reference reading already done for it, is parked at docs/eg2vq-batch21-plan.txt.
   No code was written for it.
 - OPEN (environment): the canonical builder cannot build this tree until it can pass `--features native`; fixing it changes a builder shared by every project on this machine, so it is PROPOSED, not done.
-- OPEN (owner, NEW): the two pushes. Outer: `git push publish dev`, range d45394f..HEAD (EIGHTEEN commits as of the commit that carries this handoff; read the log for the exact list: docs/tests/tools/C plus the vision fixtures, their frozen reference, the llama-free boundary, the vision tower on both legs, gates 23 and 24, and the QA passes — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates, and the anchor binary is deliberately NOT tracked because it links the pin). Target publish = https://github.com/JLFN/embeddinggemma2 (rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..HEAD (SIX commits as of 9e1e987a: the caps, the unit-20 QA corrections, the vision tower CPU leg, the citation corrections, the device tower, and one comment correction). Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (both roots, at an earlier boundary — re-run before an actual push), rule 19 QA fresh and PASS for unit 24 (the report covers this unit's surfaces by hand, see section 2), rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
+- OPEN (owner, NEW): the two pushes. Outer: `git push publish dev`, range d45394f..HEAD (TWENTY-ONE commits as of the commit that carries this handoff; read the log for the exact list: the vision fixtures and their frozen reference, the llama-free boundary, the vision tower on both legs, gates 23, 24 and 25, the splice and the engine entry, and the QA passes — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates, and the anchor binary is deliberately NOT tracked because it links the pin). Target publish = https://github.com/JLFN/embeddinggemma2 (rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..HEAD (NINE commits as of 5bd18880: the caps, the unit-20 QA corrections, the vision tower CPU leg, the citation corrections, the device tower, its comment correction, the splice, the engine entry, and media_serial). Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (both roots, at an earlier boundary — re-run before an actual push), rule 19 QA fresh and PASS for unit 24 (unit 25's pass was IN FLIGHT when this handoff was written; its report and findings are qa-evidence/qa-report.md and must be read before the next unit), rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
 - STANDING (owner, 2026-10-19): the owner is AFK and wants automatic continuation after each handoff and compaction; pushes stay offers. Recorded in section 1.
-- The unit-20 QA findings are all closed (four corrections committed, one recorded as informational); the unit-23 and unit-24 QA passes ran under the same recorded model (deepseek-v4.1-CC-flash) and their findings are in qa-evidence/qa-report.md (unit 24's report is the current one; its dispositions are docs/eg2vq-vision-tower-gate24.txt section 9).
+- The unit-20 QA findings are all closed (four corrections committed, one recorded as informational); the unit-23 and unit-24 QA passes ran under the same recorded model (deepseek-v4.1-CC-flash) and their findings are in qa-evidence/qa-report.md (unit 24's dispositions are docs/eg2vq-vision-tower-gate24.txt section 9). Unit 25's QA pass was running when this handoff was written: its report is the current qa-evidence/qa-report.md when it lands, and any finding it raises is the next session's first read.
 - Nothing is in flight in either repository. The outer repo's changes since the
   unit-22 boundary are the boundary unit alone (gate 22 rewritten native, the anchor
   script added and the harness renamed, the tokenizer gate's frozen ids, SHA256SUMS,
@@ -297,12 +276,12 @@ write the *.text.tsv dumps from anything but the port's own forward.
     cd /data/embeddinggemma2
     git log --oneline d6da36680643c48c144536caf658e360b6d30d82..HEAD
     git log --grep "Unit: .* complete" d6da36680643c48c144536caf658e360b6d30d82..HEAD
-    git status --short && git branch -vv                 # clean, on dev, EIGHTEEN unpushed commits
-    tests/run.sh                                         # the fast path (84-91 s warm, 123 s when gate 24 rebuilds its oracle), ending in the rule 19 gate
+    git status --short && git branch -vv                 # clean, on dev, TWENTY-ONE unpushed commits
+    tests/run.sh                                         # the fast path (171 s, gates 23, 24 and 25 included), ending in the rule 19 gate
     sha256sum -c SHA256SUMS                              # FOURTEEN entries
     tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv
     bash tests/qa-gate.sh                                # must be green before any push
-    git -C ds4-rs log --oneline -3 && git -C ds4-rs status --short   # 9e1e987a, clean
+    git -C ds4-rs log --oneline -3 && git -C ds4-rs status --short   # 5bd18880, clean
     cuobjdump --list-elf ds4-rs/ds4_cuda.o | tail -2     # ds4_cuda.sm_89.cubin = the arch record is real
     cat ds4-rs/.ds4-cuda-config.mk                       # CUDA_ARCH := sm_89
     tail -8 out/phase5-gate.log                          # the agreement + retrieval tables
@@ -323,16 +302,20 @@ write the *.text.tsv dumps from anything but the port's own forward.
     #            links the oracle when a device source changed, then runs both
     #            legs in one process plus four attribution flips):
     #            bash tools/eg2_vision_gate24.sh
+    #   gate 25  (unit 25, in the fast path as step 8; it builds the splice oracle,
+    #            runs the splice's four legs, the engine's own probe/encode_memory
+    #            entries and the refusals, about 70 s warm):
+    #            bash tools/eg2_splice_gate25.sh
 
 Trust git over this document's headings: continue with the first unit whose work is
-not in the diff, which at this boundary is section 3 (unit 25, the serving surface —
-the engine entry, the caps and the splice — since the vision tower now runs on both
-legs, gates 23 and 24 are green, and the port executes no pin code). Every phase
-through 7 is landed; unit 21 (batching) is DEFERRED with its spec parked at
-docs/eg2vq-batch21-plan.txt. The outer repo's HEAD is HEAD with its published dev at
-d45394f (EIGHTEEN unpushed as of 0225fe3); ds4-rs is at HEAD with its published dev
-at 29873445. Anything else in either unpushed range must be read before sections 2-6
-are trusted. The artifacts, the retrieval source, every out/ log and the CUDA objects
+not in the diff, which at this boundary is section 3 (unit 26, the WIRE — the serving
+route and the /health row for the image path — since the splice and the engine entry
+now exist and are gated, gates 23, 24 and 25 are green, and the port executes no pin
+code). Every phase through 7 is landed; unit 21 (batching) is DEFERRED with its spec
+parked at docs/eg2vq-batch21-plan.txt. The outer repo's HEAD is HEAD with its
+published dev at d45394f (TWENTY-ONE unpushed as of 6765944); ds4-rs is at HEAD with
+its published dev at 29873445. Anything else in either unpushed range must be read
+before sections 2-6 are trusted. The artifacts, the retrieval source, every out/ log and the CUDA objects
 live under gitignored paths (out/, .models/, ds4-rs/), so they never appear in a
 diff: they are identified by the digests in SHA256SUMS, by the pins inside the gate
 scripts, and by the evidence docs' own digests.
