@@ -17,6 +17,11 @@ evidence lives in `docs/`. This file is only about using it.
 | One-shot CLI | `ds4-rs/ds4` |
 | Server | `ds4-rs/ds4-server` |
 
+Both GGUF files are also published, with a model card, under Apache-2.0 at
+**https://huggingface.co/Jlfn/embeddinggemma2-vq4x4096-q80token** (the card carries
+the file digests, the license text and a measured how-to). This guide uses the local
+`out/` paths.
+
 The model takes text (and/or one image) and returns one **768-dimensional
 L2-normalized** vector per item. Because every vector has unit length, the
 cosine between two of them *is* their dot product, and the numbers below are
