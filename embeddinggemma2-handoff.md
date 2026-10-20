@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 0aef35f16e36b5016f74f2457ee8a9a222269f0a
+last_updated_commit: f7aa6a7aaabbbd297fd93dda67ae716539325cb8
 branch: dev
 remote: 
-handoff_written_at_context_usage: 3%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T19:18:18+02:00
+handoff_written_at_context_usage: 8%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-20T19:19:09+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -88,8 +88,12 @@ Nothing about rule 19 remains open.
 - PUSHED AT THIS BOUNDARY, by the owner's word (2026-10-20): both repos went out as FAST-FORWARDS, after the three checks rule 6, rule 10 and rule 19 require. Rule 6: `gh repo view` with the authenticated CLI on both targets — JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC (`isPrivate: false`) and both the previously pushed targets (`pushedAt` 2026-10-19), so nothing private went anywhere. Rule 10: a FRESH `osv-mcp osv_map_dependencies` of ds4-rs — 1 manifest, 140 packages, 0 vulnerable, osv.dev, queried 2026-10-20T16:20:53Z (same clean result as this boundary's earlier 15:33:12Z scan). Rule 19: `bash tests/qa-gate.sh` at 1d834e9 — `QA GATE: overall PASS (deepseek-v4.1-CC-flash evidence fresh and covering)`, 15 checks, rc=0. Then `git push publish dev` (outer, d45394f..1d834e9) and `git push publish feat/ds41-dsml-carriage:refs/heads/dev` (nested, 29873445..e01eba8e), each rc=0, each verified afterwards by `git ls-remote --heads publish` — a SERVER-side read, not the push's own output: refs/heads/dev is 1d834e9 and e01eba8e, and `git rev-list --count publish/dev..HEAD` is 0 in both repos. What the push carried: no artifact (out/, .models/ and ds4-rs/ are gitignored), so the release is identified by SHA256SUMS' fourteen digests and by the pins inside the gate scripts.
 - A SECOND PUSH AT THE SAME BOUNDARY, also on the owner's word ("yes push it", 2026-10-20), carried the two units landed after the first one: the outer repo's README (`8673d76` — the repository had none, so its GitHub page was empty) and the engine repo's embedding benchmark (`10e73aa0`: `speed-bench/eg2_embed_sweep.sh`, `speed-bench/eg2_embed_vizzio.csv` with its `_health.json`, and `docs/benchmarks/eg2-embedding-2026-10-20/README.md`). The same three checks were re-run FRESH rather than reused: rule 6 `gh repo view` on both targets — JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC (`isPrivate: false`); rule 10 a fresh `osv-mcp osv_map_dependencies` of ds4-rs — 1 manifest, 140 packages, 0 vulnerable, queried 2026-10-20T17:12:44Z; rule 19 `bash tests/qa-gate.sh` — `QA GATE: ALL PASS (no new runtime, route or public-API surfaces relative to publish/dev and ds4-rs/publish/dev)`, rc=0, which is the correct branch for a README and a benchmark harness. Both ranges were proved fast-forward and docs-only BEFORE the push (`git diff --stat publish/dev..HEAD`: outer 1 file, nested 4 files, and no source, crate, test or gate file in either). Then `git push publish dev` (outer, ae265e0..8673d76) and `git push publish feat/ds41-dsml-carriage:refs/heads/dev` (nested, e01eba8e..10e73aa0), each rc=0, each verified afterwards by a SERVER-side `git ls-remote --heads publish`: refs/heads/dev is 8673d76 and 10e73aa0, and `git rev-list --count publish/dev..HEAD` is 0 in both. Five URLs were then fetched to prove what the push promised rather than assert it — raw README.md, the project page, the sweep script, the CSV and the benchmark record are all HTTP 200.
 - Workspace: /data/embeddinggemma2, branch dev, HEAD = 8673d76, which is now ALSO the remote tip of publish/dev; ds4-rs HEAD = 10e73aa0, likewise published. Commits created AFTER this push (the record of the push itself, docs-only) are ahead of the remote by construction: read `git rev-list --count publish/dev..HEAD` in each repo rather than any number printed here. The nested branch stays named feat/ds41-dsml-carriage locally and lands as `dev` on publish, which is the recorded refspec. OUT/, .models/ and ds4-rs/ are gitignored: the artifacts are identified by the digests in SHA256SUMS, and this boundary's six verification logs are in the gitignored out/reverify-d9b3693/.
-- BRANCH TOPOLOGY, brought to rule 23 at this boundary 2026-10-20 (LOCAL ONLY — the remote half is an OFFER, section 3 item 7; nothing was pushed for it). Both repos now carry rule 23's two long-lived branches LOCALLY. Outer: `dev` = 4ec3085 (the integration branch) and `main` = 8673d76, cut at the published publish/dev tip (`git diff --stat main 8673d76` empty). Nested: `dev` = 10e73aa0 (integration; re-pointed from the stale upstream point 5db90986 — which is an ANCESTOR of 10e73aa0, so a fast-forward with nothing lost, and still reachable at fork/dev — and re-tracked from fork/dev to publish/dev) and `main` = 10e73aa0, cut at the same tip (`git diff --stat main dev` empty). The nested branch that WAS named `main` was not ours: it is the upstream ds4-dfm-rs trunk (94d776ac = origin/main = fork/main) and is renamed `upstream-trunk`, still tracking origin/main. The nested `feat/ds41-dsml-carriage` still sits at 10e73aa0, i.e. it now equals the integration tip and is a rule 23 duplicate-retirement candidate (deletion = the owner's call). What is NOT yet true of either REMOTE, measured with the API rather than assumed: neither publish repo has a `main` ref (`gh api repos/<r>/branches` lists dev alone), neither has any ruleset (`gh api repos/<r>/rulesets` empty), and `dev` is unprotected in both (`gh api repos/<r>/branches/dev/protection` -> "Branch not protected", HTTP 404) — rule 23 requires force-push blocked and PR review + status checks on BOTH long-lived branches in both repos.
+- BRANCH TOPOLOGY, brought to rule 23 at this boundary 2026-10-20 and COMPLETED the same day, remote half included (the owner said go; the discharge record is section 3 item 7, and the two bullets below it carry the settings and the CI consequence). Both repos now carry rule 23's two long-lived branches both LOCALLY and ON THE PUBLISH REMOTES. Outer: `dev` = the integration branch, carrying every commit made since publish/dev 8673d76, and `main` = 8673d76, cut at the published publish/dev tip (`git diff --stat main 8673d76` empty). Nested: `dev` = 10e73aa0 (integration; re-pointed from the stale upstream point 5db90986 — which is an ANCESTOR of 10e73aa0, so a fast-forward with nothing lost, and still reachable at fork/dev — and re-tracked from fork/dev to publish/dev) and `main` = 10e73aa0, cut at the same tip (`git diff --stat main dev` empty). The nested branch that WAS named `main` was not ours: it is the upstream ds4-dfm-rs trunk (94d776ac = origin/main = fork/main) and is renamed `upstream-trunk`, still tracking origin/main. The nested `feat/ds41-dsml-carriage` still sits at 10e73aa0, i.e. it now equals the integration tip and is a rule 23 duplicate-retirement candidate (deletion = the owner's call). What is now true of BOTH REMOTES, measured from the API after the fact rather than assumed: each publish repo carries refs/heads/dev and refs/heads/main, with main at 8673d76 (outer) and 10e73aa0 (nested), each equal to its own dev tip, and with dev and main PROTECTED in both (`gh api repos/<r>/branches` -> protected:true on all four; `branches/<b>/protection` -> force-push false, deletions false, a PR required, enforce_admins false, no required status checks). Neither repo has a ruleset: the protection was applied as classic branch protection, which is the shape rule 23's wording describes. The one substantive gap this surfaced is that CI has never been green in the nested repo — see the CI bullet below.
 - TWO RECORD-HYGIENE FACTS settled at this boundary, both measured, both about the tooling rather than the port. (a) A handoff file left DIRTY by the hooks is normal at a boundary: the previous turn's boundary was committed and then the SessionEnd/PreCompact hook rewrote only the three volatile frontmatter fields at 16:03:03 (last_updated_commit to HEAD, the usage reading, the timestamp) — the body was byte-identical, and the next session should fold that write into its own frontmatter commit instead of reading it as uncommitted work. (b) `~/.opengrok/sessions/%2Fdata%2Fembeddinggemma2/handoff-note.txt` claimed this workspace "is NOT a git repository": the claim was TRUE when written — this session's directory was created 2026-10-18T18:36:05Z and the repo's first commit 0b12d1b is 20:47:44 the same evening — and nothing ever removed it, because the probe removes that note only on SessionStart and a session starts once. A hand run of the probe against the now-git workspace printed the correct readout (units since plan start, the progress diff stat, `clean: handoff is current`) and deleted the note. Do not hand-run the probe mid-session for fun: it appends its block into this very file (it was restored from a snapshot here).
+- PROTECTION, and precisely whom it binds (the honest form of "both branches are protected"). Applied 2026-10-20 to dev and main in both repos: force-push blocked, deletions blocked, a PR required. Three of those settings are NOT the obvious ones, each chosen from a measurement rather than a preference: (i) 0 required approvals, because `gh api repos/<r>/collaborators` lists JLFN alone and a required approval could never be satisfied by a second human; (ii) enforce_admins false, because rule 23 makes direct handoff/docs commits on dev mandatory and enforce_admins true would forbid exactly those; (iii) no required status checks, because the outer repo has no workflow at all and the nested repo's only workflow has never passed (next bullet), so requiring one would block every future merge. Consequence, stated plainly: as set, the rules do not bind the owner's own admin token - they bind every other collaborator, bot or credential, and they make the dev -> main PR flow the sanctioned path. The exact payload is at /tmp/eg2-branch-protection.json; tightening later is one PUT with the fields changed.
+
+- CI, RED IN THE NESTED REPO AT THE FIRST RUN IT HAS EVER HAD (a consequence of main existing, not of any change to the code). The 'Host parity' workflow triggers on pushes to main and on pull requests ONLY, so no earlier push to dev ever ran it; pushing main started run 39465195118 on commit 10e73aa0 (2026-10-20T17:20:19Z), which FAILED at its first step, `cargo fmt --all -- --check`, with 79 diff hunks across 27 files. Diagnosis, measured: not toolchain drift (rustfmt 1.97.1, 1.98.0 and 1.99.0 each report the identical 79 hunks), not a missing config option (`use_small_heuristics = "Max"` was tested and is far worse at 3,499 hunks), not a hidden nested config (there is exactly one rustfmt.toml, at the repo root, with no unstable options) - the code line was simply never run through the formatter it declares. It went unnoticed because CI is the only place that checks formatting: tests/run.sh and tests/qa-gate.sh have no fmt step (the Makefile "fmt" hits are filenames), and tests/qa-gate.sh itself SKIPS under GITHUB_ACTIONS. The fix is committed locally as branch chore/fmt-workspace = c595fca3 (27 files, 297 insertions, 170 deletions, `cargo fmt --check` clean afterwards) and is NOT pushed; its rule 19 gate is RED with 23 checks, because the gate's surface heuristic flags all 27 reformatted files and a re-wrapped `pub fn embed_item_ids` signature as surfaces needing a fresh QA-tester report. The deeper CI steps (clippy, the make *-parity targets, the serialized workspace tests) have never executed on a runner at all, so "make CI green" is an unproven unit rather than a formatting tweak - which is why it is offered and not done.
+
 - WHAT IS LEFT IS THE OWNER'S, in order: (1) THE TWO PUSHES ARE TAKEN (taken 2026-10-20 on the owner's word, both fast-forwards, remote tips verified by ls-remote — see the push bullet above and section 3 item 1, now discharged; the only residual is a rollback, which would be the owner's call); (2) the C CLI's tokenizer gap (the Rust host owns encoding; the C CLI refuses the artifact by name); (3) the AUDIO tower (out of scope; the owner asked for vision); (4) a MULTI-IMAGE item (the checkpoint's card allows several `<|image|>`s; this port supports one, `embed.image.per_item_max`, because the splice fills one contiguous run — widening it needs the CPU graph, the device ops and the engine's span check together); (5) RETIRING THE QA GATE'S DEFERRAL BRANCH (tests/qa-gate.sh:150-162), now that the instruction it mechanises is discharged; (6) THE PERFORMANCE UNIT — the owner asked on 2026-10-20 for a benchmark AND an optimization of the embedding path ("we need also to do benchmark and optimize so its fast we have nothing of that"). The BENCHMARK half is DONE and pushed (nested `10e73aa0`; the baseline, the harness and the negative result on the load log's aligned-tier hint are in `docs/benchmarks/eg2-embedding-2026-10-20/README.md`). The OPTIMIZATION half has NOT been started, deliberately: the editor's own rule 0.2 forbids inventing a lever, and the honest first step is phase attribution that does not yet exist for this path — `ds4-bench` has no embed verb, `crates/ds4-perf` has no embedding workload, `ds4-perf` is not even built in this checkout, and `/v1/stats`'s `routes` object has no embed row, so the server neither counts nor times an embedding request. The owner's options, in the order the evidence supports: (a) an embed row in `/v1/stats` carrying the tower's own elapsed time and a request counter, which unblocks real profiling; (b) an embedding workload in `ds4-perf`; (c) a microbenchmark of the VQ dequant against the hypotheses the record already lists. NO unprompted code unit remains.
 
 3. Next unit plan — NOTHING UNPROMPTED REMAINS: the owner's items, and the push mechanics
@@ -178,39 +182,56 @@ owner's own instructions put it.
     refactor, a beauty pass, a new gate for a number nobody questioned) is not
     "continuing the port" and would put the pushed series at risk for no reason.
 
-(7) THE BRANCH STANDARD (rule 23) — MAIN EXISTS LOCALLY; THE REMOTE HALF IS AN OFFER.
-    The owner asked on 2026-10-20 to make a main branch so the repos follow the
-    standard ("lets now make a main so we follow the project standard we have as a
-    skill"). The standard is rule 23 of ~/.opengrok/project-work-rules.md (dev
-    integrates, main is production, dev reaches main only through a reviewed PR).
-    The local half is DONE and verified (section 2's topology bullet): outer
-    `main` = 8673d76, nested `main` = 10e73aa0, each byte-identical in content to
-    the dev tip it was cut from, and the nested local `dev` now tracks publish/dev.
-    What the owner's word would carry, in this order:
-      # 1. the two main refs — one push per repo, both ADDITIVE (a new branch; no
-      #    existing ref moves, so there is nothing to lose if it goes wrong):
-      (cd /data/embeddinggemma2 && git push publish main)
-      (cd /data/embeddinggemma2/ds4-rs && git push publish main)
-      # 2. re-track and prove from the SERVER side rather than from the push's own
-      #    output (the house rule after every push):
-      #    in each repo: git branch -u publish/main main
-      #    then: git ls-remote --heads publish   # refs/heads/main must be at
-      #          8673d76 (outer) and 10e73aa0 (nested), with dev still at its tip
-      # 3. protect BOTH long-lived branches in BOTH repos. This is a repo SETTINGS
-      #    change, not a file change, so it needs the Create-a-branch-protection
-      #    API with required_pull_request_reviews set, allow_force_pushes false and
-      #    allow_deletions false — the exact payload is constructed when the owner
-      #    says go; it is deliberately NOT run here, because applying protection is
-      #    the settings change being offered.
-      # 4. SEPARATE decision, offered not assumed: make main the DEFAULT branch.
-      #    Both repos default to dev today (`gh repo view --json defaultBranchRef`),
-      #    which governs the GitHub landing page and what a fresh clone checks out.
-      #    Rule 23 does not settle it, which is why it is a question and not a step.
-      # ROLLBACK for step 1 alone, if ever needed: `git push publish
-      #   :refs/heads/main` in each repo deletes the ref (git's own refspec for
-      #   deletion); the local branches and both dev tips are untouched either way.
-      # Step 3's reverse is deleting the protection/ruleset, step 4's is the same
-      # PATCH with default_branch=dev.
+(7) THE BRANCH STANDARD (rule 23) — DONE END TO END 2026-10-20; only three
+    owner decisions are left, and each is named in (a)-(c) below.
+    The owner asked to make a main branch so the repos follow the standard ("lets
+    now make a main so we follow the project standard we have as a skill") and
+    then took the offer ("yes do it"). What that carried, all of it measured after
+    the fact rather than assumed from the push's own output:
+      - STEP 1, the two main refs, one push per repo, both ADDITIVE (a new ref; no
+        existing ref moved, so nothing was at risk): `git push publish main` in
+        each repo, rc=0 both. Proved from the SERVER side: `git ls-remote --heads
+        publish` shows refs/heads/main = 8673d76094b721c7ae1c09440a7957ce983630e7
+        (outer) and = 10e73aa0b253f639fd248c338f371802fe1e1b83 (nested), with dev
+        still at its own tip in both; `gh api repos/<r>/branches/main` returns the
+        same shas. Both local `main` branches then re-tracked:
+        `git branch -u publish/main main`.
+      - STEP 3, protection, on BOTH long-lived branches in BOTH repos, applied with
+        the payload at /tmp/eg2-branch-protection.json (rerun the PUTs from it if
+        it is gone): required_pull_request_reviews with 0 required approvals,
+        enforce_admins false, allow_force_pushes false, allow_deletions false, and
+        required_status_checks null. Verified independently by re-reading the API:
+        `gh api repos/<r>/branches` reports protected:true for dev and main in both
+        repos, and `gh api repos/<r>/branches/<b>/protection` shows force_push false,
+        deletions false, pr set.
+      - WHY 0 APPROVALS AND enforce_admins FALSE, rather than the obvious 1/true:
+        measured, not preferred. `gh api repos/<r>/collaborators` lists JLFN alone,
+        so a required approval could never be satisfied by a second human; and rule
+        23 mandates the handoff/docs commits be made DIRECTLY on dev, which
+        enforce_admins true would make impossible. As set, the rules bind every
+        other actor and token, while the owner keeps the bypass the rule's own
+        exception needs. Tightening later is one PUT with the two fields changed,
+        and the trade is stated rather than hidden.
+      - WHAT THE OWNER'S WORD STILL GOVERNS:
+        (a) THE DEFAULT BRANCH. Both repos default to dev (`gh repo view --json
+            defaultBranchRef`); rule 23 does not settle it, and it decides the
+            GitHub landing page and what a fresh clone checks out. Switch:
+            `gh api --method PATCH repos/<r> -f default_branch=main` (reverse: the
+            same call with dev).
+        (b) THE FORMATTING UNIT THAT MAKES CI GREEN (section 2's CI bullet).
+            Nested branch `chore/fmt-workspace` = c595fca3 is committed LOCALLY and
+            NOT pushed. Its rule 19 gate is red (23 checks) and needs a fresh
+            QA-tester report over the 27 files before it could be pushed, so it is
+            offered as a unit, not delivered. Discard it with
+            `git branch -D chore/fmt-workspace` if relaxing CI is preferred
+            instead; nothing is lost, because its content is exactly what
+            `cargo fmt --all` produces under the checked-in rustfmt.toml.
+        (c) RETIREMENT of the duplicate `feat/ds41-dsml-carriage` (see the
+            paragraph right below).
+      - ROLLBACK for what WAS taken: `git push publish :refs/heads/main` in each
+        repo deletes the ref, and `gh api --method DELETE
+        repos/<r>/branches/<b>/protection` removes the protection. Neither touches
+        a commit, a dev tip, or any artifact.
     Nested-only cleanup, still unowned: `feat/ds41-dsml-carriage` now equals
     `dev` (both 10e73aa0), so rule 23's duplicate rule says retire it once dev
     carries the work — a branch DELETION, so it is the owner's call like every
@@ -391,13 +412,15 @@ release is the owner's answer, not more code.
 
 Trust git over this document's headings: every unit whose work this document
 describes is in the diff, both repositories are clean, and NOTHING PROMPTED REMAINS
-— section 3 is the owner's list (the two pushes, TAKEN, plus the branch-standard
-offer that is new at this boundary, item 7, plus the four scope decisions the
-owner owns: the C CLI's tokenizer, the audio tower, a multi-image item, and the QA
-gate's deferral branch). Every code phase through 8 is
+— section 3 is the owner's list: the two pushes and the branch standard, both TAKEN
+at this boundary (item 7 records the discharge and the three decisions still open
+under it — the default branch, the formatting unit that makes CI green, and the
+duplicate-branch retirement), plus the four longer-standing scope decisions the
+owner owns (the C CLI's tokenizer, the audio tower, a multi-image item, and the QA
+gate's deferral branch), and the optimization half of the performance request. Every code phase through 8 is
 landed, gated and QA'd
 (the report reads `verdict: overall PASS` and tests/qa-gate.sh is green). The outer
-repo's dev HEAD carries every commit since publish/dev 8673d76 (one docs commit
+repo's dev HEAD carries every commit since publish/dev 8673d76 (several docs commits
 ahead by construction — read `git rev-list --count publish/dev..HEAD` rather than a
 number printed here); ds4-rs dev is 10e73aa0 and its published dev is the same
 10e73aa0, with nothing unpushed. Anything else in either unpushed range must be read
