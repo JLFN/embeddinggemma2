@@ -1,0 +1,263 @@
+Unit 27 evidence — gate 27: several items through the tower in ONE call
+(the batch). Phase-doc row P2.3's last slice, the plan's last code row.
+
+Written 2026-10-20.  Every number below was measured in this session and is in
+out/gate27.log (the gate's own output) unless a section names another file.  The
+code is ds4-rs, branch feat/ds41-dsml-carriage.
+
+1. WHAT LANDED
+
+   - cuda/eg2vq_attn.cuh: the attention kernel's key range is ITEM-RELATIVE.  It
+     takes `pos` (each row's position inside its own item) and `len` (that item's
+     row count) and computes k0/k1 inside the row's item, so one item's rows can
+     never enter another's window.  The ROW COUNT is no longer a launcher-level
+     refusal (a packed block is as long as its items add up to); what must stay
+     inside the 2048-key shared plane is each ITEM's length, and the device core
+     checks that before launching.  A defensive clamp keeps an inconsistent
+     pos/len pair inside the block.
+   - cuda/eg2vq_ops.cuh: RoPE indexes its tables by `pos[r]` instead of the row
+     index; the 768 projection writes each row's own plane (acc + row * n_out)
+     with a plain store instead of an atomicAdd into one accumulator; the pool
+     becomes one block per ITEM (eg2vq_ops_proj768_pool_batch), reducing that
+     item's own rows in order with that item's own mean.
+   - ds4_eg2vq_gpu.cuh: the workspace gains three metadata planes (pos, len as
+     int32 rows; the n_items + 1 spans as uint32), the projection's per-row plane
+     (`acc`) and a per-item output plane (`out`, which was one 768-float row
+     before); the core takes an item-span table and DERIVES pos/len from it in
+     one place (a second, caller-supplied copy could only disagree with it); the
+     RoPE tables are sized by the ITEM CEILING (2048 positions) rather than the
+     row budget, because a table is indexed by a position, not by a row.  New
+     entry: `ds4_gpu_eg2vq_embed_batch`; the one-item entries are now one-item
+     calls of the same core (item_off = {0, n_ids}), which is why they cannot
+     disagree with it.
+   - ds4_eg2vq.h: `DS4_EG2VQ_MAX_ROWS` 8192 (the row budget, mirroring the
+     Rust BATCH_ROWS_MAX and held equal by the caps test), the batch entry's
+     declaration, and `ds4_eg2vq_ref_embed_batch`.
+   - ds4_eg2vq_graph.inc: the CPU leg's batch entry LOOPS the gated one-item
+     reference, deliberately and in so many words: the CPU leg is this port's
+     oracle, and looping it is what makes "a batched item's vector is its
+     single-item vector" true by construction there.
+   - ds4.c / ds4.h: `ds4_engine_embed_gemma_vq_batch` (family, weights, span and
+     row-budget checks, then ONE `eg2vq_device_ensure` for the whole call's rows,
+     or the CPU batch entry), and `eg2vq_device_ensure` now sizes the workspace by
+     ROWS and clamps to DS4_EG2VQ_MAX_ROWS.
+   - native/bridge/ds4_bridge.{c,h} + crates/ds4-sys/src/lib.rs +
+     crates/ds4-core/src/lib.rs: `ds4_bridge_eg2vq_embed_batch` and
+     `Model::embed_gemma_vq_batch(ids, item_off)`, with the same refusals checked
+     in Rust so the message is the same on every backend.
+   - crates/ds4-server/src/serve.rs: `/v1/embeddings` prepares every item, then
+     hands its TEXT items to ONE batch call and each media item to its own
+     (`embed_gemma_vq_image`: one device vision workspace per engine is serial by
+     design), and renders the response in request order as before.  The grouping
+     is a route decision the wire cannot show, so it has its own HTTP-level tests
+     (crates/ds4-server/src/serve_embed_batch_test.rs, 4 tests: three text items
+     are one call with the spans the tokenizer produced; a media item is excluded
+     from the batch and the order survives; a media-only request makes no batch
+     call; an engine fault is a 500 that quotes the engine).
+   - The CLI's `--embed` deliberately stays on the one-item entry: the verb's
+     contract is one item, so it cannot use a row budget, and leaving it there is
+     what keeps that entry exercised in-tree (commented in
+     crates/ds4-cli/src/lib.rs).
+
+2. WHY THIS IS THE REFERENCE'S OWN SEMANTICS (rule 0.2)
+
+   The batch is not an invention: llama.cpp's own batched path packs the tokens of
+   several sequences CONTIGUOUSLY and carries per-token seq_id[] and pos[]
+   (/data/llama.cpp @ 31288c9c, src/llama-batch.cpp:140-193), and its mask keeps
+   different sequences apart (src/llama-graph.cpp:482-517, `s0 != s1`) while the
+   positions stay per-sequence.  The port mirrors exactly those two facts: rows
+   packed with no padding, and every query's key range inside its own item with
+   positions counted from its own item's start.  The CPU leg needs none of that
+   explicitly, because it runs each item alone.
+
+3. THE ROW COST, AND A STALE NUMBER FOUND ON THE WAY
+
+   The layout is linear in the row budget.  Per row it now charges 116,748 bytes:
+
+       27,648 f32 planes    110,592 B   h, x, f, a, q_swa, q_full, k+v, attn_swa,
+                                         attn_full, fg, fu, fd, pg, pp, ple and the
+                                         image splice's in_soft
+       ids, pos, len             12 B   the token id and the batch's metadata
+       out + acc              6,144 B   the projection's per-row plane and the
+                                         pooled per-item result (768 f32 each)
+
+   plus the (rows + 1) item spans, rounded to the layout's 16-byte alignment.
+   Measured by the gate against that model, both sides computed independently:
+   2048 rows 228.0 MiB, 3881 rows 456.06 MiB, 8192 rows 912.13 MiB.
+
+   THE STALE NUMBER: this unit's own layout arithmetic exposed that the figures
+   the tree carried until now -- 108,548 B a row (4 + 27,136 x 4), hence 848.0
+   MiB at 8192 rows, in crates/ds4-core/src/gemma_vq.rs's comment and in
+   crates/ds4-core/tests/eg2vq_serving_caps.rs -- were one plane short of the
+   code.  Unit 25's image splice added the 512-float `in_soft` plane (2,048 bytes
+   a row) and nobody folded it into those two places, so the layout had been
+   charging 110,592 B a row (216.00 MiB at 2048 rows) while the docs and the test
+   still said 212.01 MiB (the phase-7 measurement they cited, docs/eg2vq-device-gate7.txt
+   :407-411, was taken before the splice existed).  Unit 27 corrects both, states
+   the plane list, and CROSS-CHECKS the result against a measurement (the gate's
+   two workspace figures) instead of against itself.  This is a documentation and
+   test-arithmetic defect, not a code defect: nothing computed with the wrong
+   number; a reader would have.
+
+4. THE MEASURED RESULT (out/gate27.log, gate 27 = tests/run.sh step 10)
+
+   The fixtures are committed data: three of SciFact's longest pool documents and
+   its three shortest queries (6 items, 3,881 rows, 1,414 down to 14 tokens), and
+   64 short queries (1,280 rows).  Both are tokenized by the Rust host's own
+   example in the gate itself.
+
+   leg 1 -- the mixed-length set, one call against six:
+
+       call:        6 items, 3881 rows, one workspace of 456.06 MiB, 1283.3 ms
+       equality:    every element byte-identical to the per-item run,
+                    max per-element delta 0.000e+00, over 6 items x 768 values
+       per-item:    1492.6 ms for 3881 rows (2600 rows/s), of which the first
+                    item's 507.9 ms/1414 rows carries the process's first wave
+       per-item, warm (first excluded): 984.7 ms for 2547 rows (2587 rows/s)
+       one call:    1283.3 ms for 3881 rows (3024 rows/s) -- ONE launch wave
+       one call, warm context: 1270.2 ms for 3881 rows (3055 rows/s)
+       ratio:       one warm call is 0.85x the per-item total, 1.18x its warm rate
+
+   leg 2 -- 64 small items, the shape batching exists for:
+
+       call:        64 items, 1280 rows, one workspace of 142.52 MiB, 114.4 ms
+       equality:    every element byte-identical, max delta 0.000e+00 over 64
+                    items x 768 values
+       per-item:    967.2 ms for 1280 rows (1323 rows/s)
+       one call:    114.4 ms for 1280 rows (11190 rows/s) -- ONE wave against 64
+       one call, warm context: 111.8 ms (11448 rows/s)
+       ratio:       one warm call is 0.12x the per-item total, 8.65x its warm rate
+
+   The two legs together are the honest picture: at ~640 rows an item the tower is
+   compute-bound and batching removes the per-call overhead (6 waves -> 1, 1.18x
+   the warm rate), while at ~20 rows an item the per-call overhead IS the cost and
+   the same call is 8.65x the per-item rate (1323 -> 11190 rows/s).  A throughput
+   claim made from leg 1 alone would be a claim about the wrong condition.
+
+   leg 3 -- the row budget's boundary at the device entry:
+
+       call:        4 items, 8192 rows, one workspace of 912.13 MiB, 3280.8 ms
+       accepted:    8192 rows in one call
+       call:        5 items, 8193 rows, one workspace of 940.63 MiB, 0.0 ms
+       refused:     the device batch entry took none of this call
+
+   leg 4 -- the wire, both backends, and the advertised budget:
+
+       leg cuda:    three items as ONE request == three single requests, byte for byte
+       leg cpu:     the same through ds4_eg2vq_ref_embed_batch, byte for byte
+       four items of exactly 2048 tokens (8192 rows): 200, one call, four embeddings
+       the same four plus a fifth item: 400 -- {"error":{"message":"input[4] crosses
+         this model's 8192-token budget for one embedding call: the request's first
+         5 inputs already add up to 8202 tokens (GET /health reports
+         embed.batch_rows_max); split the request", ...}}
+
+   The exactly-8192-row request is constructible because the fixture's task prefix
+   and BOS/EOS tokenize to 10 ids, so `k` one-token units give k + 10 ids (measured
+   in the gate: 10 units -> 20 tokens, 20 -> 30); 2038 units is exactly the 2048
+   ceiling, and four such items are exactly the budget.
+
+5. THE SINGLE-ITEM ENTRY'S ARITHMETIC: ONE CHANGE, MEASURED
+
+   Everything a single-item call computes is unchanged except the projection's
+   accumulation: it was an atomicAdd of each row's contribution into one 768-float
+   accumulator (an order the hardware chose), and it is now the item's own rows
+   summed in row order, which is the CPU reference's own order
+   (ds4_eg2vq_graph.inc:363-365).  Measured on the six-item fixture against the
+   vectors the pre-change binary wrote (out/eg2vq-batch27-before.tsv vs
+   ...-after.tsv, same ids, same weights, one binary rebuilt):
+
+       device before-vs-after: maxabs 1.000e-07, rel_rms 4.655e-07, cosine 1.000000011
+       cpu    before-vs-after: maxabs 0.000e+00, rel_rms 0.000e+00, cosine 1.000000000
+
+   So the device's last printed decimal can move by one, deterministically, and the
+   device-vs-CPU agreement is unchanged at the printed precision: the CPU leg was
+   run on the same fixture after the change (out/eg2vq-batch27-after.log), where
+   the per-item relative RMS reads 4.978e-04 / 1.117e-04 / 4.172e-04 / 2.163e-04 /
+   3.795e-04 / 2.158e-04, against the pre-change run's 4.978e-04 / 1.117e-04 /
+   4.173e-04 / 2.163e-04 / 3.795e-04 / 2.158e-04 -- one item, in its last printed
+   digit.  Gate 7's declared bounds (cos >= 0.999999, rel_rms <= 1e-3) are met by
+   a factor of a thousand.  NO claim is made that the change made the device
+   closer to the reference: at this precision the two agreement figures are the
+   same, and the honest statement is that it made the device deterministic and
+   put its accumulation in the reference's order.
+
+6. THE REFUSALS, BY NAME
+
+   At the device entry (five cases, gate leg 1; each leaves the caller's buffer
+   untouched -- the gate checks every float against a sentinel):
+
+       a span that does not rise (empty item)     refused, output untouched
+       a table that does not end at n_ids         refused, output untouched
+       a table that does not cover (flat end)     refused, output untouched
+       zero items                                 refused, output untouched
+       a 2049-token item (past the key plane)     refused, output untouched
+
+   The 2049-token case is the one whose check MOVED in this unit: it used to be the
+   launcher's `n_tok > EG2VQ_ATTN_KEYS_MAX`, and it is now the core's per-item
+   check (the launcher cannot see the item bounds any more than it can see the
+   rows).  tests/test_eg2vq_attn.cu's "4096 tokens refused" case was replaced by a
+   head-geometry refusal that is still the launcher's, with a comment naming where
+   the row-count bound went.
+
+   At the wire: the row budget is refused as a 400 that quotes
+   `embed.batch_rows_max` (leg 4 above); the six image-shape refusals are gate
+   26's, unchanged.
+
+   THE REGRESSION THIS UNIT'S OWN GATES CAUGHT, recorded because it is the kind of
+   thing a reader will otherwise wonder about: the first version of the batch core
+   took the image span's START from the item-span table (item_off[0]) instead of
+   deriving it from the ids, which is correct for a one-item call starting at row 0
+   only up to the placeholder's own position -- with the splice's usual
+   [BOS][boi][88 placeholders][eoi][EOS] the start is 2, so the core refused the
+   device splice outright.  Gate 25 caught it on the unit's first full fast-path
+   run ("SPLICE ORACLE: the device splice refused eg2-vision-pattern-512x384.png"),
+   and the fix is the one in section 1: the core DERIVES the start and the run's
+   shape from the ids, exactly as the CPU reference does while it fills the block
+   (ds4_eg2vq_graph.inc:207-232), and the adapter no longer carries its own copy
+   of that check.  Nothing else in this unit changed the image path, and gate 25's
+   numbers after the fix are the ones its own evidence records.
+
+7. THE KERNEL/UNIT GATES
+
+   tests/test_eg2vq_attn.cu and tests/test_eg2vq_ops.cu were updated for the new
+   signatures and gained the batch cases, because those are where the changed
+   kernels have their own references:
+
+       rope pos restarts per item        exact (maxabs 0.0) against the per-item table
+       two items packed (40 + 1200 rows) each row reads its own item, against the
+                                         two single-item runs
+       3 items packed (1/349/40 rows)    the pool is per item, worst rel_rms <= 1e-5
+       5 query heads (not the tower's 4) refused, output untouched
+
+8. WHAT IS NOT CLAIMED
+
+   - No serving latency and no concurrency number: the commits' messages and this
+     document carry only the two call-level comparisons named in section 4, on the
+     sets named, in one process.
+   - Nothing about the media path's batching: a media item keeps its own call
+     because one device vision workspace per engine is serial by design
+     (`embed.image.serial`), and gate 26 remains that path's measurement.
+   - Nothing new about the vision tower or the splice (units 24-26).
+   - The exact 8192-row boundary is measured at the DEVICE entry and at the wire's
+     crossing; the wire's exact-8192 case is exercised too (leg 4's four 2048-token
+     items), which is why that fixture is built in the gate rather than assumed.
+
+9. RULE 19 STATUS, AND WHAT THE NEXT UNIT INHERITS
+
+   This was the plan's LAST code row.  With unit 27 landed the port is
+   code-complete, so the owner's recorded instruction -- "the QA should not run
+   before we are complete with the entire code" -- is now SATISFIED, and the
+   instruction's other half binds: qa-evidence/qa-deferral.txt must be DELETED and
+   ONE rule 19 pass must run over the whole accumulated port (every unit since unit
+   24, whose report is the last QA evidence that exists; the QA model is the one the
+   project recorded, deepseek-v4.1-CC-flash).  Until that pass produces a fresh
+   qa-evidence/qa-report.md reading `verdict: overall PASS`, tests/qa-gate.sh keeps
+   printing the deferral, and leaving it in place after this unit would be a rule 19
+   violation with the deferral as its alibi.
+
+   The pass must read by hand what the surface extractor cannot see (finding F6:
+   it matches single-line definitions, so multi-line C entry points never appear in
+   its list).  The multi-line entries this unit added:
+   ds4_engine_embed_gemma_vq_batch, ds4_gpu_eg2vq_embed_batch,
+   ds4_eg2vq_ref_embed_batch, eg2vq_ops_proj768_pool_batch,
+   ds4_bridge_eg2vq_embed_batch, and Model::embed_gemma_vq_batch's Rust checks.
