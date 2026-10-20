@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 65986f71b80fea3d63800b7afb6fc194acb6f588
+last_updated_commit: 1d834e98d84560075df5d78e6b7e882d078c717b
 branch: dev
 remote: 
-handoff_written_at_context_usage: 12%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T18:10:40+02:00
+handoff_written_at_context_usage: 16%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-20T18:11:08+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -85,9 +85,10 @@ Nothing about rule 19 remains open.
 - STALE-STATE SWEEP AT THIS BOUNDARY (commit 6cd172f, records only, no code): three tracked files still asserted rule 19 was DEFERRED after unit 28 had discharged it — tests/run.sh's step-11 prose (naming qa-evidence/qa-deferral.txt, a file deleted in 9f252ef) and sections 8 and 9 of the gate-26 and gate-27 evidence docs, each of which now carries a dated LATER NOTE in the shape unit 28 used on gate 20's document — and docs/ds4-gemma-port-phases.md row X.1's status cell read OPEN (the legend's "not started") although its four legs are delivered; the cell now records that with each leg cited, the row's content unchanged. The phase doc's genuinely open rows are now exactly three: P4.2 (the audio tower, the owner's scope decision), X.3 (KV checkpoints, out of scope) and X.4 (a push-time checklist).
 - LEFT IN PLACE, PUT TO THE OWNER (section 3 item 5): the deferral BRANCH in tests/qa-gate.sh (lines 150-162). It is live behaviour, not a stale string — a checked-in qa-evidence/qa-deferral.txt would still make the gate exit 0 holding no verdict — and the QA report on disk describes the gate as it stands, so retiring it is the owner's call rather than a sweep fix.
 - HARNESS LESSONS, both measured. (1) Never EDIT tests/run.sh while it is running: Bash reads a script by byte offset, so a mid-run edit killed a healthy run after step 7 with `tests/run.sh: line 102: syntax error near unexpected token '('` — and because the run was piped to tail, the pipeline's exit status was 0, so the wreckage looked like a pass until the output was read. Freeze the tree first, then run. (2) The fast path needs about 4 GB of free /tmp, because loader gate 3 (step 4) makes eight tamper copies of the 417 MiB artifact, and /tmp here is a 16 GiB tmpfs SHARED with every other session on this machine: a concurrent job's test run can take it to zero and step 4 dies with `cp: error copying '/tmp/eg2-loader-check.XXXXXX/base.gguf' ...: No space left on device` (measured 2026-10-20 18:06, while another session was writing /tmp/ds4-v41-disk-* and /tmp/ds4-cache-ple-*). Read that as environmental pressure, not as a defect in the port — the free-byte count is the diagnosis; this project's own /tmp/eg2-* litter (a 957 MiB pile of old gate copies and logs) was cleared and the same run went green in 3 m 0 s.
-- Workspace: /data/embeddinggemma2, branch dev, HEAD = d9b3693, tree clean at this boundary. Unpushed: outer, every commit since publish/dev d45394f — 36 as of d9b3693, and `git rev-list --count publish/dev..HEAD` is the authority, never a number printed here; ds4-rs TWELVE over 29873445 (tip e01eba8e, untouched at this boundary). Both pushes are OFFERS (section 3 and 7). OUT/, .models/ and ds4-rs/ are gitignored: the artifacts are identified by the digests in SHA256SUMS, and this boundary's six verification logs are in the gitignored out/reverify-d9b3693/.
+- PUSHED AT THIS BOUNDARY, by the owner's word (2026-10-20): both repos went out as FAST-FORWARDS, after the three checks rule 6, rule 10 and rule 19 require. Rule 6: `gh repo view` with the authenticated CLI on both targets — JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC (`isPrivate: false`) and both the previously pushed targets (`pushedAt` 2026-10-19), so nothing private went anywhere. Rule 10: a FRESH `osv-mcp osv_map_dependencies` of ds4-rs — 1 manifest, 140 packages, 0 vulnerable, osv.dev, queried 2026-10-20T16:20:53Z (same clean result as this boundary's earlier 15:33:12Z scan). Rule 19: `bash tests/qa-gate.sh` at 1d834e9 — `QA GATE: overall PASS (deepseek-v4.1-CC-flash evidence fresh and covering)`, 15 checks, rc=0. Then `git push publish dev` (outer, d45394f..1d834e9) and `git push publish feat/ds41-dsml-carriage:refs/heads/dev` (nested, 29873445..e01eba8e), each rc=0, each verified afterwards by `git ls-remote --heads publish` — a SERVER-side read, not the push's own output: refs/heads/dev is 1d834e9 and e01eba8e, and `git rev-list --count publish/dev..HEAD` is 0 in both repos. What the push carried: no artifact (out/, .models/ and ds4-rs/ are gitignored), so the release is identified by SHA256SUMS' fourteen digests and by the pins inside the gate scripts.
+- Workspace: /data/embeddinggemma2, branch dev, HEAD = 1d834e9, which is now ALSO the remote tip of publish/dev; ds4-rs HEAD = e01eba8e, likewise published. Commits created AFTER this push (the record of the push itself, docs-only) are ahead of the remote by construction: read `git rev-list --count publish/dev..HEAD` in each repo rather than any number printed here. The nested branch stays named feat/ds41-dsml-carriage locally and lands as `dev` on publish, which is the recorded refspec. OUT/, .models/ and ds4-rs/ are gitignored: the artifacts are identified by the digests in SHA256SUMS, and this boundary's six verification logs are in the gitignored out/reverify-d9b3693/.
 - TWO RECORD-HYGIENE FACTS settled at this boundary, both measured, both about the tooling rather than the port. (a) A handoff file left DIRTY by the hooks is normal at a boundary: the previous turn's boundary was committed and then the SessionEnd/PreCompact hook rewrote only the three volatile frontmatter fields at 16:03:03 (last_updated_commit to HEAD, the usage reading, the timestamp) — the body was byte-identical, and the next session should fold that write into its own frontmatter commit instead of reading it as uncommitted work. (b) `~/.opengrok/sessions/%2Fdata%2Fembeddinggemma2/handoff-note.txt` claimed this workspace "is NOT a git repository": the claim was TRUE when written — this session's directory was created 2026-10-18T18:36:05Z and the repo's first commit 0b12d1b is 20:47:44 the same evening — and nothing ever removed it, because the probe removes that note only on SessionStart and a session starts once. A hand run of the probe against the now-git workspace printed the correct readout (units since plan start, the progress diff stat, `clean: handoff is current`) and deleted the note. Do not hand-run the probe mid-session for fun: it appends its block into this very file (it was restored from a snapshot here).
-- WHAT IS LEFT IS THE OWNER'S, in order: (1) THE TWO PUSHES (offers only; the mechanics are section 3); (2) the C CLI's tokenizer gap (the Rust host owns encoding; the C CLI refuses the artifact by name); (3) the AUDIO tower (out of scope; the owner asked for vision); (4) a MULTI-IMAGE item (the checkpoint's card allows several `<|image|>`s; this port supports one, `embed.image.per_item_max`, because the splice fills one contiguous run — widening it needs the CPU graph, the device ops and the engine's span check together); (5) RETIRING THE QA GATE'S DEFERRAL BRANCH (tests/qa-gate.sh:150-162), now that the instruction it mechanises is discharged. NO unprompted code unit remains: if a session finds nothing new from the owner, the honest action is to stop and say so, not to invent work.
+- WHAT IS LEFT IS THE OWNER'S, in order: (1) THE TWO PUSHES ARE TAKEN (taken 2026-10-20 on the owner's word, both fast-forwards, remote tips verified by ls-remote — see the push bullet above and section 3 item 1, now discharged; the only residual is a rollback, which would be the owner's call); (2) the C CLI's tokenizer gap (the Rust host owns encoding; the C CLI refuses the artifact by name); (3) the AUDIO tower (out of scope; the owner asked for vision); (4) a MULTI-IMAGE item (the checkpoint's card allows several `<|image|>`s; this port supports one, `embed.image.per_item_max`, because the splice fills one contiguous run — widening it needs the CPU graph, the device ops and the engine's span check together); (5) RETIRING THE QA GATE'S DEFERRAL BRANCH (tests/qa-gate.sh:150-162), now that the instruction it mechanises is discharged. NO unprompted code unit remains: if a session finds nothing new from the owner, the honest action is to stop and say so, not to invent work.
 
 3. Next unit plan — NOTHING UNPROMPTED REMAINS: the owner's items, and the push mechanics
 
@@ -99,19 +100,29 @@ bullet). There is no further code unit this session may start on its own initiat
 What follows is what a session may DO when the owner answers, in the order the
 owner's own instructions put it.
 
-(1) THE TWO PUSHES — OFFERS ONLY, never taken unprompted (rule 23). When the owner
-    says push, do exactly this:
+(1) THE TWO PUSHES — TAKEN 2026-10-20 on the owner's word ("yes push to thsi two
+    remote repo"): outer publish/dev d45394f..1d834e9 and nested publish/dev
+    29873445..e01eba8e, both fast-forwards, both rc=0, both verified by ls-remote
+    afterwards (section 2's push bullet carries the three pre-push checks and their
+    results). There are exactly TWO destinations — JLFN/embeddinggemma2 and
+    JLFN/embeddinggemma2-ds4-rs — and both are PUBLIC; the nested repo's other two
+    remotes (fork = JLFN/ds4-dfm-rs, origin = Baekpica/ds4-dfm-rs) are upstreams this
+    project reads and does not push to, and they were checked for visibility only
+    because rule 6 says check the target rather than assume it. The recipe stays here
+    for any later docs-only commit and because it is what a next push must re-run in
+    full — the counts MUST come from `git rev-list --count` in each repo, never from
+    this document:
 
     OUTER (docs, tools, tests, gates, evidence):
       cd /data/embeddinggemma2
       git ls-remote --heads publish                 # the remote's own tip; never the prose's
       gh repo view JLFN/embeddinggemma2             # rule 6: PUBLIC, and still the intended target
-      osv-mcp osv_map_dependencies /data/embeddinggemma2/ds4-rs   # rule 10, fresh (last: 140 pkgs / 0 vuln, 2026-10-20T12:11Z)
+      osv-mcp osv_map_dependencies /data/embeddinggemma2/ds4-rs   # rule 10, fresh (last: 140 pkgs / 0 vuln, 2026-10-20T16:20:53Z)
       bash tests/qa-gate.sh                         # rule 19: must print QA GATE: overall PASS
-      git push publish dev                          # d45394f..HEAD, fast-forward
+      git push publish dev                          # fast-forward
     NESTED (the engine):
       cd /data/embeddinggemma2/ds4-rs
-      git push publish feat/ds41-dsml-carriage:refs/heads/dev    # 29873445..HEAD, fast-forward
+      git push publish feat/ds41-dsml-carriage:refs/heads/dev    # fast-forward
     ROLLBACK if a push must be undone: the ranges are fast-forwards, so the reverse
     is a force-push to the recorded tip (outer `git push --force-with-lease publish
     d45394f:refs/heads/dev`, nested `git push --force-with-lease publish
