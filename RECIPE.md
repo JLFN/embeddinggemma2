@@ -21,6 +21,10 @@ deepseek4|motif3|solar-open2|exaone-moe|dots3-note|qwen4exp|glm5-next|k2-horizon
 This artifact is the preparation for that port; section 6 is what the port has to
 implement.
 
+To use the finished artifact — the one-shot CLI, the HTTP route, batching, images,
+and turning a PDF into a searchable index — see `docs/USAGE.md` (every command there
+was run and every number measured on 2026-10-20).
+
 ## 1. Pinned inputs
 
 | Input | Revision |
