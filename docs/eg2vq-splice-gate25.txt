@@ -1,0 +1,221 @@
+THE IMAGE SPLICE, AND THE ENGINE ENTRY (unit 25, phase 8 row P4.6)
+=================================================================
+
+What this document records: the image's soft tokens entering the text tower the way
+the reference does it, the gate that measures it against the frozen splices, the
+engine-level entry the bridge and the serving route call, and the two things this
+unit found that a reader of the graph alone would get wrong.  It does not restate
+the vision tower (units 23 and 24) or the text tower (phases 1 to 7).
+
+Everything below was measured on 2026-10-20 on this workspace by the commands named
+with each number: tools/eg2_splice_gate25.sh over
+ds4-rs/tests/parity/eg2vq_splice_cuda_oracle.c, which runs both towers in one
+process and reads the frozen dumps as data.
+
+
+1. WHAT LANDED
+--------------
+
+ds4-rs:
+
+  - ds4_eg2vq_ref_embed_image (CPU) and ds4_gpu_eg2vq_embed_image (device): the text
+    tower's own forward with the image span's rows taken from the vision tower's
+    soft block, UNSCALED, while every token row keeps its sqrt(n_embd) scale.  Both
+    share the pure-text body (eg2vq_ref_embed_core / eg2vq_gpu_embed_core), so the
+    path every earlier gate measured is the same code; both refuse a span that is
+    not one contiguous run of exactly n_soft placeholders, and the CPU twin refuses
+    the same shape (the reference's batch has the span as one chunk).
+  - DS4_EG2VQ_IMAGE_TOKEN_ID (258880) in ds4_eg2vq.h, with the tokenizer check that
+    settles it (see section 2), and cuda/eg2vq_ops.cuh's eg2vq_ops_embed_image.
+  - the engine entry: ds4_engine_vision_probe and ds4_engine_vision_encode_memory
+    carry a gemma_vq case, the load switch takes the companion mmproj for this
+    family, and the engine owns the vision device plan and workspace beside the text
+    tower's (ds4.c's eg2vq_vision_device_ensure; freed in the same close path).
+  - crates/ds4-core/examples/gemma_vq_vocab.rs: prints the token strings an artifact
+    carries for a list of ids -- how the three image ids are checked.
+  - the caps: crates/ds4-core/src/serving.rs's GemmaVq ServingCaps now advertises
+    media_serial = true (one device workspace per engine, section 7).
+
+outer repo: tools/eg2_splice_gate25.sh, gate 25 as fast-path step 8, this document.
+
+
+2. THE SEQUENCE, AND THE REFERENCE'S OWN RULE
+---------------------------------------------
+
+The reference's splice was read first-hand, twice over:
+
+  - the anchor harness (tests/parity/eg2vq_vision_anchor.cpp) builds ONE batch whose
+    text entries are token ids and whose image-span entries are raw embeddings, all
+    in sequence 0 with positions 0..91, on the model's own llama_batch_ext (the same
+    shape mtmd-helper.cpp's decode_embd_batch uses);
+  - the graph scales only the TOKEN lookup: build_inp_embd(tok_embd, sqrtf(n_embd))
+    computes a per-row scale "is_embd ? 1.0f : scale_tok" (llama-graph.cpp:107-111,
+    :2722), and gemma-embedding2.cpp:85-86 says why in the reference's own words:
+    "important: do not normalize weights for raw embeddings input (i.e. encoded
+    image embeddings)".
+
+THE SEQUENCE.  The anchor's prompt was the bare media marker and its log records the
+result: three chunks (2 text, 88 image, 2 text) and "[splice] 92 positions: the image
+span is [2, 90)".  The port builds the same sequence from ids read out of the
+ARTIFACT's own vocabulary (crates/ds4-core/examples/gemma_vq_vocab.rs):
+
+    255999  "<|image>"     258880  "<|image|>"     258882  "<image|>"
+
+so the leading text is [bos 2, boi 255999], the span is 88 placeholders (the
+checkpoint's image_token_id 258880, whose vocabulary string is "<|image|>"), and the
+trailing text is [eoi 258882, eos 1].  The port's tokenizer already emits the two
+markers from those strings, which is what makes the four ids the port's own.
+
+WHAT IT IS WORTH: THE FROZEN SPLICES COME FROM THE BASELINE MODEL.  The anchor
+harness takes the BASELINE bf16 text model as its second argument (tools/
+eg2_vision_anchor.sh: `bin/eg2vq_vision_anchor "$MMPROJ" "$BASE" ...`), so the frozen
+text.tsv rows are baseline vectors.  Comparing the SHIPPED artifact's splice with them
+therefore measures the 4-bit tier's loss, not the splice: the first version of this
+gate did exactly that and read 24% relative RMS, which looked like a broken splice and
+is not one (section 4's leg 3, and the tier's own 0.956 mean agreement in
+docs/retrieval-cost-gate5.txt 5b).  The oracle now runs the splice on BOTH weight sets
+and reports each leg apart.
+
+
+3. THE GATE, AND WHAT IT COMPARES
+---------------------------------
+
+gate 25 = tools/eg2_splice_gate25.sh -> tests/parity/eg2vq_splice_cuda_oracle with
+<artifact> <mmproj> <baseline> and the two frozen fixtures.  Four legs per fixture:
+
+  leg 1  the BASELINE text weights + the reference's own soft rows (from the frozen
+         soft dump) -- THE SPLICE ITSELF, bounded;
+  leg 2  the baseline + the PORT's soft rows -- adds the vision tower's own 0.82%
+         (gate 23's number), reported;
+  leg 3  the SHIPPED artifact + the PORT's soft rows -- adds the tier's loss,
+         reported, and its cosine is expected to sit in gate 5's range for this tier;
+  leg 4  the artifact's DEVICE leg against its own CPU leg -- the device path's
+         parity, bounded;
+
+plus the text-only control (the same four text ids, no image, which must NOT give the
+same vector), the port's sequence against the frozen dumps' own header, and the device
+entry's four refusals.  The oracle also measures the text tower's input-to-output gain
+with an input kick (section 5).
+
+
+4. THE MEASURED NUMBERS
+-----------------------
+
+Both fixtures, 88 soft tokens, sequence 92 positions, span [2, 90), grid 33x24:
+
+  leg 1  baseline + the frozen soft rows vs the frozen l2 row:
+           pattern   maxabs 0.00018850  relrms 0.001579  cosine 0.99999875
+           gradient  maxabs 0.00011922  relrms 0.001068  cosine 0.99999943
+         and vs the frozen raw row's direction: the same cosines.
+  leg 2  baseline + the PORT's soft rows:
+           pattern   maxabs 0.00054516  relrms 0.004264  cosine 0.99999091
+           gradient  maxabs 0.00022415  relrms 0.001878  cosine 0.99999824
+  leg 3  artifact + the PORT's soft rows:
+           pattern   maxabs 0.03693355  relrms 0.242372  cosine 0.97062788
+           gradient  maxabs 0.02680407  relrms 0.202138  cosine 0.97957005
+  leg 4  artifact device vs artifact cpu:
+           pattern   maxabs 0.00057164  relrms 0.004348  cosine 0.99999055
+           gradient  maxabs 0.00025823  relrms 0.002304  cosine 0.99999735
+  control  leg 1 without the image: cosine 0.685893 / 0.691669
+  refusals 4 of 4 (a non-contiguous span, a span that disagrees with the soft block,
+           a placeholder in a text-only call, an id past the table's 262,144 rows)
+
+What the legs say.  Leg 1 puts the splice's own fidelity at 0.1% of the frozen vector
+on the very weights the reference used: the splice is right, and what is left is the
+text tower's own op-level rounding (gate 4's 0.999996809 is the same statement about
+the tower).  Leg 2 shows the vision tower's 0.82% moving the pooled vector by 1e-5,
+because this tower is nearly linear in its input (section 5's probe).  Leg 3 is the
+tier: 3% from the reference for a single vector, against gate 5's 0.956039571 MEAN
+agreement over the 300-item set -- one vector can sit well below the mean, and these
+two do.  Leg 4 says the device path and the CPU path agree on the splice as tightly as
+they agree on the text tower alone (gate 7 measured 3.1e-04 relative RMS).
+
+
+5. THE DECLARED BOUNDS, AND THE TOWER'S OWN GAIN
+------------------------------------------------
+
+Declared, printed before every run, and never widened:
+
+    leg 1: max |difference| <= 0.005, relative RMS <= 0.010, cosine >= 0.999
+           and vs the frozen raw row (direction): cosine >= 0.999
+    leg 4: max |difference| <= 0.005, relative RMS <= 0.005, cosine >= 0.9999
+    legs 2 and 3 are reported, with cosine >= 0.900 as their sanity floor
+
+The amplification probe, on the baseline weights with the frozen rows (a kick on ONE
+soft value, the output re-measured):
+
+    pattern   1e-6 kick -> maxabs 0.00000006, relrms 0.000000
+              1e-2 kick -> maxabs 0.00000079, relrms 0.000006
+    gradient  1e-6 kick -> maxabs 0.00000006, relrms 0.000000
+              1e-2 kick -> maxabs 0.00000153, relrms 0.000013
+
+This is the opposite of the vision tower, where a 1e-5 kick moved the output 0.5%
+(docs/eg2vq-vision-tower-gate24.txt section 5): the text tower is STABLE in its input,
+which is why leg 2 can be reported as a bounded 1e-5 and why leg 3's 3% cannot be
+explained away as amplification -- it is the tier's own loss, and gate 5 owns it.
+
+
+6. THE ENGINE ENTRY
+-------------------
+
+ds4_engine_vision_probe / ds4_engine_vision_encode_memory are the calls the bridge
+(ds4_bridge_model_vision_probe/..._encode_memory) and the serving route make; the
+gemma_vq case arms against the companion mmproj exactly as the other five families do.
+Measured through the gate's engine section:
+
+    probe   source 512x384, content 512x384, padded 528x384, grid 11x8, 88 tokens
+            (the same geometry gate 23 pins for the preprocessing)
+    encode  88 x 512 rows on the DEVICE leg, against the CPU leg's rows:
+            pattern   maxabs 0.15841668  relrms 0.009006  cosine 0.99995945
+            gradient  maxabs 0.04474682  relrms 0.004954  cosine 0.99998773
+
+TWO BLOCKERS HAD TO GO FIRST, and both are worth naming:
+
+  a. THE ENGINE COULD NOT OPEN THIS ARTIFACT AT ALL.  The vocabulary's family chain
+     (ds4.c's vocab setup) had no gemma_vq case, so it fell through to another
+     family's expectations and demanded "<|beginofsentence|>" from a tokenizer that
+     has no such token -- the family's BPE lives Rust-side, which is why the CLI
+     refuses generation by name.  The new case takes the artifact's own bos/eos ids
+     and leaves every role id absent.  The generation path still refuses by name
+     (ds4_report_embedding_family_refusal), and the CLI's tokenizer gap in the
+     handoff's open items is unchanged: what this unit fixed is the OPEN, not the BPE.
+  b. the engine's options default to METAL (the enum's zero value) for a zeroed
+     struct, so the vision guard refuses -- the oracle sets DS4_BACKEND_CUDA
+     explicitly, and so must any caller.
+
+
+7. THE CAPS QUESTION, AND WHAT IS LEFT OF IT
+--------------------------------------------
+
+Read first, then decided, exactly as unit 20's caps were built: the mechanism is ONE
+family-keyed lookup in crates/ds4-core/src/serving.rs (embed_caps, :206), rendered by
+the server into /health's "embed" object (crates/ds4-server/src/serve.rs:1232) and
+enforced on the embeddings route by name (:1618-1632, "split the request ... GET
+/health reports embed.batch_rows_max").  For the image path the numbers are already
+bounded by the family itself -- the checkpoint's size solver admits 70..1120 soft
+tokens (161280..2580480 pixels, align 48) -- and the engine refuses an image it cannot
+place by name ("no device workspace for a %u-patch image (the family's ceiling is
+%u)"), which the gate exercises.  What this unit changed is the one field of that
+vocabulary that became untrue when the image path landed: GemmaVq's ServingCaps now
+advertises media_serial = true, because the engine has ONE vision workspace and two
+images at once would race for it.
+
+WHAT IS LEFT, and it is a serving decision rather than a port one: whether /health
+should carry a vision-shaped row beside "embed" (the image ceiling and the fact that
+the family accepts images at all), and whether the serving route should accept an
+image together with a text item -- i.e. whether the wire exposes the splice.  The
+port's side is ready and gated: the engine entry and the splice both are.
+
+
+8. WHAT THE NEXT UNIT INHERITS
+------------------------------
+
+  - The splice's contract in one place: ds4_eg2vq.h's DS4_EG2VQ_IMAGE_TOKEN_ID and
+    the two refusals that guard it (contiguity, count), plus the unscaled-image-row
+    rule and where the reference states it.
+  - Gate 25 in the fast path (step 8): the sequence, the four legs, the engine entry
+    and the refusals, about 70 s warm including the engine section (16 s without it).
+  - The measured fact that this tower does NOT amplify its input (section 5), which
+    is what makes the tier's 3% leg readable as the tier's own loss rather than a bug
+    -- and is the opposite of the vision tower's behaviour, so the two must not be
+    reasoned about together.

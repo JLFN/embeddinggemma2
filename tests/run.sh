@@ -32,12 +32,18 @@
 #      tree's CUDA build being current (about 90 s to rebuild ds4_cuda.o, about
 #      40 s to link the oracle; measured warm run 58.9 s, i.e. the two image
 #      runs with their kick probes plus the four attribution flips).
-#   8. tests/qa-gate.sh (rule 19)
+#   8. gate 25: the IMAGE SPLICE (phase 8, unit 25) — the port's sequence against
+#      the frozen dumps' own header, then four legs: the splice on the BASELINE
+#      weights with the reference's soft rows (bounded), the same on the port's
+#      soft rows, the artifact's own leg (the 4-bit tier's loss, reported), and the
+#      device leg against the CPU one (bounded); then the engine's own
+#      probe/encode_memory entries (tools/eg2_splice_gate25.sh)
+#   9. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
-#   9. the artifact gate 1b (byte-identical to the container, metadata read back)
-#  10. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
-#  11. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
+#  10. the artifact gate 1b (byte-identical to the container, metadata read back)
+#  11. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
+#  12. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
 #
 # Usage: tests/run.sh [--deep]
 set -eu
@@ -78,7 +84,10 @@ bash tools/eg2_vision_gate23.sh
 step "7. gate 24: the vision tower on the DEVICE against the CPU leg (phase 8)"
 bash tools/eg2_vision_gate24.sh
 
-step "8. rule 19 QA gate"
+step "8. gate 25: the image splice and the engine entry (phase 8)"
+bash tools/eg2_splice_gate25.sh
+
+step "9. rule 19 QA gate"
 bash tests/qa-gate.sh
 
 if [ "$DEEP" -eq 0 ]; then
@@ -86,14 +95,14 @@ if [ "$DEEP" -eq 0 ]; then
     exit 0
 fi
 
-step "9. artifact gate 1b"
+step "10. artifact gate 1b"
 tools/eg2_artifact_check.sh "$ART" "$MANIFEST" "$DQVD" \
     "${EG2_MODEL_DIR:-.models/EmbeddingGemma-2-914f7f8}" out/artifact-inventory.txt
 
-step "10. the Rust suite (ds4-core)"
+step "11. the Rust suite (ds4-core)"
 (cd ds4-rs && cargo test -q -p ds4-core)
 
-step "11. gate 4: the CPU reference tower against the frozen anchor"
+step "12. gate 4: the CPU reference tower against the frozen anchor"
 (cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null)
 EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
     "$ART" "$BASELINE" tests/anchor/anchor-items.tsv \
