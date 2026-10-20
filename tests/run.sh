@@ -23,12 +23,20 @@
 #      preprocessing checked before any matmul, then its 88x512 soft tokens for
 #      both frozen fixtures against tests/vision/reference, with the bound
 #      declared and printed before the run (tools/eg2_vision_gate23.sh)
-#   7. tests/qa-gate.sh (rule 19)
+#   7. gate 24: the vision tower on the DEVICE (phase 8, unit 24) — both legs in
+#      one process, the device leg against the CPU leg on the soft tokens and on
+#      the three stage buffers, then the device leg against the frozen dumps
+#      through gate 23's own comparison, then the four attribution flips
+#      (tools/eg2_vision_gate24.sh).  It builds the CUDA object when a device
+#      source changed: that is the one step here whose cost depends on the
+#      tree's CUDA build being current (about 90 s to rebuild ds4_cuda.o, about
+#      40 s to link the oracle, warm run about 35 s).
+#   8. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
-#   8. the artifact gate 1b (byte-identical to the container, metadata read back)
-#   9. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
-#  10. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
+#   9. the artifact gate 1b (byte-identical to the container, metadata read back)
+#  10. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
+#  11. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
 #
 # Usage: tests/run.sh [--deep]
 set -eu
@@ -66,7 +74,10 @@ bash tools/eg2_mmproj_check.sh
 step "6. gate 23: the vision tower against the frozen reference (phase 8)"
 bash tools/eg2_vision_gate23.sh
 
-step "7. rule 19 QA gate"
+step "7. gate 24: the vision tower on the DEVICE against the CPU leg (phase 8)"
+bash tools/eg2_vision_gate24.sh
+
+step "8. rule 19 QA gate"
 bash tests/qa-gate.sh
 
 if [ "$DEEP" -eq 0 ]; then
@@ -74,14 +85,14 @@ if [ "$DEEP" -eq 0 ]; then
     exit 0
 fi
 
-step "8. artifact gate 1b"
+step "9. artifact gate 1b"
 tools/eg2_artifact_check.sh "$ART" "$MANIFEST" "$DQVD" \
     "${EG2_MODEL_DIR:-.models/EmbeddingGemma-2-914f7f8}" out/artifact-inventory.txt
 
-step "9. the Rust suite (ds4-core)"
+step "10. the Rust suite (ds4-core)"
 (cd ds4-rs && cargo test -q -p ds4-core)
 
-step "10. gate 4: the CPU reference tower against the frozen anchor"
+step "11. gate 4: the CPU reference tower against the frozen anchor"
 (cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null)
 EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
     "$ART" "$BASELINE" tests/anchor/anchor-items.tsv \

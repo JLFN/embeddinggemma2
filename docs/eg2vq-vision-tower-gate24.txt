@@ -1,0 +1,257 @@
+THE VISION TOWER ON THE DEVICE (unit 24, phase 8 row P4.2)
+=========================================================
+
+What this document records, and what it does not.  It records the DEVICE (CUDA)
+leg of the EmbeddingGemma-2 vision tower: the plan, the eleven kernels, the
+gate that measures it against the CPU leg unit 23 landed, the numbers that gate
+printed, and the one real defect this unit found and fixed.  It does NOT restate
+the tower's graph (ds4_eg2vq_vision_graph.inc and docs/eg2vq-vision-tower-gate23.txt
+do that, and every kernel cites it), and it does not claim anything about the
+image-to-text splice, which is unit 25.
+
+Everything below was measured on 2026-10-20 on the RTX 4070 SUPER (sm_89) in
+this workspace, by the commands named with each number.
+
+
+1. WHAT LANDED
+--------------
+
+ds4-rs (branch feat/ds41-dsml-carriage):
+
+  - cuda/eg2vq_vis.cuh — the tower's own device primitives: the im2col the
+    reference's ggml_conv_2d performs, the dense bf16 GEMM with the activation
+    quantization switch, the two axial position adds, the axial NeoX rope with a
+    host-built table, the f16 K/V round trip, the 12-head attention with no mask
+    and scale 1.0, the gelu_quick f16 in/f16 out activation, and the 3x3 pool
+    with its sqrt(n_embd) scale.
+  - ds4_eg2vq_vision_gpu.cuh — the plan (211 slots bound from the mmproj, bf16
+    matrices uploaded as the file carries them), the per-item workspace, the
+    16-block forward in the CPU leg's op order, and the four gate-only
+    attribution switches plus the amplification kick.
+  - ds4_eg2vq_vision.h — the slot table, the device entries, and the CPU leg's
+    three stage buffers (ds4_eg2vq_vision_stages).
+  - ds4_eg2vq_vision_bind.inc — ds4_eg2vq_vision_slot_table: the same tensors,
+    by the same names and the same shape checks the CPU binder makes.
+  - ds4_eg2vq_vision_graph.inc — the CPU forward fills the stage buffers when the
+    caller asks (the shipping path passes NULL).
+  - tests/parity/eg2vq_vision_cuda_oracle.c — the gate instrument: both legs in
+    one process, the declared bound, the stage attribution, the amplification
+    probe and the frozen-dump comparison.
+  - Makefile — ds4_cuda.o's dependency list, and the oracle's rules.
+
+outer repo (branch dev): tools/eg2_vision_gate24.sh, this document, and gate 24
+in tests/run.sh.
+
+ONE SIMPLIFICATION, stated where it would otherwise look like a deviation: the
+device holds the tower's matrices in the bf16 the file carries (289.88 MiB,
+measured: the adapter's own per-process report) and never widens them, where the
+CPU leg widens all 208 into a 576.0 MiB f32 cache (ds4_eg2vq_vision_bind.inc).
+The GEMM widens each bf16 row in the register, and bf16 -> f32 is exact, so this
+is the same arithmetic with half the device bytes.
+
+
+2. THE FOUR FACTS THE GRAPH DOES NOT STATE, AND WHERE EACH ONE LIVES NOW
+-----------------------------------------------------------------------
+
+Unit 23's five facts (docs/eg2vq-vision-tower-gate23.txt section 2) are carried
+into the device path explicitly, each in one named place:
+
+  1. every bf16-weight matmul quantizes its ACTIVATION to bf16 (ggml-cpu/
+     ggml-cpu.c:395-400, :1328-1340).  Device: eg2vq_vis_gemm's `act_round`
+     argument, applied at the shared-tile load (cuda/eg2vq_vis.cuh), with the
+     CPU leg's own bit trick (eg2vq_vis_bf16, the same round-to-nearest-even
+     expression as eg2vq_vision_bf16).  On for the seven per-block matrices and
+     the tie-in projection, off for the conv.
+  2. the patch conv is the exception: ggml_conv_2d passes the f32 im2col as
+     src0, so the bf16 weight is merely widened (ggml.c:4785-4790).  Device: the
+     same GEMM with `act_round = 0`.
+  3. the FFN activation is gelu_quick computed through ggml's f16 table — input
+     and output both f16-quantized (vec.h:47, :1031, :1047-1057; ggml-cpu.c:
+     3884-3891).  Device: eg2vq_vis_gelu_quick, the same four conversions in the
+     same order as the CPU leg's eg2vq_vision_gelu_quick.
+  4. the attention is kq_scale exactly 1.0, NO mask, 12 query heads over 12 KV
+     heads, head_dim 64, and the reference's executed flash branch rounded K and
+     V to f16 (clip.cpp:787-790).  Device: eg2vq_vis_attn (no mask at all, no
+     scale factor in the code, because there is nothing to apply) and
+     eg2vq_vis_f16_round on K and V, exactly where the CPU leg rounds them.
+  5. the pool row order is q = x' + (grid_w/3)*y' with a /9 average and the
+     embedder's weightless RMS at eps 1e-6 (gemma4v.cpp:83-114).  Device:
+     eg2vq_vis_pool and eg2vq_ops_rms with a NULL weight.
+
+Two device-side choices the CPU leg does not make, both named rather than hidden:
+the accumulations the CPU leg runs in double are f32 here for the GEMM and the
+attention (the tree's own device idiom, cuda/eg2vq_attn.cuh:57-69), and the
+softmax is online (a running max and sum rescaled per KV tile) instead of the CPU
+leg's two-pass max-then-exp.  Section 5 measures what those two choices are worth.
+
+
+3. THE GATE, AND WHAT IT COMPARES
+---------------------------------
+
+gate 24 = tools/eg2_vision_gate24.sh, which builds and runs
+tests/parity/eg2vq_vision_cuda_oracle.  The device leg is compared against THE
+CPU LEG, in one process, on the same image bytes; the CPU leg's own distance to
+the frozen dumps stays gate 23's number and is never conflated with it.
+
+Three comparisons per image, all with the bound printed before the run:
+
+  a. the 88 x 512 soft tokens, device vs CPU (the unit's target);
+  b. three stage buffers, device vs CPU: "patch" (the tower's input after the
+     conv and the two position adds), "l0" (the residual stream after block 0)
+     and "pooled" (the pooled rows, before the embedder's RMS).  This is how a
+     mismatch is attributed instead of guessed at — and it is what found the
+     defect in section 4;
+  c. the device's soft tokens against tests/vision/reference/*.soft.tsv through
+     the SAME comparison and the SAME declared bound gate 23 applies to the CPU
+     leg (0.30 / 0.025 / 0.998).
+
+The oracle also measures the tower's own input-to-output gain with a kick on one
+canvas value (section 5), and the gate runs four attribution flips and requires
+the port to be strictly closer to the CPU leg than each flip is (section 6).
+
+
+4. THE DEFECT THIS UNIT FOUND, AND HOW THE STAGES FOUND IT
+----------------------------------------------------------
+
+The first device run had the patch stage at 1e-6 (essentially exact) and the l0
+stage at 3.2% (pattern) / 1.2% (gradient): the whole discrepancy was inside the
+blocks, not in the preprocessing or the convolution.  The cause was the axial
+rope's pairing.  The CPU leg calls eg2vq_rope(v, n_rot = head_dim/2 = 32, ...)
+twice — once on dims [0,32) against pos_x and once on dims [32,64) against pos_y
+(ds4_eg2vq_vision_graph.inc:326-330, gemma4v.cpp:70) — and each of those calls
+pairs (i, i + n_rot/2) = (i, i+16) (graph:69-77, ops.cpp:6375-6391).  The first
+device kernel paired (i, i+32) and read the second half from dim 64 of a 64-dim
+head: wrong pairing, and out of the head.
+
+With the pairing corrected to 16, the same two fixtures give:
+
+    pattern   patch relrms 0.000001   l0 relrms 0.000078   pooled relrms 0.008827
+    gradient  patch relrms 0.000000   l0 relrms 0.000034   pooled relrms 0.005011
+
+The lesson is the one the stage buffers exist for: the patch stage being at 1e-6
+while the next stage was at 1e-2 located the bug in one step, without a bisection.
+
+
+5. THE DECLARED BOUND, THE FIRST ONE THAT WAS TOO TIGHT, AND WHY
+----------------------------------------------------------------
+
+The gate declares, prints before every run, and never widens:
+
+    soft tokens, device vs CPU   max |difference| <= 0.30
+                                 relative RMS     <= 0.025
+                                 min row cosine   >= 0.998
+    stages, device vs CPU        relative RMS     <= 0.010  (attribution)
+    soft tokens, device vs the frozen dumps: the same 0.30 / 0.025 / 0.998
+
+Measured (both fixtures, worst of the two):
+
+    device vs CPU:      maxabs 0.15841668  relrms 0.009006  mincos 0.99933243
+    stages:             patch 1e-6, l0 7.8e-5, pooled 8.8e-3
+    device vs frozen:   maxabs 0.22244230  relrms 0.010428  mincos 0.99861157
+    CPU vs frozen (gate 23, the same fixtures):  maxabs 0.10275560  relrms 0.008235  mincos 0.99978457
+    CPU vs frozen, gradient:                     maxabs 0.06645030  relrms 0.005285  mincos 0.99988406
+
+THE FIRST DECLARATION WAS TIGHTER, AND IT FAILED ON ONE OF ITS THREE NUMBERS.
+It read 0.15 maxabs / 0.010 relative RMS / 0.9990 min row cosine, on the
+assumption that two implementations sharing the reference's mechanisms would
+agree far more closely than either is to the reference.  The first measured run
+passed the relative RMS (0.009006) and the row cosine (0.99933243) and exceeded
+the maxabs bound (0.15841668 against 0.15).  The measurement said the ASSUMPTION
+was wrong, not the port, and here is the measurement that says so:
+
+  - THE TOWER ABSORBS SMALL DIFFERENCES AND AMPLIFIES THE ONES THAT CROSS ITS
+    QUANTIZATION GRANULARITY.  The oracle's amplification probe kicks ONE canvas
+    value by a relative amount and re-runs the device leg: a 1e-7 kick moves the
+    output by EXACTLY ZERO (0.00000000 maxabs, 0.000000 relrms on both fixtures —
+    the kick is far below one bf16 activation step, so the first block's
+    quantizer deletes it), while a 1e-5 kick moves it 0.04770827 / 0.005481
+    (pattern) and 0.03242344 / 0.004198 (gradient).  A difference of ~1e-6
+    relative — which is exactly what f32-vs-double accumulation is — lands in
+    the amplified band.
+  - THE SAME MECHANISM SIZES THE OTHER DISTANCES.  The CPU leg is 0.008235 from
+    the frozen dumps, the device is 0.010428 from the same dumps and 0.009006
+    from the CPU leg, and the unit-23 QA measured the CPU leg's own spread
+    between two builds of one source at 0.78%.
+  - THE CHARACTER OF THE DEVIATION IS THE SAME ON ALL THREE SIDES.  Per row (88
+    rows, relative RMS of each row against the frozen dumps): every row of both
+    legs deviates by more than 0.1%; the CPU leg's mean row is 0.76% (pattern) /
+    0.49% (gradient) with the worst row at 2.08% / 1.55%, the device's mean is
+    0.82% / 0.48% with the worst at 5.29% / 1.20%.  There is no spiky,
+    localized, "one flipped argmax" signature on either side: this is broadband
+    op-level rounding, propagated.
+  - THE BOUND THE GATE NOW DECLARES IS THE ENVELOPE THREE IMPLEMENTATIONS LIVE
+    IN, not a number chosen to pass.  Two implementations at 1.04% and 0.82% from
+    a third can be up to their sum apart (0.0187 relative RMS, 0.325 maxabs), and
+    the gate's bound for the device-vs-CPU comparison is gate 23's own declared
+    bound for one leg against the dumps.  The gate's meaning does not rest on it:
+    section 6 is what says the bound can see a wrong mechanism.
+
+What the gate therefore does NOT claim: that one of its fine-grained flips can be
+seen through this bound.  It cannot, and section 6 records which ones cannot,
+exactly as gate 23 records the same limit for its own fine rows.
+
+
+6. THE DISCRIMINATION TABLE, RUN BY THE GATE ITSELF
+---------------------------------------------------
+
+The gate runs four attribution flips through the same two fixtures and requires
+the port to be strictly closer to the CPU leg than every one of them:
+
+    port (no flip)                       worst relrms 0.009006   --
+    NO_ACT_BF16   (the layer matmuls stop quantizing the activation)
+                                         0.014936   1.66x
+    CONV_BF16     (the conv starts quantizing its activation)
+                                         0.029459   3.27x
+    NO_GELU_F16   (gelu_quick loses its f16 in/out chain)
+                                         0.009729   1.08x
+    f32_kv        (K/V in f32 instead of the reference's f16 cast)
+                                         0.008678   0.96x   NOT discriminating
+
+The last two rows are the honest part of this table.  The device-vs-CPU
+comparison has a noise floor of ~0.9% by section 5, so only mechanisms larger
+than that floor are visible: the activation quantization (1.7x) and the conv's
+exemption (3.3x) are, the gelu_quick f16 chain (1.08x) barely is, and the f32
+K/V cast is BELOW the floor and is therefore not discriminated here at all — the
+port implements it because clip.cpp:787-790 says so, not because this gate can
+see it.  Gate 23's own table (against the frozen dumps) records exactly the same
+thing about the same two fine rows, and unit 23's evidence says so in section 4.
+
+
+7. WHAT THE DEVICE COSTS AND WHAT IT SAVES
+------------------------------------------
+
+Measured by the oracle on this card (both fixtures, the CPU leg in the same
+process, both legs including the preprocessing and the host read-back):
+
+    cpu    4.336 s / 4.323 s per image (the -O3 -ffast-math oracle build)
+    device 0.229 s / 0.226 s per image
+    ratio  0.053 / 0.052  ->  about 19x per image
+
+    device plan bind 0.04-0.22 s (the range is page cache warmth on the mmproj)
+    device weights 289.88 MiB bf16 + 62.70 MiB aux (the position table and the
+    rope table), workspace 566.64 MiB at max_patches = 10080, VRAM delta
+    922.0 MiB measured with cudaMemGetInfo around the bind and the context
+    cpu f32 dense cache the device never builds: 576.0 MiB
+
+Nothing here is a serving-shaped number: the tower still runs one image at a
+time, and the workspace is sized for the largest image the family admits
+(1120 soft tokens) rather than for the fixtures' 792 patches.
+
+
+8. WHAT UNIT 25 INHERITS
+------------------------
+
+  - The device leg is inside gate 23's envelope against the frozen dumps
+    (0.010428 / 0.005155 relative RMS against a bound of 0.025), so the soft
+    tokens the splice consumes can come from either leg; unit 25 does not have to
+    choose one of two disagreeing implementations.
+  - The device's soft-token output is byte-comparable with the CPU leg's through
+    ds4_gpu_eg2vq_vision_forward's `soft` argument, and its row order is the same
+    (the pooler's q = x' + (grid_w/3)*y'), which is the contract the splice needs.
+  - NOT built here, and still unit 25's: the engine entry (the mmproj opened as
+    the engine's second model, a readiness check and refusals by name), the
+    workspace/caps accounting for a second device size class, and the dive into
+    the text tower's image-token spans.
+  - The CPU leg's forward signature now takes a `stages` pointer (NULL in every
+    shipping path), and the CPU oracle was updated with it; gate 23 re-ran green
+    after the change (the numbers above are its unchanged ones).
