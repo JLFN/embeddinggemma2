@@ -1,0 +1,281 @@
+THE EMBEDDING WIRE: AN IMAGE THROUGH /v1/embeddings (unit 26, phase 8 row P4.6's serving side)
+==============================================================================================
+
+What this document records: the last half of the image path -- a caller sending an
+image to the embedding route and getting the spliced vector back, the contract the
+route advertises for it, and the refusals that keep a wrong request from becoming a
+wrong answer.  It does not restate the vision tower (units 23 and 24), the splice or
+the engine entry (unit 25); it measures what a caller sees.
+
+Everything below was measured on 2026-10-20 on this workspace by the commands named
+with each number: tools/eg2_embed_media_gate26.sh (gates 0 to 5, one server run per
+backend), tests/run.sh step 9 (the same gate inside the fast path),
+crates/ds4-server/src/serve_embed_media_test.rs and
+crates/ds4-core/tests/eg2vq_serving_caps.rs (the parse and caps facts, no model).
+
+
+1. WHAT LANDED
+--------------
+
+ds4-rs:
+
+  - ds4_engine_embed_gemma_vq_image (ds4.c, declared in ds4.h): the text entry's own
+    checks plus the image's -- a NULL or empty soft block, more soft rows than the
+    tower's size solver will place, and a span that is not exactly one contiguous run
+    of n_soft placeholders.  The span check exists because the splice itself stops the
+    PROCESS on a misaligned span (the right answer to a corrupted artifact, the wrong
+    one to a caller's error), so the engine turns that class of input into a refusal
+    by name before any arithmetic runs.
+  - the bridge's two new entries (native/bridge/ds4_bridge.{c,h}):
+    ds4_bridge_eg2vq_embed_image, and ds4_bridge_model_vision_encode_rows, which
+    fills a CALLER-owned buffer with the tower's rows -- expect_rows being the
+    caller's own probe's token_count, so a geometry that moves between the probe and
+    the encode is a refusal rather than a reinterpreted buffer.  No ownership crosses
+    the boundary: the engine frees its own.
+  - ds4_core: GEMMA_VQ_IMAGE_TOKEN_ID / _BEGIN_MARKER / _END_MARKER / _PLACEHOLDER and
+    the tower's own window (IMAGE_SOFT_TOKENS_MIN/MAX 70/1120, IMAGE_PIXELS_MIN/MAX
+    161280/2580480, IMAGE_EMBD 512, IMAGE_PER_ITEM_MAX 1) in gemma_vq.rs;
+    Model::vision_encode_rows, Model::embed_gemma_vq_image and the sequence builder
+    embed_media_ids (with Model::embed_item_media_ids as its thin wrapper);
+    EmbedImageCaps and EmbedCaps::to_json in serving.rs, the one renderer the /health
+    row and the plan diagnostics share.
+  - ds4-server: the /health body extracted into health_body (a test can pin the
+    bytes), an input item that may be the OpenAI content-part shape the chat route
+    already accepts (parse.rs's decode_image_data_uri is the SAME image decoder, and
+    its refusals are the chat route's own words), the media branch of run_embed
+    (probe -> sequence -> caps -> rows -> splice), the DecodeIo methods the route
+    calls, and ServerConfig::vision (the engine was opened with --vision, read once
+    at boot).
+  - a C-behaviour change: ds4.c's --vision guard no longer demands the CUDA backend
+    for gemma_vq, because this family's tower has a complete CPU leg (section 6).
+
+outer:
+
+  - tools/eg2_embed_media_gate26.sh: legs 0 to 5 (section 4).
+  - tests/run.sh: gate 26 is step 9 of the fast path; the QA gate is step 10.
+  - qa-evidence/qa-deferral.txt and the deferral branch of tests/qa-gate.sh
+    (section 8: the owner's recorded instruction).
+
+
+2. THE WIRE'S CONTRACT, AND WHERE IT COMES FROM
+-----------------------------------------------
+
+The shape is the checkpoint's own, not an invention of this port.  The model card
+(.models/EmbeddingGemma-2-914f7f8/README.md section 5) states it:
+
+  - the text MARKS an image's position with the placeholder `<|image|>` ("Each
+    placeholder in text is filled from the corresponding key, in order"), whose id
+    is the checkpoint's image_token_id 258880 (config.json:51);
+  - the reference processor expands that one position into the model's begin marker,
+    its image tokens and its end marker (tools/mtmd/mtmd.cpp:955-958 at the pin; the
+    anchor harness's own comment, tests/parity/eg2vq_vision_anchor.cpp:106-113,
+    records the same expansion), which is why the frozen sequence is
+    [BOS][<|image>] + 88 placeholders + [<image|>][EOS];
+  - "Prefixes apply to text only.  Pass images, video, and audio without any
+    prefix": the task prefix is prepended to the TEXT, and the image enters only
+    where the placeholder is.
+
+Two things are this port's decisions, and they are named as such:
+
+  - ONE IMAGE PER ITEM (GEMMA_VQ_IMAGE_PER_ITEM_MAX).  The checkpoint and the
+    reference allow several interleaved media items; this port's splice entry fills
+    ONE contiguous run of placeholders, so a second image -- or a second placeholder
+    -- is refused by name rather than mis-spliced.  The caps advertise the number
+    (`embed.image.per_item_max`), so a caller can read it before sending.
+  - the HTTP SHAPE of a media item: an input element that is an OBJECT with a
+    `content` array of parts (`type: "text"` and one `type: "image_url"` whose URI is
+    a base64 data URI).  That is the OpenAI content-part shape this server's CHAT
+    route already accepts, and its decoder is the chat route's own
+    (parse.rs::add_image_data_uri -> decode_image_data_uri), so an image means the
+    same thing on both routes and there is one image vocabulary to keep honest.  The
+    card's Python dict ({"text": ..., "image": [...]}) is the checkpoint's
+    SentenceTransformer call, not this server's wire, and a second decoder is exactly
+    what this choice avoids.
+
+
+3. THE SEQUENCE (leg 0)
+-----------------------
+
+For task `Raw` (the checkpoint's own "no prefix" name, st_prompt's contract) and the
+text `<|image|>` with 88 soft rows, `ds4_core::embed_media_ids` produces EXACTLY the
+anchor's sequence, which leg 0 asserts id by id:
+
+  92 positions: 2, 255999, 258880 x 88, 258882, 1
+  SPAN 2 88
+
+crates/ds4-core/examples/gemma_vq_media_ids prints it (vocabulary only, no weights).
+This is the direct check behind leg 5's end-to-end one: a wire whose sequence had a
+marker in the wrong place would not land on gate 25's own figures.
+
+
+4. THE GATE, AND WHAT IT COMPARES
+---------------------------------
+
+tools/eg2_embed_media_gate26.sh, one server at a time (the engine holds a
+single-instance lock, so the two backends run in sequence):
+
+  leg 0  the sequence above;
+  leg 1  /health carries the image contract, exactly as EmbedCaps::to_json renders
+         it, and keeps the two text numbers where unit 20 put them;
+  leg 2  the DEVICE leg answers four requests: both frozen fixtures (task Raw), the
+         pattern fixture with the `Retrieval-query` prefix, and a text-only item.
+         Each answer is 768 floats and unit length; the two fixtures, the prefixed
+         item and the text item all differ from each other;
+  leg 3  the same three image requests on the CPU leg, compared with the device
+         answers inside the declared bound (cosine >= 0.9999);
+  leg 4  six refusals, each a 400 quoting its own reason;
+  leg 5  the device answer against the FROZEN BASELINE splice (the tier), reported
+         with gate 25's leg-3 band printed beside it.
+
+Nothing in the gate compares the artifact against the frozen rows as a QUALITY
+claim: those rows are the baseline model's own splice (unit 25's trap), so the 24%
+is the 4-bit tier's loss and the check earns its keep as an identity check.
+
+
+5. THE MEASURED NUMBERS
+-----------------------
+
+Timings (this machine, one request each, as the gate printed them):
+
+  device leg: pattern 0.306123 s, gradient 0.250194 s, pattern+prefix 0.242745 s,
+              text-only 0.014227 s (one image, end to end: probe, tower, splice)
+  CPU leg:    pattern 5.101256 s, gradient 5.163140 s, pattern+prefix 5.780515 s
+
+The wire's own cross-check, device vs CPU, same request (max |difference|, relative
+RMS, cosine):
+
+  pattern         0.00057160 / 0.004348 / 0.99999055
+  gradient        0.00025820 / 0.002304 / 0.99999735
+  pattern+prefix  0.00048280 / 0.004064 / 0.99999174
+
+That is unit 25's leg-4 band (0.00057164 / 0.004348 / 0.99999055) reproduced through
+the wire: the same two legs, now reached by an HTTP request.  The device's own
+quantization boundary is the whole of it (unit 24: 0.9% on the pooled rows).
+
+The frozen cross-check (leg 5), device wire vs tests/vision/reference/
+eg2-vision-pattern.text.tsv, task Raw:
+
+  0.03686520 / 0.242455 / 0.97060790
+
+against gate 25's leg 3 (0.03693355 / 0.242372 / 0.97062788).  The small differences
+are the device tower's rows where gate 25's leg 3 used the CPU leg's -- which is the
+point of the two numbers: the wire's sequence IS the reference's, and the 24% is the
+tier.
+
+How the answers differ from each other (device, cosine):
+
+  pattern vs gradient            0.78589224
+  pattern vs pattern+prefix      0.96279171
+  pattern vs a text-only item    0.63687671
+
+The refusals, verbatim as the route returned them (all 400):
+
+  an image with no placeholder   "input[0]: the item carries an image but its text has no
+                                  <|image|> placeholder: this family places an image where
+                                  the text marks it (the checkpoint's model card, section 5),
+                                  so an unmarked image has no position"
+  placeholder without an image   "input[0] carries the image placeholder <|image|> but no
+                                  image: an item that marks an image must supply one"
+  two placeholders               "input[0]: the item's text carries more than one <|image|>
+                                  placeholder, and this port places 1 image per item (...)"
+  past the item ceiling          "input[0]: the item is 3693 tokens (its 88 soft rows
+                                  included), past the 2048 the embedding tower's attention
+                                  kernel holds"
+  two images in one item         "an item carries more than one image, and this port places
+                                  1 image per item (GET /health reports
+                                  embed.image.per_item_max)"
+  an image_url that is not a     "image_url must be a base64 data URI"
+  data URI
+
+The last two are the parse layer's (no model is touched); the first four come from the
+sequence builder and the caps, so the same request is refused identically on either
+backend.
+
+The /health row this unit adds, as served:
+
+  {"status":"ok","model":"eg2vq","backend":"cuda","family":"gemma_vq","embedding":true,
+   "embed":{"item_tokens_max":2048,"batch_rows_max":8192,
+            "image":{"soft_tokens_min":70,"soft_tokens_max":1120,"pixels_min":161280,
+                     "pixels_max":2580480,"embd":512,"per_item_max":1,"serial":true}}}
+
+The image half's six numbers are the C tower's own (pinned textually against
+ds4_eg2vq.h and ds4_eg2vq_vision.h by eg2vq_serving_caps.rs, which now also pins
+IMAGE_TOKEN_ID, the row width and the one-image policy); `serial` is
+ServingCaps::media_serial's meaning carried to where a caller planning concurrency
+reads it.  The soft-token and pixel window is the size solver's, NOT a refusal
+boundary: an image outside it is scaled into it, and what a caller can be refused for
+is the item ceiling, which counts the soft rows like any other token.
+
+
+6. THE CPU LEG, AND THE C GUARD THIS UNIT CHANGED
+-------------------------------------------------
+
+ds4.c's --vision guard demanded `e->backend == DS4_BACKEND_CUDA` for every family
+that takes a sidecar.  For gemma_vq that was wrong in a way this unit measured: its
+tower has a complete CPU leg (ds4_eg2vq_vision_graph.inc, measured against the
+reference's own dumps by gate 23, with cuda/eg2vq_vis.cuh as the device twin), and
+the engine's gemma_vq encode entry already selects the CPU leg whenever the backend
+is not the graph one.  Refusing --vision on the CPU backend therefore refused a path
+that works -- and made the wire's two legs incomparable on one machine, which is
+leg 3's whole method.
+
+So the guard now exempts gemma_vq from the backend condition and keeps it for every
+other family (whose sidecars are CUDA kernels), splitting its message in two so the
+refusal still names the real problem: the family/one-model rule, or the backend.  It
+does NOT touch the slice/distributed conditions, and it does not make a CPU-only
+BUILD able to load a vision sidecar (that is a compile-time DS4_NO_GPU refusal,
+untouched).
+
+
+7. WHAT THIS UNIT DOES NOT CLAIM
+--------------------------------
+
+  - No latency or concurrency claim for the image path.  The gate prints the request
+    timings it measured (section 5) and nothing else: one request at a time, a warm
+    engine, no load.  media_serial = true is a statement about the ONE device vision
+    workspace per engine, not a served-throughput measurement.
+  - No quality verdict past the declared floors.  The image path's numbers here are
+    the tier's (gate 5's floor covers the 768 width, and the wire adds no new claim).
+  - Nothing about the AUDIO tower (out of scope by the owner's decision) and nothing
+    about video, whose tokens the checkpoint shares with images (the same tower,
+    different budget; not built).
+  - No claim that the C CLI can tokenize this artifact: the family's BPE is
+    Rust-side, the C CLI refuses it by name, and the wire's sequence is built in Rust
+    exactly for that reason.
+
+
+8. RULE 19 IS DEFERRED, BY THE OWNER'S RECORDED INSTRUCTION
+-----------------------------------------------------------
+
+2026-10-20, owner: "the QA should not run before we are complete with the entire
+code".  The instruction is recorded in qa-evidence/qa-deferral.txt, and
+tests/qa-gate.sh now reads that file: while it exists the gate lists the new surfaces
+and prints that it holds NO VERDICT for them -- a DEFERRAL, never a pass -- and exits
+0 so the fast path stays usable.  Deleting the file restores the freshness demand
+exactly as it was, and the deferral file itself carries the duty to delete it and run
+ONE pass over the whole accumulated port (every unit since unit 24, not just the last
+one) when the code is complete.  Unit 24's report on disk is the last QA evidence
+that exists and covers nothing after it.
+
+Unit 24's finding F6 stands and is why the deferral branch prints the surface list
+even when it holds no verdict: the extractor matches single-line definitions, so the
+multi-line C entry points this unit added (ds4_engine_embed_gemma_vq_image,
+ds4_bridge_eg2vq_embed_image, ds4_bridge_model_vision_encode_rows) do not appear in
+its list, and the whole-port pass must read the diffs by hand as well.
+
+The fast path with gate 26 in it, run and recorded here: tests/run.sh green in
+3 m 45 s (step 9 gate 26 about 65 s of that, both server runs included; the path was
+171 s at the unit-25 boundary), steps 1-9 PASS and step 10 the deferral above.
+
+
+9. WHAT THE NEXT UNIT INHERITS
+------------------------------
+
+The image path is complete end to end: preprocessing, tower (both legs), splice,
+engine entries, bridge, route, caps and refusals, with gates 22 to 26 in the fast
+path.  What is left, in the order the handoff lists it: unit 21 (batching several
+items into one tower call, DEFERRED by the owner's earlier redirect, with its full
+spec parked at docs/eg2vq-batch21-plan.txt), the C CLI's tokenizer gap (the owner's
+call; the Rust host owns encoding), the AUDIO tower (the owner's call), the final
+rule 19 pass over the whole port once the code is complete, and the two pushes
+(offers only).

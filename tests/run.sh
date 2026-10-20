@@ -38,12 +38,20 @@
 #      soft rows, the artifact's own leg (the 4-bit tier's loss, reported), and the
 #      device leg against the CPU one (bounded); then the engine's own
 #      probe/encode_memory entries (tools/eg2_splice_gate25.sh)
-#   9. tests/qa-gate.sh (rule 19)
+#   9. gate 26: the embedding WIRE (phase 8, unit 26) — the sequence the route
+#      builds checked against the anchor's own 92 positions, then /health's image
+#      contract, then an image through POST /v1/embeddings on the device leg
+#      (two fixtures, a prefixed item, a text item), then the same requests on
+#      the CPU leg and the two legs compared, then six refusals by name, then the
+#      frozen-baseline cross-check (tools/eg2_embed_media_gate26.sh; it stops and
+#      starts one server per backend, so the port is busy for its run)
+#  10. tests/qa-gate.sh (rule 19; DEFERRED by the owner's recorded instruction
+#      until the port is code-complete — qa-evidence/qa-deferral.txt)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
-#  10. the artifact gate 1b (byte-identical to the container, metadata read back)
-#  11. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
-#  12. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
+#  11. the artifact gate 1b (byte-identical to the container, metadata read back)
+#  12. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
+#  13. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
 #
 # Usage: tests/run.sh [--deep]
 set -eu
@@ -87,7 +95,10 @@ bash tools/eg2_vision_gate24.sh
 step "8. gate 25: the image splice and the engine entry (phase 8)"
 bash tools/eg2_splice_gate25.sh
 
-step "9. rule 19 QA gate"
+step "9. gate 26: the embedding wire, an image through /v1/embeddings (phase 8)"
+bash tools/eg2_embed_media_gate26.sh
+
+step "10. rule 19 QA gate"
 bash tests/qa-gate.sh
 
 if [ "$DEEP" -eq 0 ]; then
@@ -95,14 +106,14 @@ if [ "$DEEP" -eq 0 ]; then
     exit 0
 fi
 
-step "10. artifact gate 1b"
+step "11. artifact gate 1b"
 tools/eg2_artifact_check.sh "$ART" "$MANIFEST" "$DQVD" \
     "${EG2_MODEL_DIR:-.models/EmbeddingGemma-2-914f7f8}" out/artifact-inventory.txt
 
-step "11. the Rust suite (ds4-core)"
+step "12. the Rust suite (ds4-core)"
 (cd ds4-rs && cargo test -q -p ds4-core)
 
-step "12. gate 4: the CPU reference tower against the frozen anchor"
+step "13. gate 4: the CPU reference tower against the frozen anchor"
 (cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null)
 EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
     "$ART" "$BASELINE" tests/anchor/anchor-items.tsv \

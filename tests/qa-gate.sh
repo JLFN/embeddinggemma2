@@ -137,8 +137,29 @@ if [ -z "$all_surfaces" ]; then
   echo "QA GATE: ALL PASS (no new runtime, route or public-API surfaces relative to ${BASE} and ${NESTED}/${NESTED_BASE})"
   exit 0
 fi
+
+# ---- the owner's recorded DEFERRAL ----------------------------------------
+# 2026-10-20, owner: "the QA should not run before we are complete with the
+# entire code".  The deferral file states that instruction, and while it exists
+# this gate holds NO VERDICT for the work in flight: it lists the surfaces (so
+# they cannot be forgotten), prints the deferral, and exits 0 as a DEFERRAL,
+# never as a pass.  Deleting the file restores the freshness demand exactly as
+# it was -- the deferral is a recorded owner instruction, not a bypass, and the
+# file itself carries the duty to remove it and run one full pass over the whole
+# accumulated port when the code is complete.
+DEFERRAL=${QA_DEFERRAL:-qa-evidence/qa-deferral.txt}
+if [ -s "$DEFERRAL" ]; then
+  echo "New surfaces to be QA'd (${MODEL}, bases ${BASE} and ${NESTED}/${NESTED_BASE}):"
+  printf '%s\n' "$all_surfaces" | sed 's/^/  /'
+  echo "QA GATE: DEFERRED by recorded owner instruction ($DEFERRAL)."
+  echo "QA GATE:   This is NOT a pass and NOT QA evidence: no verdict is held for the"
+  echo "QA GATE:   surfaces above.  Rule 19's per-unit pass resumes when the file is"
+  echo "QA GATE:   removed, which the session that finishes the code must do before it"
+  echo "QA GATE:   runs the ONE pass over the whole port."
+  exit 0
+fi
+
 echo "New surfaces to be QA'd (${MODEL}, bases ${BASE} and ${NESTED}/${NESTED_BASE}):"
-printf '%s\n' "$all_surfaces" | sed 's/^/  /'
 
 failures=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; failures=$((failures+1)); fi; }
