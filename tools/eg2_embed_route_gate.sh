@@ -166,8 +166,14 @@ echo "== 4b. the embedding caps /health advertises (phase 6 row P2.3) =="
 # BATCH_ROWS_MAX, held equal to the C macro and the CUDA enum by
 # crates/ds4-core/tests/eg2vq_serving_caps.rs), because a caller learns the two
 # limits from this body alone.
+#
+# The check is deliberately a PREFIX of the served object rather than the whole
+# literal: unit 26 appended the image half (`,"image":{...}`) to the same object
+# (crates/ds4-core/src/serving.rs's EmbedCaps::to_json), which left this gate
+# failing on a contract that had only grown. Gate 26 leg 1 pins the image half's
+# own numbers, so this check reads the two the batch is bounded by.
 note "embed: $(sed 's/.*"embed":\([^}]*}\).*/\1/' "$WORK/health.json")"
-if ! grep -q '"embed":{"item_tokens_max":2048,"batch_rows_max":8192}' "$WORK/health.json"; then
+if ! grep -q '"embed":{"item_tokens_max":2048,"batch_rows_max":8192,' "$WORK/health.json"; then
     note "FAIL: /health does not advertise the family's embedding caps"
     fail=1
 fi

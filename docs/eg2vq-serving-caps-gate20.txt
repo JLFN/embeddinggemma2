@@ -194,3 +194,29 @@ What the pass could NOT test, in its own words: the canonical /data/build builde
 (which refuses this tree by design), any other GPU or arch than this card's sm_89,
 and the batching half of row P2.3, which does not exist yet. A later session should
 read section 5 of the report before treating its coverage as complete for the row.
+
+LATER NOTE (2026-10-20, added at the unit-28 QA pass, not by unit 20):
+
+This gate went RED on HEAD and stayed red for two units, and the QA pass found
+it.  Section 4b grepped the served /health body for the literal
+
+    "embed":{"item_tokens_max":2048,"batch_rows_max":8192}
+
+whose closing brace was correct only while the object ended there.  Unit 26
+(ds4-rs 4cb4f3d9) appended the image half to the same object
+(crates/ds4-core/src/serving.rs's EmbedCaps::to_json), so the served body became
+
+    "embed":{"item_tokens_max":2048,"batch_rows_max":8192,"image":{...}}
+
+and the literal could no longer match: the gate printed the body (proving the
+numbers ARE advertised) and then failed on its own stale expectation.  Nothing
+recorded the supersession, which is why the drift survived two units.
+
+The fix (2026-10-20, the unit-28 QA pass) widens the check to the prefix the two
+numbers the batch is bounded by, with the reason in the gate's own comment; gate
+26 leg 1 remains the check on the image half's own numbers.  Re-run after the
+fix: EG2VQ_EMBED_ROUTE_PASS, exit 0, and /health's embed object is exactly the
+row this document records plus unit 26's image half.  The general lesson is the
+one the unit-27 evidence already states about numbers: a contract that GROWS
+breaks every check that pinned its end, so a check should read the fields it
+owns (or parse the body), not the whole literal.
