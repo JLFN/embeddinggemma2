@@ -1,335 +1,240 @@
-QA report - unit 20: phase 6 row P2.3, slice 1, the embedding-shaped serving caps
+QA report - unit 23: phase 8 row P4.1, the vision tower on the CPU reference path
 
-Unit: 20. Outer repo /data/embeddinggemma2, branch feature/p23-serving-cap-batching,
-HEAD 92c4014 (last pushed publish/dev = d45394f). Nested engine checkout
-/data/embeddinggemma2/ds4-rs, branch feat/ds41-dsml-carriage, HEAD 68837a53 (last
-pushed publish/dev = 29873445). Both trees were clean at the start and end of this
-pass (git status --short empty in both); the only file this pass wrote in either
-tree is this report (plus the route gate's own out/phase6-route-gate scratch dir,
-which the gate deletes and recreates on every run by design; scratch work otherwise
-under /tmp/qa20).
+Unit: 23. Outer /data/embeddinggemma2, branch dev: the unit's code commit 2450b9a,
+HEAD at the end of this pass fb3b819 (the unit-23-close handoff rotation, committed
+by the project's own session during the pass); last pushed publish/dev = d45394f.
+Nested /data/embeddinggemma2/ds4-rs, branch feat/ds41-dsml-carriage, HEAD f459e924,
+byte-identical before and after this pass; last pushed publish/dev = 29873445. Both
+trees were clean at the start; the only file this pass wrote in either tree is this
+report. Scratch: /tmp/qa23, including a pristine git-archive copy of ds4-rs at
+f459e924 (/tmp/qa23/rs) in which every falsification edit was made, so no tracked
+source file was modified in place.
 
 QA model: deepseek-v4.1-CC-flash (the model tests/qa-gate.sh records for rule 19).
-Date: 2026-10-19. Host: RTX 4070 SUPER (sm_89), CUDA backend exercised live.
-Method: shell, curl, jq, awk, sha256sum, cmp/diff, rustc, cargo, make. No Python,
-no ONNX, no PyTorch anywhere in this verification (P-1/P-2 respected).
+Date: 2026-10-20. Host: RTX 4070 SUPER (sm_89); this unit's path is CPU-only.
+Method: shell, cc, make, awk, sha256sum, cmp/diff, the project's own gguf_inventory
+reader. The pin /data/llama.cpp @ 31288c9c66e59377f7788d920678a565bb89dd37 was READ
+ONLY (citations); it was not built or run, tools/eg2_vision_anchor.sh was not run and
+there is no Python, ONNX or PyTorch anywhere in this verification (P-1/P-2 respected).
 
 SURFACES COVERED
 
-- embed_caps - ds4_core::embed_caps(ModelFamily) -> Option(EmbedCaps), re-exported at
-  crates/ds4-core/src/lib.rs:121 and defined at crates/ds4-core/src/serving.rs:206.
-  This is the exact surface tests/qa-gate.sh extracts from the nested diff. Verified
-  live (its values are what /health reports and what both refusals enforce) and
-  falsified cross-file (CLAIM 1).
-- The /health field embed, built in serve.rs's GET /health branch (serve.rs:1227-1246).
-- POST /v1/embeddings: both cap refusals and the accepted path in run_embed
-  (crates/ds4-server/src/serve.rs:1596-1632).
-- The CLI refusal, ds4 -m ARTIFACT --embed TEXT, through Model::embed_gemma_vq's
-  Rust pre-check (crates/ds4-core/src/lib.rs:2397-2420).
-- The new test crates/ds4-core/tests/eg2vq_serving_caps.rs (all three tests), and
-  the family native-limit arm in crates/ds4-core/src/serving_host.rs:1105-1200.
-- Documents checked: docs/eg2vq-serving-caps-gate20.txt (the unit's evidence),
-  docs/retrieval-cost-gate5.txt sections 2, 5, 5b, 5c, 7, 9, RECIPE.md section 5b,
-  docs/ds4-gemma-port-phases.md row P2.3 (line 192), tools/eg2_embed_route_gate.sh,
-  tests/qa-gate.sh, tests/run.sh.
+- ds4_eg2vq_vision_prepare (ds4_eg2vq_vision.h:148-155, graph.inc:147-257): live on
+  both frozen fixtures via the oracle's prep mode in gate 23 (geometry, the
+  structural padding 1*8 0*512 1*8 / 0*384, the positions recomputed from the rule).
+- ds4_eg2vq_vision_forward (h:156-164, graph.inc:434-610): live on both fixtures in
+  gate 23 and in seven oracle builds/runs of mine (baseline, three flips, the matvec
+  kick, three -O2 builds), each a full bind+forward over the real mmproj.
+- ds4_eg2vq_vision_bind (bind.inc:61-141) and ds4_eg2vq_vision_free (bind.inc:143-150):
+  bind runs in every oracle soft run (211 tensors by name); free is called by the
+  oracle (oracle.c:170) and every run exited 0. No leak check (no valgrind/ASan).
+- qwen4exp_resize_rgb_pillow (ds4_resize_pillow.inc): byte-identity against the
+  pre-move revision plus a dynamic old-vs-new harness through the bicubic path
+  (CLAIM 3).
+- tools/eg2_vision_gate23.sh: run standalone (exit 0, 19.8 s) and inside tests/run.sh;
+  its output compared with the doc's section 6.
+- embed_caps: the only surface the rule 19 mount extracts for this window; unchanged
+  by this unit (no crates/ file in either commit's stat), still exported at
+  crates/ds4-core/src/serving.rs:206, its unit-20 live evidence stands. The mount's
+  coverage limits for this unit are FINDING F4.
 
-CLAIM 1 - the caps exist and are the family's own numbers: PASS
-(one wrong number in a comment, FINDING F2)
+CLAIM 1 - gate 23 is green and the doc's section 6 is its output verbatim: PASS
 
-- ds4_core::embed_caps(ModelFamily::GemmaVq) returns
-  Some(EmbedCaps { item_tokens_max: 2048, batch_rows_max: 8192 }): read at
-  crates/ds4-core/src/serving.rs:206-213; the constants are
-  crates/ds4-core/src/gemma_vq.rs:94 (ITEM_TOKENS_MAX: u32 = 2048) and :108
-  (BATCH_ROWS_MAX: u32 = 8192). The match arm is GemmaVq => Some(...), _ => None,
-  so every decode family is None by construction; the test pins three decode
-  families and the plan-JSON test pins the null for a decode family.
-- The one number in three files: ds4-rs/ds4_eg2vq.h:140 (the macro
-  DS4_EG2VQ_MAX_TOKENS = 2048u); ds4-rs/cuda/eg2vq_attn.cuh:49
-  (EG2VQ_ATTN_KEYS_MAX = 2048); the compile-time equality assert at
-  ds4-rs/ds4_eg2vq_gpu.cuh:45-46. The new test reads BOTH C sources at compile
-  time (include_str! at crates/ds4-core/tests/eg2vq_serving_caps.rs:60-61) because
-  the crate carries no C build (no build.rs in crates/ds4-core or crates/ds4-sys).
-- I falsified the test live, on COPIES only, never in place: copied the two
-  headers plus the test source verbatim into /tmp/qa20/divtree and recompiled the
-  test against the tree's own built crate with
-  rustc --edition 2021 --test .../eg2vq_serving_caps.rs --extern
-  ds4_core=target/debug/deps/libds4_core-d910397024fc9869.rlib
-  -L dependency=target/debug/deps (run from ds4-rs so the tree's rust-toolchain
-  override, 1.98.0, applies). Results:
-    - unmodified copies: 3 passed.
-    - CUDA enum 2048 -> 4096: FAILED with "the item ceiling diverged: Rust
-      ITEM_TOKENS_MAX=2048, C DS4_EG2VQ_MAX_TOKENS=2048, CUDA
-      EG2VQ_ATTN_KEYS_MAX=4096".
-    - C macro 2048u -> 1024u: FAILED with the same message, C=1024.
-    - macro renamed to DS4_EG2VQ_MAX_TOKENS_V2: FAILED with "ds4_eg2vq.h:
-      DS4_EG2VQ_MAX_TOKENS has no numeric value".
-  So a divergence in either C file is a red test, and a rename fails loudly, as the
-  unit's section 2 claims.
-- Workspace arithmetic. The layout at ds4_eg2vq_gpu.cuh:72-99 is linear in rows;
-  summing its coefficients from the constants at ds4_eg2vq.h:53-62 gives 27,136
-  f32 planes per row (h/x/f/a 4 x 512, q_swa 1,024, q_full 2,048, kv 2 x 512,
-  attn_swa 1,024, attn_full 2,048, fg 2,048, fu 2,048, fd 512, pg 512, pp 512,
-  ple 12,288) plus the 4-byte id = 108,548 B per row. 2048 rows = 2048 x 108,548 B
-  = 222,306,304 B; 8192 rows = 889,225,216 B = 848.03125 MiB, so the test's
-  848.0 +/- 1.0 MiB assert and the comment's 848.0 MiB hold.
-- Measured cross-check: the runtime itself prints the workspace at the top of the
-  range. My CLI run at exactly 2048 tokens (below) logged "ds4: gemma_vq device
-  path calls=1 tokens=2048 payload=55.94 MiB weights=137.04 MiB workspace=212.01
-  MiB", matching docs/eg2vq-device-gate7.txt:407-411 ("At max_tokens 2048 it is
-  212.01 MiB") to the printed precision.
-- FINDING F2 is the only fault here: the test comment and the nested commit
-  message state 212.0086 MiB where the arithmetic is 212.0078 MiB (or 212.0107
-  including the constant out plane). Behavior and gates are unaffected.
+- bash tools/eg2_vision_gate23.sh: exit 0, EG2VQ_VISION_GATE23_PASS. pattern maxabs
+  0.10275560 (bound 0.30), relrms 0.008235 (0.025), min row cosine 0.99978457
+  (0.998); gradient 0.06645030 / 0.005285 / 0.99988406. All six equal the doc to the
+  last digit, as do the sums of squares 65828.280406 / 69223.788734 against the
+  anchor's printed 65827.217181 / 69219.023404 (1.6e-5 / 6.9e-5 relative). The bound
+  is a constant printed before the run and never widened.
+- Wall time 19.8 s (the doc says ~19 s); the only fields that differ from the doc's
+  captured output are the wall-clock bind/tower seconds (0.17/4.75 and 0.17/4.72
+  versus 0.19/4.38 and 0.19/4.57), which cannot be byte-stable between runs.
+- Independent reproduction: my own baseline oracle (pristine copy, exact gate flags)
+  prints relrms 0.008235, maxabs 0.10275560, min row cosine 0.99978457, sumsq
+  65828.280406 on pattern - identical to the gate's own awk numbers.
 
-CLAIM 2 - enforced live, by name, at the boundaries: PASS, with the measured
-boundary counts below
+CLAIM 2 - every load-bearing pin citation is TRUE (read in /data/llama.cpp @ 31288c9c,
+tree clean): PASS (the non-load-bearing pointers are FINDING F1)
 
-Live setup: ds4-rs/ds4-server -m out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-
-gemma_vq.gguf --host 127.0.0.1 --port 18200 (the route gate's server had already
-exited; no other model process ran at any point; the server and CLI take a
-machine-global model lock and were never run concurrently). Inputs are repeated
-words ("word " k times); this construction tokenizes to exactly k + 10 tokens,
-measured through usage.prompt_tokens on accepted requests and through the refusal
-text on refused ones (k=100 -> 110, k=1400 -> 1410, k=2037 -> 2047, k=2038 ->
-2048, k=3000 -> 3010).
+- vec.h:47 GGML_GELU_QUICK_FP16 defined unconditionally - TRUE (no guard; the f32
+  path is the #ifdef at :1047); vec.h:1047-1057 gelu_quick_f32 through the f16 table
+  - TRUE (:1048-1055 quantize to f16, look up, widen back); vec.h:964 and :1031 the
+  formula.
+- ggml-cpu.c:395-400 the BF16 entry declares .vec_dot_type = GGML_TYPE_BF16 - TRUE
+  (:398); ggml-cpu.c:1328-1340 mul_mat converts src1 to vec_dot_type, widening only
+  when it is F32 - TRUE; ggml-cpu.c:3884-3891 the table's construction - TRUE.
+- ggml-impl.h:623-635 the bf16 rounding - TRUE (:634 the exact add-0x7fff-plus-LSB
+  expression the port copies); ggml.c:4785-4789 conv2d = mul_mat(im2col, weight)
+  with the im2col F32 for a bf16 weight - TRUE (the conv exception).
+- clip.cpp:1414-1429 the ffn_op assignment: FFN_GELU_QUICK when neither key is set -
+  TRUE (:1428); clip-model.h:91 the FFN_GELU default - TRUE.
+- clip.cpp:787-790 the flash branch's f16 cast of K and V - TRUE (:787 the branch,
+  the casts at :790-791); clip.cpp:3928-3961 AUTO -> ENABLED - TRUE; clip.cpp:5562-5568
+  the pos_x/pos_y fill - TRUE.
+- gemma4v.cpp:9, :12-16, :26-43, :46-73, :75, :83-99, :104-114 - all TRUE against the
+  numbered file (the *2-1, the conv with no bias, the two table views with tbl_y at
+  pos_size*nb1, the two rope calls and set_offset, kq_scale 1.0, the pooler with
+  sqrt(n_embd), the embedder RMS and 768->512 projection).
+- Also TRUE: ggml-cpu/common.h:9 (Q_TILE 64); ops.cpp:9171 and :9285-9350 (tiled
+  flash, K tiles f16->f32 at :9343-9346); ops.cpp:6455 (theta_scale, op's own n_dims);
+  mtmd-helper.cpp:404 (stbi_load_from_memory, no EXIF); mtmd-image.cpp:7-14 (:9
+  dst.from_u8 - the /255 itself is clip-impl.h:783), :57-96, :122-156, :767-791,
+  :775-782; clip-model.h:67 and :207-212; clip.cpp:1726, :1734, :2202-2230, :254-256,
+  :440-465, :457-478, :481-483, :519-529, :337.
+- The executed-facts citations are also in the shipped anchor log: load_hparams ffn_op
+  gelu_quick; warmup: flash attention is enabled; image_tokens->nx = 88; clip_encode:
+  copying image 1/1 to input buffer (nx=528, ny=384).
 
-- /health (curl, live): HTTP 200 with the exact object
-  "embed":{"item_tokens_max":2048,"batch_rows_max":8192} (plus "family":"gemma_vq",
-  "embedding":true, "backend":"cuda").
-- Item ceiling, exact pair: k=2038 words (2048 tokens) -> HTTP 200 with
-  usage.prompt_tokens 2048; k=2039 words (2049 tokens) -> HTTP 400
-  "input[0] is 2049 tokens, past this model's 2048-token item ceiling (GET /health
-  reports embed.item_tokens_max)" in the OpenAI invalid_request_error envelope.
-  Accepted at 2048, refused at 2049.
-- Row budget, exact pair: five 1400-word items (5 x 1410 = 7050 tokens) -> HTTP 200
-  with 5 vectors; five 1400-word items plus one 1132-word item (7050 + 1142 =
-  8192 tokens) -> HTTP 200 with 6 vectors; the same request with a 1133-word last
-  item (8193 tokens) -> HTTP 400 "the 6 inputs add up to 8193 tokens, past the
-  8192-token budget of one embedding call (GET /health reports
-  embed.batch_rows_max); split the request". Accepted at 8192, refused at 8193.
-- Which cap fires first, measured on three orderings: (a) a 3010-token item first
-  in an eight-item request that would also exceed the budget -> the ITEM-ceiling
-  message for input[0]; (b) five 1400-word items then a 3010-token item, budget
-  still fine when the long item is reached -> the ITEM-ceiling message for
-  input[5]; (c) eight 1400-word items then a 3010-token item, the budget already
-  exceeded at the sixth item -> the ROW-budget message. So the boundary reached
-  first in input order fires, and within one item the per-item check precedes the
-  cumulative check (serve.rs:1605-1630 reads in exactly that order). The unit's
-  documents describe each cap firing on its own ground and batch_rows_max as a
-  running total of the request's item tokens (commit 68837a53, note 1); they state
-  no precedence order, so nothing here contradicts them. See also FINDING F4 for
-  the message's wording when the trip is early.
-- Inside both caps: three 1400-word items at 128 dims -> HTTP 200 with 3 vectors
-  (the route gate's own case, reproduced below); my 8192-token accepted request
-  returned 6 vectors and the 7050-token one 5 - one vector per input throughout.
-- CLI: ds4 -m ARTIFACT --embed with a 3010-token item exits 1 with "ds4-rs: ds4
-  bridge error 1: the item is 3010 tokens, past the 2048 the embedding tower's
-  attention kernel holds (crate::gemma_vq::ITEM_TOKENS_MAX)" - the Rust pre-check,
-  and it fired in 0.56 s, before any tower work. At exactly 2048 tokens (k=2038,
-  --dims 128) the CLI exits 0 and prints the vector, with its own log confirming
-  the device run at tokens=2048.
+CLAIM 3 - the resampler move is behaviour preserving: PASS
 
-CLAIM 3 - the build and the suites: PASS
+- git show f459e924^:ds4.c lines 26635-26778 and ds4_resize_pillow.inc lines 20-163
+  are 144 lines each with the SAME sha256 2936b637...3ce867: the typedef and the five
+  functions are byte-for-byte the moved bodies. (The include's ":26636-26779" pointer
+  is off by one: FINDING F1.)
+- The frozen fixtures take only the resampler's identity branch (region == source), so
+  a scratch harness compiled the old bytes and the new .inc over one deterministic
+  700x530 pseudo-random image at five sizes (identity; 512x384; 1024x768; 513x385;
+  49x48): identical FNV-1a hashes and byte sums (TOTAL 72561f5339715edd both).
+- ds4.c calls qwen4exp_resize_rgb_pillow at :26783 and :26916, after the :18450
+  include; grep finds no remaining definition in ds4.c - exactly one implementation.
 
-All run in /data/embeddinggemma2/ds4-rs (warm tree), exactly as reported:
-- cargo test -p ds4-core --lib serving -> "test result: ok. 212 passed; 0 failed;
-  0 ignored; 0 measured; 237 filtered out".
-- cargo test -p ds4-core --test eg2vq_serving_caps -> "test result: ok. 3 passed;
-  0 failed" (item_ceiling_is_one_number_in_rust_c_and_cuda,
-  batch_row_budget_costs_what_the_layout_charges,
-  only_the_embedding_family_states_embedding_caps).
-- cargo test -p ds4-core --lib -- the_embedding_family_reports_item_and_batch_caps
-  gemma_vq_native_arm -> "2 passed" (the serving plan-JSON test and
-  serving_host::tests::gemma_vq_native_arm_is_the_tower_ceiling_not_a_prefill_chunk).
-- cargo check -p ds4-server --all-targets -> exit 0, "Finished"; two warnings
-  (ds4-core dead-code on ImagePlan.window; an unused import in the ds4-server test
-  "generate"), no errors.
-- make ds4 ds4-server -> "'ds4' is up to date." and "'ds4-server' is up to date.",
-  exit 0; re-hashing gave the same binaries (ds4-server
-  3fbac283c15e0fcd9ca86c885bb807fc1d6f0d7f596e75b0d1d6237e09341b79, ds4
-  1132dbe753e32f12414dfdf6150d58f95d2c5ab20d27a08499ab592530a7c941), so the
-  artifacts the live runs used are the tree's own.
+CLAIM 4 - the builds and the suite: PASS
 
-CLAIM 4 - the route gate reproduction: PASS (digests verified; line-for-line
-rerun, one digit of device noise)
+- make ds4.o: the target was up to date, so it was forced with make -W ds4.c ds4.o,
+  which runs the CUDA host recipe unchanged (cc -O3 -ffast-math -g -march=native
+  -Wall -Wextra -std=c99 -D_GNU_SOURCE -fno-finite-math-only -c -o ds4.o ds4.c):
+  exit 0 in 40.7 s, pre-existing warnings only, and the rebuilt object's sha256
+  9a3607d4...cb8266 is identical to the object it replaced - compiles, deterministic.
+- bash tests/run.sh (fast path): exit 0, "fast path complete", 24.3 s (pre-report) and
+  24.1 s (post-report); steps 1-7 green, including gate 22 (211/211 tensors, 19/19
+  metadata keys, digest 9ffb86e3...6838) and gate 23.
+- Nothing of the pin is built or linked: the oracle includes ds4.c with DS4_NO_GPU.
 
-- Digests re-read in this pass: artifact
-  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf sha256
-  5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f (the evidence
-  doc quotes the 5bcf22161dda46bccbd5123b... prefix); ds4-rs/ds4-server sha256
-  3fbac283c15e0fcd9ca86c885bb807fc1d6f0d7f596e75b0d1d6237e09341b79 (doc prefix
-  3fbac283c15e0fcd9ca86c88...); out/eg2vq-route-gate-unit20.log sha256
-  5bc8874c90500cbf0c5e282952b351b0493f9a9607d1a6a4e22174addd0e1be1, the full digest
-  the doc quotes. All match.
-- Re-ran tools/eg2_embed_route_gate.sh out/...gguf, output to
-  /tmp/qa20/route-gate-rerun.log: exit 0, EG2VQ_EMBED_ROUTE_PASS; the gate picked
-  port 18108 (free) and the whole run took 5.7 s. All of sections 1, 2, 3, 4, 4b,
-  4c and 5 printed, including the exact /health object, the 3010-token refusal,
-  the eight-item row-budget refusal reading "the 8 inputs add up to 8460 tokens...",
-  the three-vector accepted case, and dim=768 cos=1.000000000000.
-- diff of the recorded log against the rerun: identical except two lines. (1) the
-  recorded "L2 norm: 1.000000041" versus the rerun "L2 norm: 1.000000000" - the
-  norm the gate computes from the printed %.7f values of the 256-dim vector.
-  (2) the recorded log's final "route gate exit=0" is not printed by the script;
-  the unit appended the exit status when capturing. Every other line, including
-  both refusal bodies, is byte-identical.
-- The norm difference is device run-to-run arithmetic noise, measured directly:
-  three consecutive identical POSTs of the gate's step-3 request against my own
-  server returned byte-different JSON (first difference at offset 818) and norms
-  1.000000011 / 1.000000022 / 1.000000018. All are within the gate's declared
-  bound (abs(norm - 1) <= 1e-5), and no unit document claims bit-determinism
-  for the
-  device path, so this is an observation (FINDING F5), not a contradiction. The
-  recorded 1.000000041 is the same phenomenon.
+CLAIM 5 - the discrimination table: the rows' PURPOSE is confirmed; two of the three
+rows I re-measured differ in exact digits (F2); two noise bullets are off 7-12x (F3)
 
-CLAIM 5 - the declared quality floor is reported honestly: PASS
-(all four verdicts and every percentage recomputed; two wrong cross-references,
-FINDING F3)
+Measured on pattern, each flip applied in the pristine copy, rebuilt with the gate's
+exact flags, then restored and cmp'd:
 
-Re-derived with awk from the document's own tables - the mean cosine from section
-5b (0.956039571) and the recall/MRR table at section 5c lines 281-288 - NOT from
-section 9's arithmetic:
+  baseline (unchanged)                    maxabs 0.10275560  relrms 0.82%  mincos 0.99978457
+  tanh GELU drop-in (eg2vq_gelu)          1.38684  7.55%   (doc 1.409 / 7.60%)
+  tanh GELU inside the f16 round trips    1.41403  7.54%
+  position slices swapped                 4.51476  43.74%  (doc 4.527 / 47.20%)
+  fill rules swapped                      5.69762  103.39%
+  rope axes swapped (pos_y first)         5.87766  103.51% (doc 5.889 / 103.50%)
+  every matvec output scaled by (1+1e-5)  0.08070  0.83%   (doc 0.069%)
 
-- recall@10 must not fall below the baseline's own 0.983333: artifact 0.990000,
-  margin 0.006667 -> PASS (change +0.678%, the doc's +0.68%).
-- MRR@10 must stay within 2% of baseline: floor 0.98 x 0.951778 = 0.93274244;
-  artifact 0.935819, margin 0.00307656 (printed 0.003077) -> PASS (change
-  -1.676757%, the doc's -1.68%).
-- recall@1 must stay at or above 0.855: artifact 0.861611, margin 0.006611 ->
-  PASS (change -3.002101%, the doc's -3.00%).
-- mean vector cosine must stay at or above 0.95: artifact 0.956039571, margin
-  0.006039571 (printed 0.006040) -> PASS (shortfall from 1.0 -4.396043%, the
-  doc's -4.40%).
+So the rope row reproduces digit for digit, and every flip is 3x-100x beyond the
+2.5% bound while the port sits at the table's minimum: the gate discriminates.
 
-So all four verdicts and all four margins printed in section 9 (and RECIPE.md
-section 5b's "margins of 0.006667, 0.003077, 0.006611 and 0.006040") reproduce
-exactly.
+CLAIM 6 - the doc's supporting claims: PASS except the two bullets in F3
 
-- RECIPE.md section 5b's percentages, each recomputed from the same tables:
-  95.60% agreement (0.956039571); MRR kept 98.32% (98.323243); recall@1 97.00%
-  (96.997899); recall@5 99.59% (99.591559); recall@10 100.68% (100.678000);
-  top-1 changed 7.67% (23/300 = 7.666667); MRR retained at 512/256/128 =
-  98.64% / 97.81% / 96.76% (98.640117 / 97.808306 / 96.763788); the 128-dim
-  losses cited there, 4.06% of recall@5 and 2.63% of recall@10 (4.061940 /
-  2.628020). All correct.
-- RECIPE.md section 5b's table is digit-for-digit equal to the document's 5c
-  table (diff over the eight rows, clean).
-- FINDING F3: section 9's two pointers to "section 7" name the wrong section.
+- SHA256SUMS carries all four tests/vision/reference dumps and preproc-facts.txt
+  (lines 10-14 of 14 entries); sha256sum -c SHA256SUMS reports OK on every entry
+  (measured 1.1 s on this machine, not the ~25 s the QA brief expected).
+- Gate 23 is fast-path step 6 of tests/run.sh (read in the file and observed); the
+  doc's "~19 s for the whole gate" measured 19.8 s; the fast path 24.1-24.3 s.
+- The dense cache is 576.0 MiB: the oracle prints dense_mb=576.0 on every run, and
+  the binder's arithmetic agrees exactly - 16 x (4*768^2 + 3*768*3072) x 4 B =
+  603,979,776 B. patch_embd and input_projection have their own allocations, which
+  is what the doc's "the 16 blocks' matrices" says.
 
-CLAIM 6 - the rule 19 mount behaves: PASS
+CLAIM 7 - shapes against the artifact's own metadata: PASS
 
-- Red run captured BEFORE this report was written, in place (the gate only reads):
-  bash tests/qa-gate.sh printed the surface list { embed_caps }; PASS report
-  exists; FAIL fresh (report mtime 1792439313 < the newer base epoch 1792439494 =
-  outer publish/dev d45394f; the nested base 29873445 is older); PASS operative
-  verdict (the unit-15 report's last line); FAIL covers embed_caps; exit 1. The
-  same red appears as tests/run.sh step 5: the fast path (steps 1-4: the recorded
-  digests, the DQVD structure check, the scorer self-test, loader gate 3 with 1376
-  tensors) passed in 3.9 s and step 5 failed red, exit 1.
-- Last-line contract, in a sandbox clone at /tmp/qa20/gate/outer (QA_NESTED_REPO
-  pointed at the real nested checkout, read-only): a report covering embed_caps
-  whose last non-empty line is "trailing note after the verdict" -> exactly one
-  FAIL, "operative verdict is PASS (report's last non-empty line: trailing note
-  after the verdict)", exit 1; the same report ending with "verdict: overall PASS"
-  -> all checks PASS, exit 0.
-- Both repositories are scanned, mechanism and current reach: with
-  QA_NESTED_BASE=4892fb4b (unit 18's commit) the list grows to 10 surfaces
-  (ds4_bridge_eg2vq_embed, ds4_bridge_eg2vq_has_embed, embed_caps,
-  embed_gemma_vq, embed_item_ids, embeds_text, mrl_truncate, st_prompt,
-  tokenizer_special_flags, /v1/embeddings); with QA_NESTED_BASE=68837a53 (the
-  nested HEAD) the list is empty and the gate prints ALL PASS "no new ...
-  surfaces relative to publish/dev and ds4-rs/68837a53" - so embed_caps comes
-  from the nested scan. With QA_BASE=ed2fa0b~1 (an older outer base whose window
-  spans many tools/ commits) the list did not change: no added line in the outer
-  repo's tools/ or tests/ matches the C-definition pattern, because the outer C
-  tools are not named ds4_... and define functions with inline bodies (checked:
-  tools/eg2_gguf.c's definitions are die, xmalloc, jw, jstr_end, ...; and
-  git log -S 'int ds4_' -- tools/ finds nothing). A synthetic added line
-  "int ds4_qa_probe(" in the sandbox's tools/ does appear in the list, so the
-  outer extraction path works; for this unit's window the effective surface was
-  the nested one. None of this weakens the gate's purpose (the nested scan is
-  what catches this project's engine work), it is recorded so a later session
-  reads the gate's coverage honestly.
-- Post-write green, in place, on this report: bash tests/qa-gate.sh prints four
-  PASS lines (exists; fresh; operative verdict; covers embed_caps) and "QA GATE:
-  overall PASS", exit 0; and bash tests/run.sh (fast path) completes all five
-  steps in one run and exits 0 with "fast path complete". This is the state the
-  unit's commit-for-delivery and push will see.
-
-FINDINGS (all low severity or informational; none changes a measured verdict)
-
-F1 (low; wrong number in the unit's evidence doc and both commit messages).
-docs/eg2vq-serving-caps-gate20.txt:96-97 says "1400 words tokenize to about 1057
-tokens (8460/8), so the eight-item request was refused by the ROW budget and not
-by the per-item ceiling". The conclusion is right, the number is wrong: a
-1400-word item is 1410 tokens, measured three ways (single-item request
-usage.prompt_tokens 1410; five items usage 7050 = 5 x 1410; six items refused at
-total 8460 = 6 x 1410). The eight-item request holds 8 x 1410 = 11280 tokens and
-trips the budget at its sixth item, which is why the server's message says 8460;
-1057.5 is no item's token count. The same misreading is in the nested commit
-message 68837a53 ("eight 1400-word items (8460 tokens)"), and the same
-1400-words-equal-1400-tokens assumption is in tools/eg2_embed_route_gate.sh:200
-("three such items is 4200 rows"; measured 3 x 1410 = 4230 tokens). The refusals
-themselves are correct and were re-measured at the boundary.
-
-F2 (low; one wrong constant, comment and commit message only).
-crates/ds4-core/tests/eg2vq_serving_caps.rs:78 says
-"// (2048 x 108,548 B = 212.0086 MiB)."; 2048 x 108,548 = 222,306,304 B =
-212.0078125 MiB exactly, so the correct figures are 212.0078 MiB to four
-decimals (or 212.0107 MiB if the constant 768-float out plane at
-ds4_eg2vq_gpu.cuh:75-77 is included; the runtime prints 212.01 MiB either way).
-The nested commit message 68837a53 repeats it ("the per-row charge 108,548 =
-212.0086 MiB at 2048 rows"). No asserted value depends on the typo: the test
-asserts 848.0 +/- 1.0 for 8192 rows, which is 848.03125 MiB and correct.
-
-F3 (low; wrong cross-references in the new section 9).
-docs/retrieval-cost-gate5.txt:534: "The percentages below are the arithmetic of
-the table at section 7 applied to the same two legs"; :588: "the margin table in
-section 7 (mean top1-top2 margin 0.085722 at 768)". Section 7 of that document is
-"The -O2 aside, and where the timing came from" (lines 361-439) and contains no
-recall/MRR table and no margin table; both sentences mean the tables at section 5c
-(retrieval table lines 279-288, top-1-change/margin table lines 291-296), with the
-mean cosine from section 5b. Every number those sentences lead to was re-derived
-and is correct, so only the pointer is wrong.
-
-F4 (low; the row-budget refusal can misstate the request's own total).
-run_embed's budget refusal prints the request's declared input count together
-with the RUNNING total of the items processed so far (serve.rs:1620-1630). When
-the trip happens before the last input, the sentence is false about its own
-subject: measured with input of eight 1400-word items and one 3000-word item the
-400 body reads "the 9 inputs add up to 8460 tokens", while those nine inputs
-tokenize to 8 x 1410 + 3010 = 14290; the unit's own eight-item case shows the
-same effect ("the 8 inputs add up to 8460 tokens" versus the true 11280). The
-commit message's note 1 documents the running-total semantics of the cap itself,
-so the enforcement is as intended; the message text is what mislabels. The
-exact-boundary case is accurate in the same message ("the 6 inputs add up to 8193
-tokens"), and so is the six-item case (8460 = 6 x 1410).
-
-F5 (informational; the device path is not run-to-run bit-identical).
-Three identical 256-dim POSTs on the same running server returned byte-different
-JSON (first difference at offset 818) and norms 1.000000011 / 1.000000022 /
-1.000000018; this explains the only differing line in the route-gate reproduction
-(recorded 1.000000041 versus rerun 1.000000000). The gate's declared tolerance
-(within 1e-5 of 1.0) covers it, and no unit document claims device-path
-determinism; recorded so a future comparison of two runs does not expect
-byte-identical vectors, and treats the ninth-decimal norm as noise.
+Read back through the project's own reader (gguf_inventory --kv-values) from the
+mmproj: 211 tensors, 19 keys; embedding_length 768; feed_forward_length 3072;
+block_count 16 (blk.0-15 present, no blk.16); attention.head_count 12;
+attention.head_count_kv 12; attention.head_dim 64; layer_norm_epsilon 1e-6;
+patch_size 16; projection_dim 512; projector.scale_factor 3. Tensor shapes:
+v.position_embd.weight [768,10240,2] (10240 rows per axis), v.patch_embd.weight
+[16,16,3,768], mm.input_projection.weight [768,512], attn_q_norm/k_norm [64]. Every
+value equals the constant in ds4_eg2vq_vision.h. The reference's log prints the same
+hparams (n_embd 768, n_head 12, n_ff 3072, n_layer 16, ffn_op gelu_quick,
+projection_dim 512, patch_size 16, n_merge 3, image_min/max_pixels 161280/2580480
+= 70/1120 x 2304).
 
 WHAT I DID NOT TEST
 
-- The CPU backend over HTTP: the evidence doc's section 5 says the same Rust
-  refusal is reached before the FFI call on the CPU backend but was not driven
-  over HTTP; I reproduced the unit's live run on the CUDA backend only, as it did.
-- A full 8192-row device workspace: the batch budget's memory figure is arithmetic
-  (verified by summing the layout coefficients and by the live 2048-token
-  workspace print), not a run at 8192 rows; no code path sizes a workspace past
-  one item today, and the unit says so.
-- /health's embed for a decode family (null): verified through the unit tests and
-  the match arm, not by serving a decode model (no decode artifact was loaded).
-- The batching half of row P2.3: explicitly not in this unit (its section 5 and the
-  phases row say so), hence untested.
-- tools/eg2_embed_cli_gate.sh and the older phase-4/5 gates: not re-run; the
-  route gate's route-vs-CLI comparison (cos 1.000000000000) and the suites above
-  cover this unit, and the older gates' evidence is unchanged by it.
-- The device noise (F5) was characterized with three samples, not a distribution.
+- The doc's first perturbation bullet (a 1e-7 relative perturbation of the position
+  contribution -> 0.068% RMS, saturating): not measured.
+- The anchor's own execution (forbidden in this pass); the shipped log is the only
+  witness for the executed-reference facts, and gate 23 cross-checks its two lines
+  against preproc-facts.txt.
+- The CUDA vision tower, the text/vision splice and the pooled *.text.tsv dumps
+  (units 24/25), and the other discrimination rows (kq_scale, weightless V RMS,
+  gate/up exchange, the bf16 rows, f32 K/V).
+- The Qwen4exp GPU path (covered statically: same bytes, same include) and leaks of
+  bind/free (no valgrind or ASan run; free is called and every run returned 0).
+
+FINDINGS (none blocks the unit)
+
+F1 (low; off or stale file:line pointers in the port's comments; every mechanism
+they name is real and the load-bearing citations of CLAIM 2 are exact).
+- vision.h:78 cites clip.cpp:1723 for ROPE_THETA; the assignment is clip.cpp:1725
+  (1723 is a case label). vision.h:79 cites clip-model.h:93 for eps; it is :95.
+- graph.inc:27 cites clip.cpp:379 for the input RMS; the build_norm call is :376
+  (379 is a comment). graph.inc:28 cites clip.cpp:436-451 for the q/k/v projections;
+  the matmuls are :424, :429, :434. graph.inc:37 cites clip.cpp:534 for the FFN
+  residual; the add is :538 (534 is the ls_2 callback), and :35's 486-500 stops two
+  lines before the attention residual at :501-502.
+- graph.inc:305 cites gemma4v.cpp:71 for ggml_rope_set_offset; line 71 is blank and
+  the call is :70.
+- vision.h:11 and bind.inc:4 cite ds4.c:72689 for the GLM-5.3 companion open; at HEAD
+  that model_open is ds4.c:72566 (72689 is DFlash cleanup). 72689 is exactly the
+  parent revision's line, shifted by the resampler move - not refreshed.
+- resize_pillow.inc:7 says the bodies "were at ds4.c:26636-26779"; the byte-identical
+  144 lines are ds4.c:26635-26778 (one line earlier at both ends), and :4's "block
+  that opens at ds4.c:18444" is the guard at ds4.c:18452 at HEAD (18444 is the new
+  include's own comment; the parent's guard was :18443).
+- Loose but pointing at the right builder: build_vit :337-560 (the function ends
+  :568), build_norm :607-628 (def at :603, body ends :626).
+
+F2 (low; two discrimination-table rows do not reproduce digit for digit).
+- "tanh GELU (eg2vq_gelu)": doc 7.60% / 1.409. Measured 7.55% / 1.38684 with the
+  literal drop-in and 7.54% / 1.41403 with the tanh formula kept inside the f16
+  round trips; neither reading gives the doc's pair.
+- "position slices swapped": doc 47.20% / 4.527. Measured 43.74% / 4.51476 by
+  swapping the two slices in the embedding add; the fill-swap reading measures
+  103.39% / 5.69762, i.e. the doc's rope-axes row territory. The rope row itself
+  reproduces (103.51% / 5.87766 vs 103.50% / 5.889), so the table is not
+  systematically stale - these two rows are simply not exactly reproducible as
+  written. Impact: none; every measured flip is >=7.5% against a 2.5% bound and the
+  port is at 0.82%.
+
+F3 (low; two noise-floor bullets in the doc's section 5 understate the measured
+sensitivity by ~7-12x).
+- "the SAME source built at -O2 (no -ffast-math) versus -O3 -ffast-math
+  -march=native differs by 0.064% RMS (max-abs 0.009)": measured 0.78% / 0.06609 on
+  pattern and 0.46% / 0.03393 on gradient. Three builds tried: -O2 plain, -O2
+  -march=native (same output), -O2 -ffast-math -march=native (0.80% / 0.06796). All
+  -O2 builds still pass the gate bounds themselves (0.79% residual on pattern).
+- "scaling every matvec's output by (1 + 1e-5) ... gives 0.069%": measured 0.83% /
+  max-abs 0.08070 (applied to every eg2vq_vision_matvec output).
+- The doc's own summary sentence "the same port moves 0.06-0.4% under a pure
+  recompilation" is likewise below the measured 0.46-0.80%.
+- Impact: none on the verdict - the port's residual (0.82%/0.53%) and its measured
+  noise (<=0.83%) stay far inside the declared bound - but the "saturates /
+  decision-boundary" narrative rests on numbers this pass could not reproduce; read
+  the summary range as ~0.5-0.8% for a recompile.
+
+F4 (informational; the mechanical QA mount cannot see this unit's surfaces).
+tests/qa-gate.sh printed {embed_caps}, not the unit's C entry points: the nested scan
+paths are "crates ds4.c cuda" and the C-definition pattern needs a source line ending
+in "(", so neither ds4_eg2vq_vision.h nor the new .inc files enter the list, and the
+outer tools/ scan uses the same C pattern, so tools/eg2_vision_gate23.sh is invisible
+too. The fast path was green before this report existed, on the unit-20 report being
+fresh by mtime. Not a unit defect; the unit's real surfaces were QA'd by hand above.
+
+F5 (informational; tree state at the end of this pass). The nested tree is clean and
+byte-identical (the forced ds4.o rebuild reproduced its own sha256). During the pass
+the project's own session committed the uncommitted unit-23-close handoff rotation
+it had left in the working tree (fb3b819, a docs(handoff) commit directly on dev per
+rules 9/23); the outer tree now shows only this report as modified. The handoff was
+not written by this QA pass.
+
+Post-write confirmation (recorded after this report was written): bash
+tests/qa-gate.sh -> four PASS (exists; fresh; operative verdict; covers embed_caps),
+"QA GATE: overall PASS", exit 0; bash tests/run.sh -> fast path complete, exit 0,
+24.1 s.
 
 verdict: overall PASS

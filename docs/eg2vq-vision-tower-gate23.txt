@@ -193,6 +193,21 @@ peaked softmax, and the same port moves 0.06-0.4% under a pure recompilation.
 The port is a reference implementation, not a bit-exact clone of ggml's SIMD
 kernels, and the residual is named rather than hidden.
 
+The numbers in those bullets are ONE build's, and the unit's QA pass (rule 19,
+same day) re-measured two of them and got LARGER values from the same
+configuration: an -O2-vs-O3 rebuild 0.78% RMS / 0.0661 max-abs (the bullet above
+says 0.064% / 0.009), and the 1e-5 kick at every matvec site 0.83% / 0.0807 (the
+bullet says 0.069%).  Both differ from the bullets by 10x, which is the same
+lesson at a bigger amplitude: this tower's response to a recompilation is not a
+sharp number, it is a range, and the range is 0.06% to 0.8% depending on how the
+recompiled rounding decisions land.  The bullets are kept as measured, with the
+QA's larger re-measurement beside them, rather than replaced: what the bound has
+to sit above is the upper end of that range, not its lower end.  The
+discrimination distances (section 4) move too — the QA re-measured tanh GELU at
+7.55% and the swapped position slices at 43.74% against 7.60% and 47.20% here —
+which changes nothing about the SEPARATION, which is 5x to 100x in both
+measurements.
+
 The gate therefore discriminates: every gross mechanism (7.6% and up) fails the
 2.5% bound on both fixtures, and the conv-activation error (d) fails it on the
 gradient fixture (3.11%) and on max-abs for both (0.346/0.548 > 0.30).  The two
@@ -236,7 +251,7 @@ The sum-of-squares lines are the reference's OWN printed scalar for each fixture
 --------------------------------
 
   - The tower reads the mmproj as a COMPANION MODEL, the family pattern
-    (ds4.c:72689 opens opt->vision_path as its own ds4_model for GLM-5.3); the
+    (ds4.c:72566 opens opt->vision_path as its own ds4_model for GLM-5.3); the
     binder requires every tensor by name and shape, so a file that is not this
     tower stops the load by name.
   - The 16 blocks' matrices are widened once into one 576.0 MiB f32 cache; the
@@ -264,3 +279,45 @@ The sum-of-squares lines are the reference's OWN printed scalar for each fixture
     no causal mask here, kq_scale is 1.0, and head_dim is 64 with 12/12 heads.
   - The pooled *.text.tsv dumps (the splice) are still unit 25's: nothing in this
     unit fakes them, and the oracle deliberately does not print them.
+
+9. THE RULE 19 QA PASS, AND WHAT IT FOUND
+------------------------------------------
+
+The unit's QA pass ran under the project's recorded QA model
+(deepseek-v4.1-CC-flash, the slug tests/qa-gate.sh records) and returned
+`verdict: overall PASS`; its report is qa-evidence/qa-report.md.  It verified,
+LIVE: gate 23's exit status and all six of its printed numbers, the two sums of
+squares, the bounds and dense_mb=576.0 against section 6 to the last digit; the
+resampler move as byte-identical (the same digest for the old and new 144-line
+bodies, plus a dynamic old-vs-new check across five scales); `make ds4.o` with a
+forced rebuild; the fast path green (24.4 s); `sha256sum -c SHA256SUMS`; the
+mmproj's shapes and 19 metadata values read back through the project's own
+reader against ds4_eg2vq_vision.h; and that the pin was never built or run and
+that no Python, ONNX or PyTorch appears anywhere in the change.
+
+Its five findings and their disposition:
+
+  F1 (low, FIXED in the commit that carries this section): eight NON-load-bearing
+     file:line pointers in the port's comments were off by a few lines
+     (clip.cpp:1723 -> :1725, clip-model.h:93 -> :95, clip.cpp:379 -> :376,
+     clip.cpp:436-451 -> :424-434, clip.cpp:534 -> :537, gemma4v.cpp:71 -> :70,
+     ds4.c:72689 -> :72566, and the moved block's range 26636-26779 ->
+     26635-26778).  Every LOAD-BEARING citation (the ones this document and the
+     port rest on) was verified line by line in the pin and was correct; the
+     eight are corrected rather than excused.
+  F2 (low, RECORDED here): two rows of section 4's table do not reproduce
+     digit-for-digit under the named one-line change: tanh GELU 7.55% / 1.38684
+     and swapped position slices 43.74% / 4.51476, against 7.60% / 1.409 and
+     47.20% / 4.527 here.  Section 5's new paragraph explains why, and why it
+     does not weaken the table.
+  F3 (low, RECORDED here): the noise-floor bullets understate the measured
+     sensitivity by 10x on two of them; the QA's larger re-measurements are now
+     beside the originals in section 5.
+  F4 (informational): tests/qa-gate.sh's surface extraction sees only
+     `embed_caps` for this window — its nested paths and its C pattern do not
+     reach the new vision .h/.inc files.  The QA report covers those surfaces by
+     hand, which is what rule 19 asks for; the gate's blind spot is a property of
+     the generic template, not of this unit, and is left as it is.
+  F5 (informational): the handoff rotation landed during the QA pass
+     (commit fb3b819), so the pass's tree-state note differs from the final
+     state.  No action.
