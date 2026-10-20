@@ -1,113 +1,143 @@
 #!/bin/sh
-# eg2_mmproj_check.sh — gate 22: the vision mmproj and the frozen vision oracle
-# (phase 8, unit 22; the evidence is docs/eg2vq-vision-oracle-gate22.txt).
+# eg2_mmproj_check.sh — gate 22: the vision mmproj, checked with THIS PROJECT's
+# OWN reader (phase 8, unit 22; evidence docs/eg2vq-vision-oracle-gate22.txt).
 #
-#   1. both instruments rebuild from source with the commands recorded here;
+# Owner directive 2026-10-20: "We will not use llama it must be ported all."  The
+# pinned llama.cpp is the AUTHORITY this port reads and cites (rule 0.2) and it
+# produced the frozen numbers in tests/vision/reference/ ONCE, but no step of the
+# port, no build, no run and no DEFAULT gate executes it.  This gate therefore
+# reads the mmproj back with the Rust host's own GGUF reader
+# (crates/ds4-core/examples/gguf_inventory).  The one place in this repository
+# that still executes the pin is tools/eg2_vision_anchor.sh, opt-in and never
+# called from here or from tests/run.sh.
+#
+#   1. the writer rebuilds from source with the command recorded here;
 #   2. the writer is DETERMINISTIC: two writes of the same checkpoint are
 #      byte-identical, and the digest equals the recorded one;
-#   3. the reference's OWN loader reads the file back — the second side of the
-#      check, and the only one that matters, because the file exists to be
-#      resolved by it: it must report 211 tensors and every one's name, rank,
-#      dims, byte count and type must equal the writer's manifest;
-#   4. the frozen reference REPRODUCES: for each fixture the harness's fresh
-#      soft-token dump and pooled dump are byte-identical to the committed
-#      tests/vision/reference/*;
-#   5. the two fixtures are not the same answer (cosine between their pooled
-#      vectors below 0.999) — a gate that cannot tell two images apart is not
-#      measuring an image path at all.
+#   3. OUR reader reads the file back: 211 tensors whose name, type, rank, dims
+#      and byte count equal the writer's manifest, and the 19 clip.* metadata
+#      keys equal the recorded list;
+#   4. the frozen reference is intact and its two fixtures are DIFFERENT answers
+#      (cosine below 0.999 between their committed pooled vectors) — a gate that
+#      cannot tell two images apart is not measuring an image path at all;
+#   5. the frozen reference's own digests are in SHA256SUMS, checked by
+#      tests/run.sh step 1 before this gate runs.
+#
+# The side of the check that the pin used to carry — "the reference's own loader
+# accepts this file" and "the frozen numbers reproduce from a fresh run" — moves
+# to unit 23's gate, where the PORT reproduces those same numbers natively.  That
+# is the stronger statement of the two: it is the consumer, not a bystander.
 #
 # Usage: tools/eg2_mmproj_check.sh
-#   Run from the repository root. Env: HF (checkpoint dir), ANCHOR (the pin's
-#   CPU build), MMPROJ_SHA (the recorded digest).
+#   Run from the repository root.  Env: HF (checkpoint dir), MMPROJ_SHA (the
+#   recorded digest), DS4_ROOT / DS4_INVENTORY (the reader command).
 set -eu
 REPO=$(pwd)
 : "${HF:=$REPO/.models/EmbeddingGemma-2-914f7f8}"
-: "${ANCHOR:=/data/llama-anchor-build}"
-: "${LLAMA:=/data/llama.cpp}"
 : "${YA:=/data/YoungAi}"
 : "${MMPROJ_SHA:=9ffb86e3eeb5834095e0bd42b6f5fc0505f02b8e208a6037d01db448e6566838}"
+: "${DS4_ROOT:=$REPO/ds4-rs}"
+: "${DS4_INVENTORY:=cargo run -q -p ds4-core --release --example gguf_inventory --}"
 MMPROJ=$REPO/out/EmbeddingGemma-2-914f7f8-vision-mmproj.gguf
 MANIFEST=$REPO/out/mmproj-manifest.tsv
-BASE=$REPO/out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/eg2-mmproj-check.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$REPO/out"
 
 fail() { echo "MMPROJ GATE: FAIL: $1" >&2; exit 1; }
 
-# ---- 1. rebuild both instruments ------------------------------------------
+# ---- 1. the writer rebuilds -------------------------------------------------
 cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -I"$REPO/tools" -I"$YA/src/common" \
    -o "$REPO/bin/eg2_mmproj" "$REPO/tools/eg2_mmproj.c" -lm || fail "the mmproj writer did not build"
-g++ -O2 -std=c++17 -Wno-deprecated-declarations \
-    -I"$LLAMA/include" -I"$LLAMA/ggml/include" -I"$LLAMA/tools/mtmd" \
-    -o "$REPO/bin/eg2vq_vision_oracle" "$REPO/tests/parity/eg2vq_vision_oracle.cpp" \
-    "$ANCHOR/bin/libmtmd.so" "$ANCHOR/bin/libllama.so" "$ANCHOR/bin/libggml.so" \
-    "$ANCHOR/bin/libggml-base.so" "$ANCHOR/bin/libggml-cpu.so" -Wl,-rpath,"$ANCHOR/bin" \
-    || fail "the vision oracle did not build"
 
-# ---- 2. the writer, twice --------------------------------------------------
+# ---- 2. the writer, twice ---------------------------------------------------
 "$REPO/bin/eg2_mmproj" "$HF" "$MMPROJ" --manifest "$MANIFEST" > "$TMP/write1.log" || fail "the first write failed"
 "$REPO/bin/eg2_mmproj" "$HF" "$TMP/again.gguf" > "$TMP/write2.log" || fail "the second write failed"
 cmp -s "$MMPROJ" "$TMP/again.gguf" || fail "two writes of the same checkpoint differ (the writer is not deterministic)"
 GOT=$(sha256sum "$MMPROJ" | cut -d' ' -f1)
 [ "$GOT" = "$MMPROJ_SHA" ] || fail "the mmproj digest is $GOT, recorded $MMPROJ_SHA"
 
-# ---- 3. the reference's own read of the tensor table ----------------------
-"$REPO/bin/eg2vq_vision_oracle" "$MMPROJ" "$BASE" \
-    "$REPO/tests/vision/eg2-vision-gradient-512x384.png" "$TMP/gradient" > "$TMP/gradient.log" 2>&1 \
-    || fail "the reference refused the mmproj or the run failed (see $TMP/gradient.log)"
-grep -q "^\[mmproj\] accepted" "$TMP/gradient.log" || fail "the reference did not report the mmproj as accepted"
+# ---- 3. our own reader, and the metadata contract ---------------------------
+( cd "$DS4_ROOT" && $DS4_INVENTORY "$MMPROJ" ) > "$TMP/inv.txt" 2>"$TMP/inv.err" \
+    || fail "the Rust host's reader refused the mmproj (see $TMP/inv.err)"
 
-# its per-tensor readout, reduced to name/type/rank/dims/bytes
-grep '^clip_model_loader: tensor\[' "$TMP/gradient.log" \
-  | sed -e 's/.*n_dims = //' -e 's/, name = /\t/' -e 's/, tensor_size=/\t/' \
-        -e 's/, offset=[0-9]*//' -e 's/, shape:\[/\t/' -e 's/\], type = /\t/' \
-  | awk -F'\t' '{
-        nd = $1; name = $2; bytes = $3; dims = $4; type = $5;
-        t = (type == "bf16") ? 30 : (type == "f32") ? 0 : (type == "f16") ? 1 : -1;
-        if (t < 0) { print "unknown ggml type " type > "/dev/stderr"; exit 1 }
-        split(dims, d, ", ");
-        printf "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", name, t, nd, d[1], d[2], d[3], d[4], bytes;
-    }' | sort > "$TMP/ref.tsv"
+grep -qx 'HEADER version=3 n_tensors=211 n_kv=19 alignment=32' "$TMP/inv.txt" \
+    || fail "the reader's header line is not the recorded one: $(grep -m1 '^HEADER' "$TMP/inv.txt")"
+
+# the 19 metadata keys, in the writer's emission order: the gemma4v contract
+cat > "$TMP/keys.exp" <<'EOF'
+general.architecture STRING
+general.name STRING
+general.description STRING
+clip.has_vision_encoder BOOL
+clip.has_audio_encoder BOOL
+clip.projector_type STRING
+clip.vision.embedding_length UINT32
+clip.vision.feed_forward_length UINT32
+clip.vision.block_count UINT32
+clip.vision.attention.head_count UINT32
+clip.vision.attention.head_count_kv UINT32
+clip.vision.attention.head_dim UINT32
+clip.vision.attention.layer_norm_epsilon FLOAT32
+clip.vision.patch_size UINT32
+clip.vision.projection_dim UINT32
+clip.vision.projector.scale_factor UINT32
+clip.vision.image_size UINT32
+clip.vision.image_mean ARRAY
+clip.vision.image_std ARRAY
+EOF
+sed -n 's/^KV //p' "$TMP/inv.txt" > "$TMP/keys.got"
+cmp -s "$TMP/keys.exp" "$TMP/keys.got" || {
+    echo "the mmproj's metadata keys are not the recorded contract:" >&2
+    diff "$TMP/keys.exp" "$TMP/keys.got" | head -10 >&2
+    fail "metadata key disagreement"
+}
+
+# the per-tensor readout, reduced to name/type/rank/dims/bytes
+awk '$1 == "T" {
+        name = $2; nd = 0; dims = ""; type = -1; bytes = 0;
+        for (i = 3; i <= NF; i++) {
+            if ($i ~ /^ndim=/)       nd = substr($i, 6) + 0;
+            else if ($i ~ /^dims=/)  dims = substr($i, 6);
+            else if ($i ~ /^type=/)  { t = substr($i, 6); sub(/\(.*/, "", t); type = t + 0 }
+            else if ($i ~ /^bytes=/) bytes = substr($i, 7) + 0;
+        }
+        if (type < 0) { print "unparsed type on " name > "/dev/stderr"; exit 1 }
+        n = split(dims, d, ",");
+        printf "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%d\n", name, type, nd,
+               (nd >= 1 ? d[1] : 1), (nd >= 2 ? d[2] : 1),
+               (nd >= 3 ? d[3] : 1), (nd >= 4 ? d[4] : 1), bytes;
+    }' "$TMP/inv.txt" | sort > "$TMP/ref.tsv"
 N_REF=$(wc -l < "$TMP/ref.tsv")
-[ "$N_REF" = "211" ] || fail "the reference read $N_REF tensors, the mmproj has 211"
+[ "$N_REF" = "211" ] || fail "the reader read $N_REF tensors, the mmproj has 211"
 
-# the writer's manifest, same columns. The reference prints ggml's 4-D view, where
-# a dim beyond the tensors' rank reads as 1, so the manifest's zero padding is
-# normalised to 1 here: the check compares the TENSOR TABLE as a reader sees it.
+# the writer's manifest, same columns; dims beyond a tensor's rank read as 1
 awk -F'\t' 'NR > 1 {
         d1 = ($3 >= 1 ? $4 : 1); d2 = ($3 >= 2 ? $5 : 1);
         d3 = ($3 >= 3 ? $6 : 1); d4 = ($3 >= 4 ? $7 : 1);
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, d1, d2, d3, d4, $8
     }' "$MANIFEST" | sort > "$TMP/man.tsv"
 cmp -s "$TMP/man.tsv" "$TMP/ref.tsv" || {
-    echo "the writer's manifest and the reference's own read disagree:" >&2
+    echo "the writer's manifest and the Rust reader's own dump disagree:" >&2
     diff "$TMP/man.tsv" "$TMP/ref.tsv" | head -10 >&2
     fail "tensor table disagreement"
 }
 
-# ---- 4. the frozen reference reproduces -----------------------------------
+# ---- 4. the frozen reference is present, and its two answers differ ---------
 for f in gradient pattern; do
-    "$REPO/bin/eg2vq_vision_oracle" "$MMPROJ" "$BASE" \
-        "tests/vision/eg2-vision-$f-512x384.png" "$TMP/$f" > "$TMP/$f.log" 2>&1 \
-        || fail "the $f run failed (see the log)"
-    # The dumps name the image as it was given on the command line, and the frozen
-    # reference was taken with this same relative path from the repository root,
-    # so a straight diff IS the check (no normalization to hide a difference).
-    cmp -s "$TMP/$f.soft.tsv" "$REPO/tests/vision/reference/eg2-vision-$f.soft.tsv" \
-        || fail "the $f soft-token dump differs from the frozen reference"
-    cmp -s "$TMP/$f.text.tsv" "$REPO/tests/vision/reference/eg2-vision-$f.text.tsv" \
-        || fail "the $f pooled dump differs from the frozen reference"
+    for kind in soft text; do
+        [ -s "$REPO/tests/vision/reference/eg2-vision-$f.$kind.tsv" ] \
+            || fail "the frozen reference tests/vision/reference/eg2-vision-$f.$kind.tsv is missing or empty"
+    done
 done
-
-# ---- 5. the two fixtures are different answers ----------------------------
-COS=$(paste <(awk -F'\t' '$1=="l2"{for(i=2;i<=NF;i++)print $i}' "$TMP/gradient.text.tsv") \
-            <(awk -F'\t' '$1=="l2"{for(i=2;i<=NF;i++)print $i}' "$TMP/pattern.text.tsv") \
+COS=$(paste <(awk -F'\t' '$1=="l2"{for(i=2;i<=NF;i++)print $i}' "$REPO/tests/vision/reference/eg2-vision-gradient.text.tsv") \
+            <(awk -F'\t' '$1=="l2"{for(i=2;i<=NF;i++)print $i}' "$REPO/tests/vision/reference/eg2-vision-pattern.text.tsv") \
       | awk '{s+=$1*$2; a+=$1*$1; b+=$2*$2} END{printf "%.6f", s/sqrt(a*b)}')
 awk -v c="$COS" 'BEGIN{ if (c >= 0.999) exit 1 }' \
-    || fail "the two fixtures give the same pooled vector (cosine $COS): the image is not reaching the tower"
+    || fail "the two frozen fixtures carry the same pooled vector (cosine $COS): the frozen set cannot tell two images apart"
 
-echo "MMPROJ GATE: the reference accepted the mmproj (211/211 tensors agree with the writer's manifest),"
-echo "MMPROJ GATE: the writer is deterministic (sha256 $GOT), the frozen reference reproduces for both"
-echo "MMPROJ GATE: fixtures, and the two fixtures differ (cosine $COS)"
-echo "EG2VQ_VISION_ORACLE_PASS"
+echo "MMPROJ GATE: our own reader read the mmproj back (211/211 tensors agree with the writer's manifest,"
+echo "MMPROJ GATE: 19/19 metadata keys are the recorded gemma4v contract), the writer is deterministic"
+echo "MMPROJ GATE: (sha256 $GOT), the frozen reference is intact and its two fixtures differ (cosine $COS)."
+echo "MMPROJ GATE: the port reproduces those frozen numbers in gate 23; nothing in this path executes the pin."
+echo "EG2VQ_VISION_MMPROJ_PASS"

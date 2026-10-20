@@ -23,13 +23,26 @@ The instrument, in three files
 
   tools/eg2_mmproj.c                 the writer: the checkpoint's vision tensors ->
                                      the mmproj the pin's clip loader resolves
-  tests/parity/eg2vq_vision_oracle.cpp  the harness: the pin's mtmd + llama, one
+  tests/parity/eg2vq_vision_anchor.cpp  the anchor: the pin's mtmd + llama, one
                                      image in, the soft tokens and the pooled
-                                     embedding out
-  tools/eg2_mmproj_check.sh          the gate: rebuild both, write the file twice,
-                                     read it back with the reference's own loader,
-                                     reproduce the frozen dumps, prove the two
-                                     fixtures differ
+                                     embedding out. OPT-IN ONLY
+                                     (tools/eg2_vision_anchor.sh); renamed from
+                                     eg2vq_vision_oracle.cpp on 2026-10-20
+  tools/eg2_mmproj_check.sh          the gate: rebuild the writer, write the file
+                                     twice, read it back with THIS PROJECT's own
+                                     GGUF reader, prove the frozen set is intact
+                                     and its two fixtures differ
+
+The boundary has to be read carefully, because the names crossed over: the
+"oracle" is the FROZEN DATA in tests/vision/reference/ — the numbers every later
+run must reproduce — and the harness that produced it is the ANCHOR, an
+opt-in instrument. Owner directive 2026-10-20, "We will not use llama it must be
+ported all", moved the default path to native: gate 22 reads the file back with
+the Rust host's own reader (crates/ds4-core/examples/gguf_inventory) and the
+pin is executed only by tools/eg2_vision_anchor.sh. Measured after the move:
+both are green, the anchor reproducing all four frozen dumps byte-identically
+and gate 22 agreeing 211/211 with the writer's manifest and 19/19 on the
+metadata keys.
 
 The mmproj contract — every item read, none invented
 
@@ -184,16 +197,23 @@ The gate itself, including both builds and two runs, is 6.0 s.
 What the gate does and what it prints
 
   $ tools/eg2_mmproj_check.sh
-  MMPROJ GATE: the reference accepted the mmproj (211/211 tensors agree with the writer's manifest),
-  MMPROJ GATE: the writer is deterministic (sha256 9ffb86e3...), the frozen reference reproduces for both
-  MMPROJ GATE: fixtures, and the two fixtures differ (cosine 0.786465)
-  EG2VQ_VISION_ORACLE_PASS
+  MMPROJ GATE: our own reader read the mmproj back (211/211 tensors agree with the writer's manifest,
+  MMPROJ GATE: 19/19 metadata keys are the recorded gemma4v contract), the writer is deterministic
+  MMPROJ GATE: (sha256 9ffb86e3...), the frozen reference is intact and its two fixtures differ (cosine 0.786465).
+  MMPROJ GATE: the port reproduces those frozen numbers in gate 23; nothing in this path executes the pin.
+  EG2VQ_VISION_MMPROJ_PASS
 
-  The tensor check is deliberately two-sided: the writer's manifest against the
-  reference's OWN per-tensor readout of the file it just loaded (211 lines, name,
-  rank, dims, byte count and type).  A file only this project can read would be
-  worthless as a reference, so the check is the reference's acceptance, not ours.
-  Log: out/eg2vq-vision-oracle-gate22.log.
+  The tensor check is two-sided: the writer's manifest against the Rust host's
+  OWN per-tensor dump of the file (211 lines, name, type, rank, dims, byte
+  count).  Since 2026-10-20 that is a native check, not the reference's
+  acceptance — and the honest reading is that it is the weaker of the two, since
+  writer and reader are both ours.  What carries the external weight now is the
+  frozen data: the four dumps in tests/vision/reference/ are the pin's own
+  numbers, committed with their digests in SHA256SUMS, and unit 23's gate 23 is
+  where the PORT has to reproduce them.  The pin's acceptance of the file is
+  still checked, by tools/eg2_vision_anchor.sh, opt-in and outside every default
+  path.  Logs: the anchor keeps the pin's own readout, hparams and preprocessing
+  facts whole in out/eg2vq-vision-anchor.log (gitignored, 2026-10-20).
 
 What this does NOT prove
 

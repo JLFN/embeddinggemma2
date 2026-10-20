@@ -1,6 +1,12 @@
-/* eg2vq_vision_oracle.cpp — the frozen reference for EmbeddingGemma-2's IMAGE
- * path (phase 8, unit 22; the instrument docs/eg2vq-vision-oracle-gate22.txt
- * describes).
+/* eg2vq_vision_anchor.cpp — the ANCHOR that produced the frozen reference for
+ * EmbeddingGemma-2's IMAGE path (phase 8, unit 22; the instrument
+ * docs/eg2vq-vision-oracle-gate22.txt describes).  Renamed from
+ * eg2vq_vision_oracle.cpp on 2026-10-20, under the owner's directive "We will
+ * not use llama it must be ported all": this file is the repository's only
+ * remaining link to the pin, it is opt-in (tools/eg2_vision_anchor.sh), and
+ * neither the port, its build, its run nor any default gate touches it.  The
+ * numbers it froze in tests/vision/reference/ are committed data that the PORT
+ * must reproduce on its own (gate 23, unit 23).
  *
  * Why it exists: for text, this project's reference is a shipped binary
  * (llama-embedding at the pin). No shipped binary at the pin embeds an image —
@@ -27,15 +33,15 @@
  * contains no arithmetic of its own, which is the point: a reference that
  * computes anything is a second implementation to debug.
  *
- * Build (recorded in tools/eg2_mmproj_check.sh; the anchor tree is the pin's own
+ * Build (recorded in tools/eg2_vision_anchor.sh; the anchor tree is the pin's own
  * CPU build):
  *   g++ -O2 -std=c++17 -I/data/llama.cpp/include -I/data/llama.cpp/ggml/include \
- *       -I/data/llama.cpp/tools/mtmd -o bin/eg2vq_vision_oracle \
- *       tests/parity/eg2vq_vision_oracle.cpp \
+ *       -I/data/llama.cpp/tools/mtmd -o bin/eg2vq_vision_anchor \
+ *       tests/parity/eg2vq_vision_anchor.cpp \
  *       -L/data/llama-anchor-build/bin -lmtmd -llama -lggml -lggml-base -lggml-cpu \
  *       -Wl,-rpath,/data/llama-anchor-build/bin
  *
- * Usage: eg2vq_vision_oracle <mmproj.gguf> <text-model.gguf> <image file> <out prefix>
+ * Usage: eg2vq_vision_anchor <mmproj.gguf> <text-model.gguf> <image file> <out prefix>
  *   writes <out>.soft.tsv   the image soft tokens, one row per token
  *   writes <out>.text.tsv   the pooled embedding, one row, plus the L2 norm
  *   prints the preprocessing facts (grid, token counts) to stdout
@@ -50,7 +56,7 @@
 #include <string>
 #include <vector>
 
-static void die(const char *m) { std::fprintf(stderr, "eg2vq_vision_oracle: %s\n", m); std::exit(1); }
+static void die(const char *m) { std::fprintf(stderr, "eg2vq_vision_anchor: %s\n", m); std::exit(1); }
 
 int main(int argc, char **argv) {
     if (argc != 5) {

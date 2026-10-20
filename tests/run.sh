@@ -12,9 +12,13 @@
 #   3. the retrieval scorer's self-test (8 hand-checked cases)
 #   4. loader gate 3: 1376 tensors agree with the writer's manifest, 8 tampered
 #      copies are refused by name
-#   5. gate 22: the vision oracle (phase 8) — the writer is deterministic, the
-#      pin's own mtmd accepts the mmproj it writes (211 tensors), and the frozen
-#      image reference reproduces for both fixtures
+#   5. gate 22: the vision mmproj (phase 8) — the writer is deterministic, and
+#      THIS project's own GGUF reader reads the file back: 211 tensors agree
+#      with the writer's manifest and the 19 metadata keys are the recorded
+#      gemma4v contract. The frozen vision reference (tests/vision/reference/)
+#      is intact and its two fixtures differ. Nothing here executes llama.cpp;
+#      the pin's own reproduction of the frozen numbers is opt-in
+#      (tools/eg2_vision_anchor.sh) and is superseded by gate 23.
 #   6. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
@@ -52,7 +56,7 @@ tools/eg2_retrieval_score_selftest.sh
 step "4. loader gate 3"
 tools/eg2_loader_check.sh "$ART" "$MANIFEST"
 
-step "5. gate 22: the vision oracle (phase 8)"
+step "5. gate 22: the vision mmproj, read back by our own reader (phase 8)"
 bash tools/eg2_mmproj_check.sh
 
 step "6. rule 19 QA gate"

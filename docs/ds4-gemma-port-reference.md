@@ -267,6 +267,21 @@ at `:70`), its output committed as data with the GGUF's sha256 and the build's
 revision. The anchor is a second opinion, never the denominator: the denominator
 is our own C reference path, checked against a cited implementation.
 
+The anchor never becomes an execution dependency (owner directive 2026-10-20,
+"We will not use llama it must be ported all"). Measured that day, both trees
+touched: `ds4-rs` contains no llama call and links no llama library — every
+`llama` occurrence in the engine is a citation in a comment or an identifier
+name — so the runtime boundary was already clean, and what remained were two
+default-path runs of the pin: gate 22's vision harness (the mmproj run and the
+frozen-dump reproduction) and the tokenizer dump's regeneration branch. Both are
+now opt-in and the default path is native end to end: gate 22 reads the mmproj
+back with the Rust host's own GGUF reader (`gguf_inventory`), and the vision
+anchor moved to `tools/eg2_vision_anchor.sh` with its source renamed
+`tests/parity/eg2vq_vision_anchor.cpp`. The frozen numbers in
+`tests/vision/reference/`, `tests/expected/` and `out/tok-anchor-verbose.log`
+stay: they are data, produced once, and reproducing them natively is exactly
+what gates 4 and 23 measure.
+
 The container, decided (owner, 2026-10-19, phase doc X.6): the artifact becomes a
 GGUF carrying a `gemma_vq` payload, as `glm_vq` and `ling31_vq` do — not a
 container of our own, and DQVD is dropped. GGUF is ds4's native container, not a

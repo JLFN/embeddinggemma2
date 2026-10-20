@@ -6,3 +6,6 @@ ds4-rs/
 *[.]o
 out/
 out/*.bin
+# the anchor binary is linked against the pin's build, so it is a per-machine
+# product rebuilt by tools/eg2_vision_anchor.sh, not a shipped instrument
+bin/eg2vq_vision_anchor

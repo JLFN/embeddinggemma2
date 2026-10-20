@@ -23,8 +23,16 @@
 # Usage:
 #   tools/eg2_tok_check.sh <artifact.gguf> <items.tsv> <prompt-map.json>
 #                          [reference-verbose.log]
-#   The fourth argument reuses an existing reference log instead of running
-#   llama.cpp again.
+#   With no fourth argument the FROZEN reference is used, in this order:
+#   tests/expected/tok-anchor-ids.tsv (committed, one line per item: index,
+#   count, ids), then the local log out/tok-anchor-verbose.log.  The pin is NOT
+#   run.  Regenerating means running llama.cpp, which is opt-in per the owner's
+#   2026-10-20 directive ("We will not use llama it must be ported all"): set
+#   EG2_TOK_ANCHOR=1, and only then does the anchor run.
+#
+#   tests/expected/tok-anchor-ids.tsv was derived on 2026-10-20 from the frozen
+#   out/tok-anchor-verbose.log with the same awk the log branch below uses, so
+#   the commit is a copy of what that branch computes, not a second derivation.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -40,14 +48,44 @@ done
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/eg2-tok.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-if [ -z "$LOG" ]; then
-    echo "== regenerating the reference token dump (llama.cpp at the pin)"
+FROZEN_IDS="$ROOT/tests/expected/tok-anchor-ids.tsv"
+if [ -z "$LOG" ] && [ -s "$FROZEN_IDS" ]; then
+    echo "== the frozen reference ids (the pin ran ONCE; tests/expected/tok-anchor-ids.tsv)"
+    cp "$FROZEN_IDS" "$WORK/ref.tsv"
+elif [ -z "$LOG" ] && [ -s "$ROOT/out/tok-anchor-verbose.log" ]; then
+    LOG="$ROOT/out/tok-anchor-verbose.log"
+    echo "== the frozen reference token dump (local log; the pin ran ONCE, 2026-10-19)"
+fi
+
+if [ -z "$LOG" ] && [ ! -s "$WORK/ref.tsv" ]; then
+    if [ -z "${EG2_TOK_ANCHOR:-}" ]; then
+        echo "eg2_tok_check.sh: no frozen reference (tests/expected/tok-anchor-ids.tsv" >&2
+        echo "is missing). Restore it from git, or set EG2_TOK_ANCHOR=1 to" >&2
+        echo "regenerate it by running the pin (opt-in, owner directive 2026-10-20)." >&2
+        exit 2
+    fi
+    echo "== regenerating the reference token dump (llama.cpp at the pin, opt-in)"
     tools/eg2_anchor.sh --batched --tag tok-anchor \
         --gguf "$ROOT/out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf" \
         --items "$ITEMS" --out "$WORK/derived.jsonl" >/dev/null
     LOG="$ROOT/out/tok-anchor-verbose.log"
 fi
-[ -s "$LOG" ] || { echo "eg2_tok_check.sh: no reference log at $LOG" >&2; exit 2; }
+# Reference side, when the reference is a verbose log rather than the frozen ids:
+# "main: prompt N: '...'" opens an item, "number of tokens in prompt = M" states
+# the count, and each following "  <id> -> '<piece>'" is one token. Pieces are not
+# compared (a piece can hold an escaped newline); the ids are the tokenizer's
+# whole contract.
+if [ ! -s "$WORK/ref.tsv" ]; then
+    [ -s "$LOG" ] || { echo "eg2_tok_check.sh: no reference log at $LOG" >&2; exit 2; }
+    awk '
+        /main: prompt [0-9]+: /   { n++; have[n] = 0; next }
+        /number of tokens in prompt = / { want[n] = $NF; next }
+        /^[[:space:]]*[0-9]+ -> /  { if (est[n]) { est[n] = est[n] "," $1 } else { est[n] = $1 }
+                                     have[n]++; next }
+        END {
+            for (i = 1; i <= n; i++) printf "%d\t%d\t%s\n", i, want[i], est[i]
+        }' "$LOG" > "$WORK/ref.tsv"
+fi
 
 echo "== the port (Rust host, vocabulary from the artifact)"
 cargo run -q --release -p ds4-core --example gemma_vq_tok --manifest-path "$ROOT/ds4-rs/Cargo.toml" \
@@ -55,16 +93,8 @@ cargo run -q --release -p ds4-core --example gemma_vq_tok --manifest-path "$ROOT
 
 # Reference side: "main: prompt N: '...'" opens an item, "number of tokens in
 # prompt = M" states the count, and each following "  <id> -> '<piece>'" is one
-# token. Pieces are not compared (a piece can hold an escaped newline); the ids
-# are the tokenizer's whole contract.
-awk '
-    /main: prompt [0-9]+: /   { n++; have[n] = 0; next }
-    /number of tokens in prompt = / { want[n] = $NF; next }
-    /^[[:space:]]*[0-9]+ -> /  { if (est[n]) { est[n] = est[n] "," $1 } else { est[n] = $1 }
-                                 have[n]++; next }
-    END {
-        for (i = 1; i <= n; i++) printf "%d\t%d\t%s\n", i, want[i], est[i]
-    }' "$LOG" > "$WORK/ref.tsv"
+# token. (See the block above, which parses the log only when the frozen ids are
+# not available.)
 
 # Neither side may be empty, and the counts must agree per item before the ids.
 ref_n=$(wc -l < "$WORK/ref.tsv")
@@ -89,4 +119,8 @@ awk -F'\t' '
     }'
 
 tail -1 "$WORK/port.tsv"
-echo "reference log: ${LOG#"$ROOT"/}"
+if [ -n "$LOG" ]; then
+    echo "reference log: ${LOG#"$ROOT"/}"
+else
+    echo "reference: tests/expected/tok-anchor-ids.tsv (frozen; the pin was not run)"
+fi
