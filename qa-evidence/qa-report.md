@@ -1,240 +1,400 @@
-QA report - unit 23: phase 8 row P4.1, the vision tower on the CPU reference path
+QA report - unit 24: phase 8 row P4.2, the vision tower on the DEVICE (CUDA)
 
-Unit: 23. Outer /data/embeddinggemma2, branch dev: the unit's code commit 2450b9a,
-HEAD at the end of this pass fb3b819 (the unit-23-close handoff rotation, committed
-by the project's own session during the pass); last pushed publish/dev = d45394f.
-Nested /data/embeddinggemma2/ds4-rs, branch feat/ds41-dsml-carriage, HEAD f459e924,
-byte-identical before and after this pass; last pushed publish/dev = 29873445. Both
-trees were clean at the start; the only file this pass wrote in either tree is this
-report. Scratch: /tmp/qa23, including a pristine git-archive copy of ds4-rs at
-f459e924 (/tmp/qa23/rs) in which every falsification edit was made, so no tracked
-source file was modified in place.
+Unit: 24. Outer /data/embeddinggemma2, branch dev (no origin; the only remote is
+publish): the unit's code commit 3a5f008 (HEAD, tests/run.sh + tools/eg2_vision_gate24.sh
++ docs/eg2vq-vision-tower-gate24.txt), last pushed publish/dev = d45394f (verified with
+git rev-parse and git ls-remote --heads publish; 1691d13 is an unpushed local
+docs(handoff) commit). Nested
+/data/embeddinggemma2/ds4-rs, branch feat/ds41-dsml-carriage, HEAD 5183cd50 (the device
+tower, Makefile, .gitignore, the C oracle's 2-line stages update); its last pushed
+publish/dev = 29873445. Both trees were clean at the start of this pass except one file
+neither this pass nor the unit wrote: embeddinggemma2-handoff.md carries an uncommitted
+frontmatter refresh (last_updated_commit, context usage, timestamp) made at 08:49 by the
+project's own session before this pass began; it is left as found. The only file this
+pass wrote in either tree is this report. Scratch: /tmp/qa24, including a pristine
+git-archive copy of ds4-rs at 5183cd50 (/tmp/qa24/ds4-rs) in which every falsification
+edit was made, so no tracked source file was modified in place.
 
 QA model: deepseek-v4.1-CC-flash (the model tests/qa-gate.sh records for rule 19).
-Date: 2026-10-20. Host: RTX 4070 SUPER (sm_89); this unit's path is CPU-only.
-Method: shell, cc, make, awk, sha256sum, cmp/diff, the project's own gguf_inventory
-reader. The pin /data/llama.cpp @ 31288c9c66e59377f7788d920678a565bb89dd37 was READ
-ONLY (citations); it was not built or run, tools/eg2_vision_anchor.sh was not run and
-there is no Python, ONNX or PyTorch anywhere in this verification (P-1/P-2 respected).
+Date: 2026-10-20. Host: RTX 4070 SUPER, sm_89 (the oracle's own stderr: "ds4: CUDA
+backend initialized on NVIDIA GeForce RTX 4070 SUPER (sm_89)"), CUDA 13, nvcc at
+/usr/local/cuda/bin/nvcc.
+Method: shell, cc, nvcc/make, awk, sha256sum, cmp/grep. The pin /data/llama.cpp @
+31288c9c66e59377f7788d920678a565bb89dd37 was READ ONLY at three citation sites
+(rev-parse confirms the pin; sed only); it was not built or run by this pass, and there
+is no Python, ONNX or PyTorch anywhere in this verification (P-1/P-2 respected).
+
+COMMANDS RUN (all in /data/embeddinggemma2 unless noted)
+
+  bash tools/eg2_vision_gate24.sh                                  (three times: once standalone,
+                                                                   once inside each tests/run.sh run)
+  ./ds4-rs/tests/parity/eg2vq_vision_cuda_oracle out/EmbeddingGemma-2-914f7f8-vision-mmproj.gguf \
+      tests/vision/eg2-vision-pattern-512x384.png tests/vision/eg2-vision-gradient-512x384.png \
+      --out-dir /tmp/qa24-dev
+  env DS4_EG2VQ_VIS_KICK=<none|1e-7|3e-7|1e-6|3e-6|5e-6|1e-5|1e-4> <oracle> ... (my own sweep)
+  env DS4_EG2VQ_VIS_{NO_ACT_BF16,CONV_BF16,NO_GELU_F16}=1 <oracle> ... and <oracle> --f32kv
+  bash tools/eg2_vision_gate23.sh
+  cc -O3 / -O2 (gate 23's exact flags) -o /tmp/qa24-cpu/oracle-o{3,2} tests/parity/eg2vq_vision_c_oracle.c
+  /tmp/qa24-cpu/oracle-o3 soft ... / oracle-o2 soft ...   (per-row statistics)
+  cd /tmp/qa24/ds4-rs && make tests/parity/eg2vq_vision_cuda_oracle   (from git archive; see F7)
+  <copy oracle with the wrong rope pairing> <mmproj> <both fixtures>
+  bash tests/run.sh                                                (timed)
+  sha256sum -c SHA256SUMS
+  the five P-1 greps of AGENTS.md, verbatim
+  cd ds4-rs && cargo test -q -p ds4-core --test eg2vq_serving_caps
+  bash tests/qa-gate.sh                                            (before and after writing this)
 
 SURFACES COVERED
 
-- ds4_eg2vq_vision_prepare (ds4_eg2vq_vision.h:148-155, graph.inc:147-257): live on
-  both frozen fixtures via the oracle's prep mode in gate 23 (geometry, the
-  structural padding 1*8 0*512 1*8 / 0*384, the positions recomputed from the rule).
-- ds4_eg2vq_vision_forward (h:156-164, graph.inc:434-610): live on both fixtures in
-  gate 23 and in seven oracle builds/runs of mine (baseline, three flips, the matvec
-  kick, three -O2 builds), each a full bind+forward over the real mmproj.
-- ds4_eg2vq_vision_bind (bind.inc:61-141) and ds4_eg2vq_vision_free (bind.inc:143-150):
-  bind runs in every oracle soft run (211 tensors by name); free is called by the
-  oracle (oracle.c:170) and every run exited 0. No leak check (no valgrind/ASan).
-- qwen4exp_resize_rgb_pillow (ds4_resize_pillow.inc): byte-identity against the
-  pre-move revision plus a dynamic old-vs-new harness through the bicubic path
-  (CLAIM 3).
-- tools/eg2_vision_gate23.sh: run standalone (exit 0, 19.8 s) and inside tests/run.sh;
-  its output compared with the doc's section 6.
-- embed_caps: the only surface the rule 19 mount extracts for this window; unchanged
-  by this unit (no crates/ file in either commit's stat), still exported at
-  crates/ds4-core/src/serving.rs:206, its unit-20 live evidence stands. The mount's
-  coverage limits for this unit are FINDING F4.
+- ds4_gpu_eg2vq_vision_bind / _unbind / _workspace / _create / _free / _forward / _stage
+  (ds4_eg2vq_vision.h:240-271, ds4_eg2vq_vision_gpu.cuh): all seven live through the
+  oracle on the real mmproj. bind+workspace+create ran at start (printed "device plan
+  bind 0.03 s, context 0.00 s"); forward ran 6 times (both fixtures, plus the oracle's
+  own 1e-7 and 1e-5 kick re-runs) and my 8-run kick sweep; stage was read back three
+  ways per fixture (patch/l0/pooled) and "soft"; free/unbind ran at exit on the PASS
+  path (exit 0) and on the wrong-rope copy (exit 1, failure path exercised).
+- ds4_eg2vq_vision_slot_table (ds4_eg2vq_vision_bind.inc:182-260): exercised on every
+  bind; it filled all 211 slots from the file (the adapter's per-process census printed
+  weights=289.88 MiB aux=62.70 MiB over 211 slots). Refusals by name were not injected
+  (see WHAT I DID NOT TEST).
+- cuda/eg2vq_vis.cuh primitives: every one ran in every forward (im2col, nine GEMMs,
+  the two position adds, rope, the f16 K/V round, attention, gelu_mul, pool); act_round
+  was exercised at both values (the NO_ACT_BF16 and CONV_BF16 flips), the gelu chain
+  both ways (NO_GELU_F16), the K/V cast both ways (--f32kv). Their device entries are
+  static inline, so no symbol is exported; the oracle is the driver.
+- ds4_eg2vq_vision_forward with stages (ds4_eg2vq_vision_graph.inc:434-610): the stages
+  path live in the CUDA oracle, the NULL path live in the C oracle and gate 23; grep
+  shows exactly two callers in either tree, both oracles, so every shipping-shaped call
+  passes NULL as the evidence says.
+- tools/eg2_vision_gate24.sh: run standalone (exit 0, EG2VQ_VISION_GATE24_PASS) and as
+  fast-path step 7 of tests/run.sh.
+- Makefile rules and the two .gitignore entries: the oracle was built by the tree's own
+  rule in place (no-op, current) and from scratch in /tmp/qa24 (F7).
+- embed_caps (crates/ds4-core/src/serving.rs:206): the only surface the rule 19 mount
+  extracts for this window; unchanged by this unit (no crates/ file in either commit's
+  stat) and re-verified live here: cargo test -q -p ds4-core --test eg2vq_serving_caps
+  -> "3 passed; 0 failed". The mount's coverage limit for this unit is F6.
 
-CLAIM 1 - gate 23 is green and the doc's section 6 is its output verbatim: PASS
+CLAIM 1 - gate 24 passes and prints the claimed numbers: PASS
 
-- bash tools/eg2_vision_gate23.sh: exit 0, EG2VQ_VISION_GATE23_PASS. pattern maxabs
-  0.10275560 (bound 0.30), relrms 0.008235 (0.025), min row cosine 0.99978457
-  (0.998); gradient 0.06645030 / 0.005285 / 0.99988406. All six equal the doc to the
-  last digit, as do the sums of squares 65828.280406 / 69223.788734 against the
-  anchor's printed 65827.217181 / 69219.023404 (1.6e-5 / 6.9e-5 relative). The bound
-  is a constant printed before the run and never widened.
-- Wall time 19.8 s (the doc says ~19 s); the only fields that differ from the doc's
-  captured output are the wall-clock bind/tower seconds (0.17/4.75 and 0.17/4.72
-  versus 0.19/4.38 and 0.19/4.57), which cannot be byte-stable between runs.
-- Independent reproduction: my own baseline oracle (pristine copy, exact gate flags)
-  prints relrms 0.008235, maxabs 0.10275560, min row cosine 0.99978457, sumsq
-  65828.280406 on pattern - identical to the gate's own awk numbers.
+bash tools/eg2_vision_gate24.sh: exit 0, EG2VQ_VISION_GATE24_PASS, wall 58.91 s with the
+oracle already current (no rebuild); the bound (0.30 / 0.025 / 0.998, stages 0.010) is
+printed before the first run. Output, against the evidence doc:
 
-CLAIM 2 - every load-bearing pin citation is TRUE (read in /data/llama.cpp @ 31288c9c,
-tree clean): PASS (the non-load-bearing pointers are FINDING F1)
+  device vs CPU, worst of the two fixtures
+      maxabs 0.15841668 (doc 0.15841668), relrms 0.009006 (0.009006),
+      min row cosine 0.99933243 (0.99933243).                      IDENTICAL
+      pattern 0.15841668 / 0.009006 / 0.99933243; gradient 0.04474682 / 0.004954 /
+      0.99993688 (the commit message's pair, reproduced exactly).
+  stages, device vs CPU
+      patch 0.000001 / 0.000000; l0 0.000078 / 0.000034; pooled 0.008827 / 0.005011
+      (doc: patch 1e-6; l0 7.8e-5 / 3.4e-5; pooled 8.8e-3 / 5.0e-3).   IDENTICAL
+  device vs the frozen dumps (gate 23's comparison and bound)
+      pattern  0.22244230 / 0.010428 / 0.99861157 (doc/commit the same);
+      gradient 0.05363610 / 0.005155 / 0.99992922 (commit the same).   IDENTICAL
+  geometry  both fixtures: canvas 528x384, region 512x384, offset 8,0, grid 33x24,
+      patches 792, soft 88.
+  the four flips: NO_ACT_BF16 0.014936 (1.66x), CONV_BF16 0.029459 (3.27x),
+      NO_GELU_F16 0.009729 (1.08x), f32_kv 0.008678 (0.96x) - identical to the doc.
+- A direct oracle run (not through the gate's output filter) reproduces the same
+  numbers and the probe lines the gate filters out: weights 289.88 MiB, aux 62.70 MiB,
+  workspace 566.64 MiB at max_patches 10080, vram delta 922.0 MiB of 11893.9 MiB, cpu
+  f32 dense cache 576.0 MiB (doc section 7: the same five figures).
+- The rerun cost: 58.91 s warm here; the commit's "about 35 s warm" is F3.
 
-- vec.h:47 GGML_GELU_QUICK_FP16 defined unconditionally - TRUE (no guard; the f32
-  path is the #ifdef at :1047); vec.h:1047-1057 gelu_quick_f32 through the f16 table
-  - TRUE (:1048-1055 quantize to f16, look up, widen back); vec.h:964 and :1031 the
-  formula.
-- ggml-cpu.c:395-400 the BF16 entry declares .vec_dot_type = GGML_TYPE_BF16 - TRUE
-  (:398); ggml-cpu.c:1328-1340 mul_mat converts src1 to vec_dot_type, widening only
-  when it is F32 - TRUE; ggml-cpu.c:3884-3891 the table's construction - TRUE.
-- ggml-impl.h:623-635 the bf16 rounding - TRUE (:634 the exact add-0x7fff-plus-LSB
-  expression the port copies); ggml.c:4785-4789 conv2d = mul_mat(im2col, weight)
-  with the im2col F32 for a bf16 weight - TRUE (the conv exception).
-- clip.cpp:1414-1429 the ffn_op assignment: FFN_GELU_QUICK when neither key is set -
-  TRUE (:1428); clip-model.h:91 the FFN_GELU default - TRUE.
-- clip.cpp:787-790 the flash branch's f16 cast of K and V - TRUE (:787 the branch,
-  the casts at :790-791); clip.cpp:3928-3961 AUTO -> ENABLED - TRUE; clip.cpp:5562-5568
-  the pos_x/pos_y fill - TRUE.
-- gemma4v.cpp:9, :12-16, :26-43, :46-73, :75, :83-99, :104-114 - all TRUE against the
-  numbered file (the *2-1, the conv with no bias, the two table views with tbl_y at
-  pos_size*nb1, the two rope calls and set_offset, kq_scale 1.0, the pooler with
-  sqrt(n_embd), the embedder RMS and 768->512 projection).
-- Also TRUE: ggml-cpu/common.h:9 (Q_TILE 64); ops.cpp:9171 and :9285-9350 (tiled
-  flash, K tiles f16->f32 at :9343-9346); ops.cpp:6455 (theta_scale, op's own n_dims);
-  mtmd-helper.cpp:404 (stbi_load_from_memory, no EXIF); mtmd-image.cpp:7-14 (:9
-  dst.from_u8 - the /255 itself is clip-impl.h:783), :57-96, :122-156, :767-791,
-  :775-782; clip-model.h:67 and :207-212; clip.cpp:1726, :1734, :2202-2230, :254-256,
-  :440-465, :457-478, :481-483, :519-529, :337.
-- The executed-facts citations are also in the shipped anchor log: load_hparams ffn_op
-  gelu_quick; warmup: flash attention is enabled; image_tokens->nx = 88; clip_encode:
-  copying image 1/1 to input buffer (nx=528, ny=384).
+CLAIM 2 - the bound's honesty: it is a recorded finding whose justification reproduces;
+the superseded constant itself is not verifiable in git (F1/F2 are documentation drift)
 
-CLAIM 3 - the resampler move is behaviour preserving: PASS
+(a) The recorded reason is real. The oracle's internal probe prints, per fixture:
+    a 1e-7 relative kick on ONE canvas value moves the device output maxabs 0.00000000,
+    relrms 0.000000 (both fixtures); a 1e-5 kick moves it 0.04770827 / 0.005481 (pattern)
+    and 0.03242344 / 0.004198 (gradient) - the doc's numbers verbatim. My own sweep,
+    setting DS4_EG2VQ_VIS_KICK from outside on the pattern fixture's device-vs-CPU
+    comparison, shows the absorption is even wider than claimed and the crossing is
+    sharp:
+        kicks 0, 1e-7, 3e-7, 1e-6, 3e-6, 5e-6 -> 0.15841668 / 0.009006 / 0.99933243,
+            i.e. bit-identical output at eight printed decimals (the kick is deleted by
+            the first block's bf16 activation quantizer);
+        1e-5 -> 0.15357840 / 0.009240 / 0.99938695; 1e-4 -> 0.07516777 / 0.008301 /
+            0.99986893.
+    So "absorbs below the quantization granularity, amplifies above it" is a measured
+    property of the tower, not an explanation invented to justify a bound.
+(b) No post-hoc tuning in the file: git log -p on tests/parity/eg2vq_vision_cuda_oracle.c
+    shows ONE commit (5183cd50, the file's addition) and no later edit; the constants
+    (VIS_SOFT_MAXABS 0.30, VIS_SOFT_RELRMS 0.025, VIS_SOFT_MINROWCOST 0.998,
+    VIS_STAGE_RELRMS 0.010) have never moved since. The first, tighter declaration
+    (0.15 / 0.010 / 0.9990) exists only as the author's record in the oracle's comment
+    and the doc's section 5 - it is not in git, so its existence is unverifiable; what
+    is verifiable is that it is exactly consistent with the live measurements: today's
+    worst maxabs 0.15841668 exceeds 0.15 while today's relrms 0.009006 and mincos
+    0.99933243 pass 0.010 and 0.9990. The widening moved precisely the one number that
+    fails, which is what a widened-to-pass bound looks like; the case for it is the
+    envelope, and the envelope checks out: the gate's device-vs-CPU bound IS gate 23's
+    own declared bound for one leg against the frozen dumps (tools/eg2_vision_gate23.sh
+    lines 55-57: 0.30 / 0.025 / 0.998, the same three constants), and the noise floor is
+    independently reproduced: my -O2 vs -O3 builds of the SAME CPU source, same flags,
+    differ by 0.007415 / 0.005039 relrms (pattern/gradient), the same size as the
+    device-vs-CPU distance (0.009006 / 0.004954). Two implementations of this tower
+    cannot be held closer than each is to a recompilation of itself.
+(c) The discrimination rows are real; I re-ran all four outside the gate:
+    NO_ACT_BF16 0.014936 (1.66x), CONV_BF16 0.029459 (3.27x), NO_GELU_F16 0.009729
+    (1.08x), f32_kv 0.008678 (0.96x) against the port's 0.009006 - identical to the
+    gate's own output and the doc's table. The gate requires strict ordering (a flip
+    strictly further than the port) for the three env flips and prints the f32_kv row
+    without requiring it. Note the honest scale: only CONV_BF16 (0.0295) is outside the
+    0.025 bound itself; NO_ACT_BF16 (0.0149) is inside it. The gate is a regression
+    bound, and the doc's section 6 says so ("What the gate therefore does NOT claim:
+    that one of its fine-grained flips can be seen through this bound. It cannot").
+(d) The f32_kv row is recorded honestly: the script prints "0.96x" and does not fail on
+    it; the commit message and doc section 6 both call it NOT discriminating and name
+    the reason (below the noise floor; the port implements the f16 cast because
+    clip.cpp:787-790 says so, not because this gate can see it). Verified by reading
+    the script's awk (no failure clause for f32kv) and by re-measuring the number.
+- As a whole: the bound is not a quiet widening-to-pass. It is gate 23's declared
+  envelope, its measured justification reproduces on this host, and the bound does
+  catch a real defect (see CLAIM 3's copy: l0 3.36% > 0.010, soft 1.06 > 0.025).
 
-- git show f459e924^:ds4.c lines 26635-26778 and ds4_resize_pillow.inc lines 20-163
-  are 144 lines each with the SAME sha256 2936b637...3ce867: the typedef and the five
-  functions are byte-for-byte the moved bodies. (The include's ":26636-26779" pointer
-  is off by one: FINDING F1.)
-- The frozen fixtures take only the resampler's identity branch (region == source), so
-  a scratch harness compiled the old bytes and the new .inc over one deterministic
-  700x530 pseudo-random image at five sizes (identity; 512x384; 1024x768; 513x385;
-  49x48): identical FNV-1a hashes and byte sums (TOTAL 72561f5339715edd both).
-- ds4.c calls qwen4exp_resize_rgb_pillow at :26783 and :26916, after the :18450
-  include; grep finds no remaining definition in ds4.c - exactly one implementation.
+CLAIM 3 - the stage attribution and the rope defect: PASS
 
-CLAIM 4 - the builds and the suite: PASS
+- The same object on both sides, read in the code: the CPU forward copies
+  stages->patch from h immediately after the conv and the two position adds, before
+  the block loop (graph.inc:496-511); the device copies L.stage_patch from its own h
+  at exactly the same point, after eg2vq_vis_pos_add and before the first block
+  (gpu.cuh:439-443). The h buffer is the tower's input row the first block reads
+  (ln1(x = RMS(h))); patch is therefore defined identically on both sides. l0: CPU
+  copies after the il==0 block's FFN residual (graph.inc:511, :589-592); device copies
+  at the same place (gpu.cuh:507-509). pooled: CPU copies after the pooler and before
+  the embedder's weightless RMS (graph.inc:594-607); the device's stage reads
+  L.pooled, which the device pooler wrote and which the embedder's RMS does not touch
+  (the RMS reads pooled and writes z, gpu.cuh:512-518). Same three objects, same
+  production points.
+- The rope fix is right, from both sides' code: the CPU leg calls eg2vq_rope(v, 32,
+  pos_x) then eg2vq_rope(v+32, 32, pos_y) (graph.inc:326-331), and eg2vq_rope pairs
+  (i, i + n_rot/2) = (i, i+16) with theta starting at the position and multiplied by
+  theta_scale = 100^(-2/32) each step (ds4_eg2vq_graph.inc:66-76). The device kernel
+  pairs (i, i+16) inside dims [0,32) against the X table and inside [+32,+64) against
+  the Y table, both halves reading the same 16-angle host table row
+  (cuda/eg2vq_vis.cuh:322-358, table :300-316). The pin says the same: gemma4v.cpp:46-73
+  is two ggml_rope_ext calls each with n_dims = n_dim/2 = 32 (second one offset by 32),
+  rotate_pairs pairs (i, i + n_offset) (ops.cpp:6379-6393), and theta_scale is
+  powf(freq_base, -2.0f/n_dims) (ops.cpp:6455). The old (i, i+32) pairing with a
+  second read at +32 was the wrong form and reached past the 64-dim head.
+- Empirical falsification from the /tmp/qa24 copy (only the one line changed:
+  half = HEAD_DIM / 2 instead of / 4, reproducing the recorded wrong pairing), oracle
+  run over both fixtures:
+      patch  relrms 0.000001 / 0.000000  (IDENTICAL to the fixed build - the patch
+             stage cannot see a rope error, which is inside the blocks)
+      l0     relrms 0.033569 / 0.011768  (the recorded first-run signature: 3.2% / 1.2%)
+      pooled relrms 1.107384 / 0.918820; soft relrms 1.056567 / 0.859375, maxabs
+             5.99 / 5.33, min row cosine 0.165 / 0.187
+      exit 1, with stage FAILs on l0 and pooled and soft FAILs on all three numbers.
+  So: a wrong rope pairing shows up ONLY from l0 onward, never in patch, and the gate as
+  declared fails it. The doc's account (patch 1e-6 while l0 was 3.2%, which localized
+  the bug in one step) is exactly this behavior; my copy reproduces it without the
+  author's kernel, from the recorded description alone.
 
-- make ds4.o: the target was up to date, so it was forced with make -W ds4.c ds4.o,
-  which runs the CUDA host recipe unchanged (cc -O3 -ffast-math -g -march=native
-  -Wall -Wextra -std=c99 -D_GNU_SOURCE -fno-finite-math-only -c -o ds4.o ds4.c):
-  exit 0 in 40.7 s, pre-existing warnings only, and the rebuilt object's sha256
-  9a3607d4...cb8266 is identical to the object it replaced - compiles, deterministic.
-- bash tests/run.sh (fast path): exit 0, "fast path complete", 24.3 s (pre-report) and
-  24.1 s (post-report); steps 1-7 green, including gate 22 (211/211 tensors, 19/19
-  metadata keys, digest 9ffb86e3...6838) and gate 23.
-- Nothing of the pin is built or linked: the oracle includes ds4.c with DS4_NO_GPU.
+CLAIM 4 - the mechanisms, in one named place each, defaults = the reference: PASS
 
-CLAIM 5 - the discrimination table: the rows' PURPOSE is confirmed; two of the three
-rows I re-measured differ in exact digits (F2); two noise bullets are off 7-12x (F3)
+Read in the code, not the comments:
+- bf16 activation quantization: the GEMM rounds x at the shared-tile load only when
+  act_round != 0 (cuda/eg2vq_vis.cuh:210-219); the adapter passes act_round (=1 unless
+  the flip) for q, k, v, o, ffn_gate, ffn_up, ffn_down and the tie-in projection, and
+  conv_round (=0 unless the flip) for the patch conv alone (gpu.cuh:432-433, :440, :466-468,
+  :489, :496-497, :502, :516-517). The CPU leg's eg2vq_vision_matvec applies the same
+  bf16 to the activation of the seven matrices and the projection, and its conv worker
+  does not (graph.inc:420-432, :273-296). Same rounding expression on both sides
+  (gpu.cuh's eg2vq_vis_bf16 is the CPU's eg2vq_vision_bf16 bit for bit,
+  graph.inc:96-103). With no env vars the defaults are rounding ON for the matmuls and
+  OFF for the conv, which is the reference's own behaviour.
+- The flip is exactly what it says: NO_ACT_BF16 removes only the activation rounding
+  (the switch gates the one if (act_round) line; nothing else reads ctx->flags for the
+  GEMMs); CONV_BF16 changes only the conv call's round flag; neither touches the other.
+- gelu_quick f16 chain: eg2vq_vis_gelu_quick is f16(x) -> x*(1/(1+expf(-1.702x))) ->
+  f16(y) (cuda/eg2vq_vis.cuh:148-152), the same four conversions in the same order as
+  the CPU's eg2vq_vision_gelu_quick (graph.inc:83-88). NO_GELU_F16 substitutes one
+  kernel that computes the same expression WITHOUT the two f16 round trips
+  (gpu.cuh:346-353): only the f16 chain is removed.
+- f16 K/V cast: eg2vq_vis_f16_round runs on k and v after the rope and after the
+  weightless V RMS (gpu.cuh:480-484), exactly where the CPU calls f16_round_inplace_cpu
+  (graph.inc:549-552); --f32kv sets opts.f16_kv = 0 and removes only that cast.
+- No mask, kq_scale exactly 1.0, 12 heads over 12 KV heads, head_dim 64: the device
+  attention kernel has no mask operand and no scale factor (the score is
+  "(a0 + a1) + (a2 + a3)", cuda/eg2vq_vis.cuh:442), one warp per head over 12 heads,
+  and the key range is the whole item; the CPU is the same (graph.inc:335-380). The pin
+  says kq_scale = 1.0f (gemma4v.cpp:75) and the executed flash branch casts K and V to
+  f16 (clip.cpp:787-790, read at the pin).
+- Named device-side differences, which I confirm are named rather than hidden: the GEMM
+  and the attention accumulate in f32 where the CPU's matvec and attention accumulate in
+  double (kernel header, gpu.cuh:89-96 comment; verified in code); the rope table's
+  trig is computed in double on the host and rounded to f32 where the CPU uses cosf/sinf
+  (the kernel comment names the table and --use_fast_math as the reason; verified); the
+  pool's division is (float)(acc/9.0)*scale on the device against (float)acc/9.0f*scale
+  on the CPU - a one-ulp expression difference, inside the measured pooled band
+  (8.8e-3), not separately measured by me.
 
-Measured on pattern, each flip applied in the pristine copy, rebuilt with the gate's
-exact flags, then restored and cmp'd:
+CLAIM 5 - the CPU leg is unchanged where it must be: PASS
 
-  baseline (unchanged)                    maxabs 0.10275560  relrms 0.82%  mincos 0.99978457
-  tanh GELU drop-in (eg2vq_gelu)          1.38684  7.55%   (doc 1.409 / 7.60%)
-  tanh GELU inside the f16 round trips    1.41403  7.54%
-  position slices swapped                 4.51476  43.74%  (doc 4.527 / 47.20%)
-  fill rules swapped                      5.69762  103.39%
-  rope axes swapped (pos_y first)         5.87766  103.51% (doc 5.889 / 103.50%)
-  every matvec output scaled by (1+1e-5)  0.08070  0.83%   (doc 0.069%)
+bash tools/eg2_vision_gate23.sh: exit 0, EG2VQ_VISION_GATE23_PASS, 19.36 s.
+    pattern  maxabs 0.10275560, relrms 0.008235, min row cosine 0.99978457
+    gradient maxabs 0.06645030, relrms 0.005285, min row cosine 0.99988406
+  - the doc's "unchanged ones" to the last digit, and identical to the values recorded
+  in docs/eg2vq-vision-tower-gate23.txt and the handoff before this unit existed. The
+  gate also printed the anchor sums of squares 65828.280406 / 69223.788734 against the
+  anchor's printed 65827.217181 / 69219.023404.
+- The only CPU-leg change is the stages parameter; the C oracle (the leg's own driver)
+  passes NULL (git show 5183cd50 -- tests/parity/eg2vq_vision_c_oracle.c: one line,
+  &g, err -> &g, NULL, err), and the two callers in the tree are the two oracles.
+  Independent confirmation: my own -O3 build of the C oracle (gate 23's flags) run over
+  both fixtures prints 0.10275560 / 0.008235 / 0.99978457 and 0.06645030 / 0.005285 /
+  0.99988406 - byte-identical to the gate, from a binary this pass built itself.
 
-So the rope row reproduces digit for digit, and every flip is 3x-100x beyond the
-2.5% bound while the port sits at the table's minimum: the gate discriminates.
+CLAIM 6 - the fast path: PASS
 
-CLAIM 6 - the doc's supporting claims: PASS except the two bullets in F3
+bash tests/run.sh: exit 0, "fast path complete", wall 84.10 s (this host, this pass);
+gate 24 is step 7 of the script (read: steps 1-8, gate 24 then the rule 19 gate at step
+8). All steps green: the fourteen digests, the DQVD container, the scorer self-test,
+loader gate 3, gate 22 (EG2VQ_VISION_MMPROJ_PASS), gate 23 (EG2VQ_VISION_GATE23_PASS),
+gate 24 (EG2VQ_VISION_GATE24_PASS), the QA gate. The fast path was 25.3 s before this
+unit (the handoff's number) and is now 84.1 s here: gate 24 is the step that moved it,
+as the commit message says.
 
-- SHA256SUMS carries all four tests/vision/reference dumps and preproc-facts.txt
-  (lines 10-14 of 14 entries); sha256sum -c SHA256SUMS reports OK on every entry
-  (measured 1.1 s on this machine, not the ~25 s the QA brief expected).
-- Gate 23 is fast-path step 6 of tests/run.sh (read in the file and observed); the
-  doc's "~19 s for the whole gate" measured 19.8 s; the fast path 24.1-24.3 s.
-- The dense cache is 576.0 MiB: the oracle prints dense_mb=576.0 on every run, and
-  the binder's arithmetic agrees exactly - 16 x (4*768^2 + 3*768*3072) x 4 B =
-  603,979,776 B. patch_embd and input_projection have their own allocations, which
-  is what the doc's "the 16 blocks' matrices" says.
+CLAIM 7 - the project's constraints: PASS
 
-CLAIM 7 - shapes against the artifact's own metadata: PASS
+- P-1's five checks, run verbatim in /data/embeddinggemma2: all zero hits (the first,
+  second and fifth greps return rc=1 with no output; ldd | grep -ic returns 0; find for
+  '*.py' prints nothing). The unit's own changed files contain no python/onnx/torch
+  either (the two oracles are C, the kernels CUDA C++, the gates sh).
+- The pin was neither built nor run by this unit: the outer commit touches only
+  tools/eg2_vision_gate24.sh, tests/run.sh and the evidence doc; the nested commit
+  touches the tower's C/CUDA files, the Makefile, .gitignore and the C oracle; grep for
+  llama in both diffs finds only comment citations of the revision; gate 24's script
+  builds nothing of the pin (read: it runs make in ds4-rs and the tree's own oracle);
+  the oracle includes ds4.c and the tree's CUDA objects, nothing of /data/llama.cpp.
+  The pin executions in the tree remain opt-in only: tools/eg2_vision_anchor.sh (the
+  vision reference regeneration, never called by tests/run.sh or any gate) and
+  tools/eg2_anchor.sh (the text anchor, reachable only from tools/eg2_tok_check.sh's
+  EG2_TOK_ANCHOR-gated regeneration branch). The QA brief says "the only pin use
+  remains tools/eg2_vision_anchor.sh"; that is slightly wider than the tree - the text
+  anchor script also runs a pin-built binary when invoked, but only through the same
+  opt-in regeneration, and nothing in this unit calls either.
+- sha256sum -c SHA256SUMS: all fourteen entries OK (including the mmproj the gate binds
+  and both vision fixtures).
+- Tree state: the nested tree is clean; the outer tree holds only the pre-existing
+  handoff frontmatter refresh and, after this pass, this report. My scratch work is
+  under /tmp/qa24 and /tmp/qa24-*.
 
-Read back through the project's own reader (gguf_inventory --kv-values) from the
-mmproj: 211 tensors, 19 keys; embedding_length 768; feed_forward_length 3072;
-block_count 16 (blk.0-15 present, no blk.16); attention.head_count 12;
-attention.head_count_kv 12; attention.head_dim 64; layer_norm_epsilon 1e-6;
-patch_size 16; projection_dim 512; projector.scale_factor 3. Tensor shapes:
-v.position_embd.weight [768,10240,2] (10240 rows per axis), v.patch_embd.weight
-[16,16,3,768], mm.input_projection.weight [768,512], attn_q_norm/k_norm [64]. Every
-value equals the constant in ds4_eg2vq_vision.h. The reference's log prints the same
-hparams (n_embd 768, n_head 12, n_ff 3072, n_layer 16, ffn_op gelu_quick,
-projection_dim 512, patch_size 16, n_merge 3, image_min/max_pixels 161280/2580480
-= 70/1120 x 2304).
+CLAIM 8 - the cheap numbers: PASS, with two timings that are host-state dependent
 
-WHAT I DID NOT TEST
+- MiB figures: the adapter's own report matches the doc exactly - weights 289.88 MiB,
+  aux 62.70 MiB, workspace 566.64 MiB at max_patches 10080 (= 2580480/256), vram delta
+  922.0 MiB, cpu f32 dense cache 576.0 MiB. Note for precision: the CPU leg's total f32
+  weight bytes are 579.75 MiB, because patch_embd (2.25 MiB) and input_projection
+  (1.5 MiB) have their own allocations beside the 16x36.0 MiB dense cache; the doc's
+  "576.0 MiB" is the dense-cache number, which is what the oracle prints.
+- Timing ratio: device 0.211-0.234 s per image, CPU 4.62-5.00 s in my runs (doc: 0.229/
+  0.226 and 4.336/4.323), so the ratio is about 21x here against the doc's about 19x.
+  Timings on
+  this shared host are not a contract; the order is the same and the device figure is
+  stable.
+- Per-row statistics (computed by me with an awk comparison over all 88 rows):
+      CPU -O3 vs the frozen dumps: mean row 0.76% / 0.49%, worst row 2.08% / 1.55%
+        (doc: exactly these);
+      DEVICE vs the frozen dumps: mean row 0.82% / 0.48%, worst row 5.29% / 1.20%
+        (doc: exactly these);
+      rows at or below 0.1%: 0 on both legs and both fixtures (doc: "every row of both
+        legs deviates by more than 0.1%").
+- Sums of squares: device dumps 65836.197907 / 69215.637590, the frozen TSVs' own
+  65827.217146 / 69219.023429, the anchor's printed 65827.217181 / 69219.023404, the
+  CPU -O3 leg's 65828.280406 / 69223.788734 - all three legs agree at the 1e-4 relative
+  level, consistent with the doc's use of the anchor digest as a magnitude check.
+- The doc's "0.78% build-to-build spread": reproduced as a class - my -O2-vs-O3 rebuild
+  of the CPU leg (same flags both) measures 0.007415 / 0.005039 (0.74% / 0.50%) on
+  pattern/gradient, and the unit-23 QA report recorded 0.78% / 0.06609. The unit's
+  original bullet (0.064%) was -O2 WITHOUT -ffast-math, a different configuration; the
+  doc keeps both, and both are consistent with my measurement. The exact doc pair
+  0.78% / 0.0661 comes from the unit-23 QA pass (recorded there), not re-derived here;
+  my 0.74% / 0.0822 is the same configuration class.
 
-- The doc's first perturbation bullet (a 1e-7 relative perturbation of the position
-  contribution -> 0.068% RMS, saturating): not measured.
-- The anchor's own execution (forbidden in this pass); the shipped log is the only
-  witness for the executed-reference facts, and gate 23 cross-checks its two lines
-  against preproc-facts.txt.
-- The CUDA vision tower, the text/vision splice and the pooled *.text.tsv dumps
-  (units 24/25), and the other discrimination rows (kq_scale, weightless V RMS,
-  gate/up exchange, the bf16 rows, f32 K/V).
-- The Qwen4exp GPU path (covered statically: same bytes, same include) and leaks of
-  bind/free (no valgrind or ASan run; free is called and every run returned 0).
+WHAT I DID NOT TEST / COULD NOT VERIFY
+
+- The superseded first bound's physical existence (0.15 / 0.010 / 0.9990): not in git
+  (the file was added once); only the consistency of the recorded failure with the live
+  numbers is verifiable, and it holds.
+- The device bind's and slot table's refusal paths (a mis-named, mis-typed or mis-sized
+  tensor), the workspace-too-small and image-too-large refusals: not injected. The
+  mechanisms are read (they are the CPU binder's own required_tensor/tensor_expect_layout
+  calls); gate 3/23's tamper tests cover the reader, not this table.
+- Leaks: no valgrind/ASan; free/unbind are called and every run exited cleanly.
+- The engine entry and the caps accounting: not built (F4).
+- Unit 25's subject (the splice) and the *.text.tsv dumps.
+- The pin's execution (not allowed in this pass); I read three citation sites only.
+- The doc's specific single-session wall clocks for the CPU/device legs and the
+  "device plan bind 0.04-0.22 s" range (mine: 0.03 s); the doc's 19x ratio (mine ~21x).
+- The "0.78% / 0.0661" pair as such (see CLAIM 8; reproduced as a class, not digit for
+  digit).
 
 FINDINGS (none blocks the unit)
 
-F1 (low; off or stale file:line pointers in the port's comments; every mechanism
-they name is real and the load-bearing citations of CLAIM 2 are exact).
-- vision.h:78 cites clip.cpp:1723 for ROPE_THETA; the assignment is clip.cpp:1725
-  (1723 is a case label). vision.h:79 cites clip-model.h:93 for eps; it is :95.
-- graph.inc:27 cites clip.cpp:379 for the input RMS; the build_norm call is :376
-  (379 is a comment). graph.inc:28 cites clip.cpp:436-451 for the q/k/v projections;
-  the matmuls are :424, :429, :434. graph.inc:37 cites clip.cpp:534 for the FFN
-  residual; the add is :538 (534 is the ls_2 callback), and :35's 486-500 stops two
-  lines before the attention residual at :501-502.
-- graph.inc:305 cites gemma4v.cpp:71 for ggml_rope_set_offset; line 71 is blank and
-  the call is :70.
-- vision.h:11 and bind.inc:4 cite ds4.c:72689 for the GLM-5.3 companion open; at HEAD
-  that model_open is ds4.c:72566 (72689 is DFlash cleanup). 72689 is exactly the
-  parent revision's line, shifted by the resampler move - not refreshed.
-- resize_pillow.inc:7 says the bodies "were at ds4.c:26636-26779"; the byte-identical
-  144 lines are ds4.c:26635-26778 (one line earlier at both ends), and :4's "block
-  that opens at ds4.c:18444" is the guard at ds4.c:18452 at HEAD (18444 is the new
-  include's own comment; the parent's guard was :18443).
-- Loose but pointing at the right builder: build_vit :337-560 (the function ends
-  :568), build_norm :607-628 (def at :603, body ends :626).
+F1 (low; the gate script's own header still describes the superseded bound as current).
+tools/eg2_vision_gate24.sh lines 12-14 say the device leg "is held to 1.0e-2 relative
+RMS of the CPU leg, 0.15 max |difference| and 0.9990 minimum row cosine" while the
+executed constants at lines 58-60 are 0.025 / 0.30 / 0.998 and the printed bound is the
+latter. The doc's section 5 and the oracle record the tighter declaration as REPLACED;
+the script's header was not updated with it. No gate-behaviour impact (the executed and
+printed bound is the envelope), but the unit's own artifact contradicts the unit's own
+evidence text.
 
-F2 (low; two discrimination-table rows do not reproduce digit for digit).
-- "tanh GELU (eg2vq_gelu)": doc 7.60% / 1.409. Measured 7.55% / 1.38684 with the
-  literal drop-in and 7.54% / 1.41403 with the tanh formula kept inside the f16
-  round trips; neither reading gives the doc's pair.
-- "position slices swapped": doc 47.20% / 4.527. Measured 43.74% / 4.51476 by
-  swapping the two slices in the embedding add; the fill-swap reading measures
-  103.39% / 5.69762, i.e. the doc's rope-axes row territory. The rope row itself
-  reproduces (103.51% / 5.87766 vs 103.50% / 5.889), so the table is not
-  systematically stale - these two rows are simply not exactly reproducible as
-  written. Impact: none; every measured flip is >=7.5% against a 2.5% bound and the
-  port is at 0.82%.
+F2 (low; the oracle's justification comment overstates its own flips).
+eg2vq_vision_cuda_oracle.c lines 73-74 say "the discrimination flips in
+tools/eg2_vision_gate24.sh are 5x to 100x further out"; the same gate prints 1.66x,
+3.27x, 1.08x, 0.96x. The 5x-100x scale belongs to gate 23's table against the frozen
+dumps; the doc's section 6 has the correct gate-24 ratios. Comment only; the gate
+requires a > 1x ordering and prints the actual numbers.
 
-F3 (low; two noise-floor bullets in the doc's section 5 understate the measured
-sensitivity by ~7-12x).
-- "the SAME source built at -O2 (no -ffast-math) versus -O3 -ffast-math
-  -march=native differs by 0.064% RMS (max-abs 0.009)": measured 0.78% / 0.06609 on
-  pattern and 0.46% / 0.03393 on gradient. Three builds tried: -O2 plain, -O2
-  -march=native (same output), -O2 -ffast-math -march=native (0.80% / 0.06796). All
-  -O2 builds still pass the gate bounds themselves (0.79% residual on pattern).
-- "scaling every matvec's output by (1 + 1e-5) ... gives 0.069%": measured 0.83% /
-  max-abs 0.08070 (applied to every eg2vq_vision_matvec output).
-- The doc's own summary sentence "the same port moves 0.06-0.4% under a pure
-  recompilation" is likewise below the measured 0.46-0.80%.
-- Impact: none on the verdict - the port's residual (0.82%/0.53%) and its measured
-  noise (<=0.83%) stay far inside the declared bound - but the "saturates /
-  decision-boundary" narrative rests on numbers this pass could not reproduce; read
-  the summary range as ~0.5-0.8% for a recompile.
+F3 (low; a timing claim in the commit message and the run.sh header is not reproduced).
+"about 35 s warm" for gate 24: measured 58.91 s warm (oracle current) and 84.10 s for
+the whole fast path. The gate's own parts account for it: six oracle runs, each with a
+~4.6-5.0 s CPU leg per fixture, plus the device legs. The evidence doc states no wall
+time, so nothing in the doc is contradicted; the figure to carry is ~59 s warm here
+(plus ~90 s nvcc and ~40 s link when the CUDA object is stale).
 
-F4 (informational; the mechanical QA mount cannot see this unit's surfaces).
-tests/qa-gate.sh printed {embed_caps}, not the unit's C entry points: the nested scan
-paths are "crates ds4.c cuda" and the C-definition pattern needs a source line ending
-in "(", so neither ds4_eg2vq_vision.h nor the new .inc files enter the list, and the
-outer tools/ scan uses the same C pattern, so tools/eg2_vision_gate23.sh is invisible
-too. The fast path was green before this report existed, on the unit-20 report being
-fresh by mtime. Not a unit defect; the unit's real surfaces were QA'd by hand above.
+F4 (medium; the handoff's unit-24 plan item 4 was deferred, visibly).
+The handoff's unit-24 section lists four items; item 4 ("WIRE IT: an engine entry shaped
+like ds4_engine_embed_gemma_vq ... and the caps question") is not built. The evidence
+doc section 8 records the deferral to unit 25 and the code agrees: the only caller of
+ds4_gpu_eg2vq_vision_forward in either tree is the CUDA oracle, so nothing in the
+runtime reaches the device tower yet, and embed_caps was not extended for the vision
+workspace. Recorded rather than hidden; unit 25's plan must carry it.
 
-F5 (informational; tree state at the end of this pass). The nested tree is clean and
-byte-identical (the forced ds4.o rebuild reproduced its own sha256). During the pass
-the project's own session committed the uncommitted unit-23-close handoff rotation
-it had left in the working tree (fb3b819, a docs(handoff) commit directly on dev per
-rules 9/23); the outer tree now shows only this report as modified. The handoff was
-not written by this QA pass.
+F5 (low; the handoff's row naming and the phase doc disagree, and the unit did not
+correct the phase doc).
+The handoff calls this unit "phase 8, row P4.2"; docs/ds4-gemma-port-phases.md has no
+phase-8 row table and its P4.2 row is "Audio tower forward: 12 layers, hidden 1024"
+(OPEN), with P4.3 the tie-in projections. The handoff is the plan of record and its own
+precedence rule (AGENTS.md, "Where the plan and the record live") requires the
+disagreeing document to be corrected in the same commit; neither 3a5f008 nor 5183cd50
+touches the phase doc. Documentation follow-up, no runtime impact.
 
-Post-write confirmation (recorded after this report was written): bash
-tests/qa-gate.sh -> four PASS (exists; fresh; operative verdict; covers embed_caps),
-"QA GATE: overall PASS", exit 0; bash tests/run.sh -> fast path complete, exit 0,
-24.1 s.
+F6 (informational; the rule 19 mount still cannot see this unit's surfaces).
+bash tests/qa-gate.sh demands {embed_caps} only: the nested scan paths are
+"crates ds4.c cuda" with a C-definition pattern, so ds4_eg2vq_vision_gpu.cuh,
+ds4_eg2vq_vision_bind.inc and ds4_eg2vq_vision_graph.inc (root of ds4-rs) are invisible,
+and cuda/eg2vq_vis.cuh's primitives are eg2vq_vis_* (no ds4_ prefix). This report
+therefore names and covers the unit's real surfaces explicitly (SURFACES COVERED); the
+mount should widen QA_SURFACE_PATHS/QA_DB_RE in a follow-up. The mount's other three
+checks (exists, fresh, operative verdict) are satisfied by this report.
+
+F7 (informational; inherited, not introduced by this unit).
+The oracle's make rule compiles ds4_cuda.cu, which needs the gitignored
+.ds4-cuda-config.mk (CUDA_ARCH := sm_89): a pristine git-archive copy without it fails
+nvcc with six "incomplete type nvcuda::wmma::fragment<... __nv_bfloat16 ...>" errors
+rather than a clear CUDA_ARCH message. The project records the arch step in
+docs/cuda-sm89-port.txt and the tree here carries the file, so the in-place gate is
+unaffected; only fresh-checkout reproducibility needs the step.
+
+post-write confirmation: bash tests/qa-gate.sh -> QA GATE: overall PASS (report exists,
+fresh, operative verdict, covers embed_caps), exit 0; bash tests/run.sh -> fast path
+complete in 83.17 s, exit 0, gate 23 EG2VQ_VISION_GATE23_PASS and gate 24 again
+EG2VQ_VISION_GATE24_PASS on the fresh report, QA gate overall PASS.
 
 verdict: overall PASS

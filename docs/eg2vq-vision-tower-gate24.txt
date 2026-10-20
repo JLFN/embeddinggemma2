@@ -255,3 +255,61 @@ time, and the workspace is sized for the largest image the family admits
   - The CPU leg's forward signature now takes a `stages` pointer (NULL in every
     shipping path), and the CPU oracle was updated with it; gate 23 re-ran green
     after the change (the numbers above are its unchanged ones).
+
+
+9. THE RULE 19 QA PASS, AND WHAT IT FOUND
+-----------------------------------------
+
+The unit's QA pass ran under the project's recorded QA model
+(deepseek-v4.1-CC-flash, the slug tests/qa-gate.sh records) and returned
+`verdict: overall PASS`; its report is qa-evidence/qa-report.md.  It verified,
+LIVE: gate 24 three times (once standalone, twice inside tests/run.sh) with every
+number in sections 5 to 7 of this document reproduced to the last digit; its own
+kick sweep (0, 1e-7 ... 5e-6 bit-identical to eight decimals, 1e-5 moving the
+output 0.009240 relative RMS) and its own -O2-vs-O3 rebuild of the CPU source
+(0.74% / 0.50%), which reproduces the noise-floor justification independently; the
+four attribution flips re-run identically; the rope defect REBUILT in a scratch
+copy, where the patch stage stays at 1e-6 while l0 goes to 3.36% / 1.18% (the
+first run's 3.2% / 1.2%), so the defect and its localization reproduce without
+this unit's kernel; the stage objects on both sides; the mechanism switches read
+in the code; gate 23 unchanged and green with its pre-unit numbers; the fast path
+at 83-84 s with gate 24 in it; the five P-1 greps at zero; the pin read-only at
+three citation sites; and `sha256sum -c SHA256SUMS` 14/14.
+
+Its findings and their disposition:
+
+  F1 (low, FIXED in the commit that carries this section): the gate script's
+     section-1 comment still described the SUPERSEDED bound (0.15 / 0.010 /
+     0.9990) as the one in force, while the executed constants are the envelope
+     (0.30 / 0.025 / 0.998).  The prose is corrected and now names the envelope
+     and points at the oracle's record of the declaration it replaced.
+  F2 (low, FIXED): the oracle's comments claimed the attribution flips are "5x to
+     100x further out", which is gate 23's table against the FROZEN dumps and not
+     this gate's table against the CPU leg.  Measured here: 1.66x, 3.27x, 1.08x
+     and 0.96x (the last not discriminated).  Both comments now state this gate's
+     own numbers.
+  F3 (low, FIXED): the "about 35 s warm" this document and tests/run.sh recorded
+     for gate 24 was not reproduced; the QA measured 58.9 s warm, and tests/run.sh
+     now records that number together with what it consists of (the two image
+     runs with their kick probes plus the four attribution flips).
+  F4 (informational, RECORDED): the unit's fourth step, the engine entry and the
+     caps, was deferred to the next unit.  Section 8 says so, and the phase doc's
+     new P4.6 row holds it together with the splice it feeds.
+  F5 (low, FIXED): the row number.  The handoff and this document called the
+     device tower "phase 8 row P4.2", which is the phase doc's AUDIO row.  The
+     phase doc now carries the device tower as P4.5 and the engine entry with the
+     splice as P4.6, the correction is recorded in P4.5's own cell, and the
+     handoff's section 3 names the rows correctly.
+  F6 (informational, RECORDED): tests/qa-gate.sh's surface extraction still sees
+     only `embed_caps` for this window — its C pattern does not reach the new
+     vision .h/.inc/.cuh files.  The QA report covers those surfaces by hand,
+     which is what rule 19 asks for; the blind spot is a property of the gate.
+  F7 (informational, INHERITED): a fresh checkout needs the gitignored
+     .ds4-cuda-config.mk, or ds4_cuda.o fails with six wmma "incomplete type"
+     errors.  A property of the tree rather than of this unit, recorded here.
+
+Unverified by the pass, and stated as such in its report: the superseded
+constant's physical existence (it is this document's record, not git history —
+the constants were added once, in 5183cd50, at their final values); the wall
+clocks quoted here from a single session; the device bind's refusal paths; and
+unit 25's subject.

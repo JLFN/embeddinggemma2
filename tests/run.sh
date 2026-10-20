@@ -30,7 +30,8 @@
 #      (tools/eg2_vision_gate24.sh).  It builds the CUDA object when a device
 #      source changed: that is the one step here whose cost depends on the
 #      tree's CUDA build being current (about 90 s to rebuild ds4_cuda.o, about
-#      40 s to link the oracle, warm run about 35 s).
+#      40 s to link the oracle; measured warm run 58.9 s, i.e. the two image
+#      runs with their kick probes plus the four attribution flips).
 #   8. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
