@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: d42fc8fdf8cef8dc0f6806d249160ae5472abe77
-last_updated_commit: 3729ec4bf3ff7a1b6f4b3dc9b0e1c9a7f9a53ae5
+last_updated_commit: da379948dd24a6dd5b0d26eecbf25f836f4c668e
 branch: dev
 remote: 
-handoff_written_at_context_usage: 42%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T06:45:00+02:00
+handoff_written_at_context_usage: 19%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-20T06:30:05+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---

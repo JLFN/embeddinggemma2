@@ -1,0 +1,266 @@
+Unit 23 — the vision tower on the CPU reference path (phase 8, row P4.1)
+=======================================================================
+
+Status 2026-10-20: DONE.  Gate 23 is in tests/run.sh's fast path as step 6 and
+is green; the numbers below are all measured in this session, on this machine.
+
+    1. What landed
+    2. The authority, and the four things the graph does not say
+    3. The preprocessing contract, checked before any matmul
+    4. The discrimination table — what makes this gate mean something
+    5. The declared bound, and what the port's own noise floor is
+    6. The gate output, verbatim
+    7. The code, and where it lives
+    8. What unit 24 inherits
+
+
+1. WHAT LANDED
+--------------
+
+  ds4-rs/ds4_eg2vq_vision.h            the tower's shape constants, the weight
+                                       record and the two entry points
+  ds4-rs/ds4_eg2vq_vision_bind.inc     the by-name binder of the companion
+                                       mmproj (211 tensors, one dense cache)
+  ds4-rs/ds4_eg2vq_vision_graph.inc    the preprocessing and the 16 blocks
+  ds4-rs/ds4_resize_pillow.inc         NEW FILE, moved verbatim out of ds4.c's
+                                       GPU-guarded Qwen4exp section: the
+                                       Pillow resampler both now share
+  ds4-rs/tests/parity/eg2vq_vision_c_oracle.c   the port's own oracle, two
+                                       modes (prep, soft), native, no pin
+  tools/eg2_vision_gate23.sh           gate 23
+  tests/vision/reference/preproc-facts.txt      the reference's recorded
+                                       preprocessing facts (14th digest)
+  tests/run.sh                         gate 23 as fast-path step 6
+
+No new artifact, no new frozen data: the gate is measured against the dumps
+unit 22 froze (tests/vision/reference), which are already digest-recorded.
+
+
+2. THE AUTHORITY, AND THE FOUR THINGS THE GRAPH DOES NOT SAY
+------------------------------------------------------------
+
+The graph is /data/llama.cpp @ 31288c9c tools/mtmd/models/gemma4v.cpp:5-117 with
+the builders it calls in tools/mtmd/clip.cpp (build_vit :337-560, build_norm
+:607-628, build_ffn :628-700, build_attn :762-830) and the preprocessing in
+tools/mtmd/mtmd-image.cpp.  Every mechanism in ds4_eg2vq_vision_graph.inc
+carries its file:line.
+
+Reading the graph is not enough.  Four facts below decide whether the port
+agrees with the frozen numbers, and NONE of them is visible in the graph:
+
+  (a) THE FFN ACTIVATION IS GELU_QUICK, not the tanh GELU.  clip.cpp:1414-1429
+      reads clip.use_gelu / clip.use_silu and, when neither is set, assigns
+      FFN_GELU_QUICK; the clip-model.h:91 default (FFN_GELU) never survives, and
+      the mmproj writes neither key.  The reference printed
+      "load_hparams: ffn_op: gelu_quick".  Measured cost of getting this wrong:
+      7.60% RMS (see the table in section 4).
+  (b) ggml's f32 gelu_quick IS AN F16 TABLE LOOKUP.  GGML_GELU_QUICK_FP16 is
+      defined unconditionally (vec.h:47), so ggml_vec_gelu_quick_f32 quantizes
+      its input to f16, looks the value up in ggml_table_gelu_quick_f16
+      (vec.h:1047-1057) and widens the entry back — the output is f16-quantized
+      too.  The table is built as FP32_TO_FP16(gelu_quick_f32(FP16_TO_FP32(i)))
+      (ggml-cpu.c:3884-3891).  The port reproduces the whole chain inline.
+  (c) EVERY bf16-WEIGHT MATMUL QUANTIZES ITS ACTIVATION TO BF16.  ggml's CPU
+      mul_mat converts src1 to the weight's own vec_dot_type
+      (ggml-cpu.c:1328-1340), and this revision's BF16 entry declares
+      `.vec_dot_type = GGML_TYPE_BF16` (ggml-cpu.c:395-400).  So the activation
+      that enters a bf16 matmul is rounded to 8 mantissa bits first, with
+      round-to-nearest-even (ggml_compute_fp32_to_bf16, ggml-impl.h:623-635).
+  (d) THE CONV IS THE ONE EXCEPTION, and it is the mirror image of (c):
+      ggml_conv_2d calls mul_mat(im2col, weight) — the F32 im2col is src0 and the
+      bf16 weight is src1 (ggml.c:4785-4789) — so vec_dot_type comes from the
+      im2col, nothing is packed, and the weight is merely WIDENED to f32
+      (ggml-cpu.c:1332-1340).  The conv's activation is NOT quantized.
+
+Two more, which are choices rather than traps:
+
+  (e) The reference's encode ran with FLASH ATTENTION ENABLED: clip.cpp:3928-3961
+      resolves CLIP_FLASH_ATTN_TYPE_AUTO to ENABLED on a backend that supports
+      the op (this CPU does), and the reference printed "warmup: flash attention
+      is enabled".  The flash branch of build_attn casts K and V to f16
+      (clip.cpp:787-790), so the frozen numbers carry that rounding.  That is
+      what ds4_eg2vq_vision_opts::f16_kv mirrors; the effect is small and
+      measured: 0.12% RMS, 0.019 max-abs.
+  (f) Tiled flash attention (Q_TILE 64, ggml-cpu/common.h:9) keeps Q in F32 and
+      expands the f16 K/V tiles to f32 for the GEMM (ops.cpp:9171+, :9285-9350),
+      which is why the port's attention is f32 softmax over an f32 accumulation
+      with only K and V rounded.
+
+Also corrected this session, in the port's map: the handoff's inherited claim
+that the reference applies EXIF orientation to a JPEG is still wrong (it does
+not: mtmd-helper.cpp:404 is the whole decode path), and the claim that the
+weightless V RMS is applied to the whole width is wrong (it is per head,
+clip.cpp:481-483 on a [64, 12, 792] tensor).  Both are measured in section 4.
+
+
+3. THE PREPROCESSING CONTRACT, CHECKED BEFORE ANY MATMUL
+--------------------------------------------------------
+
+The oracle's `prep` mode takes no weights at all: the decode, the size solver,
+the PAD_CEIL composite, the /255 conversion and the two position index vectors
+are checkable exactly, and gate 23 checks them before the tower runs.
+
+For both frozen 512x384 fixtures the reference and the port agree on:
+
+    canvas 528x384      (the reference's own log: "clip_encode: copying image
+                         1/1 to input buffer (nx=528, ny=384)")
+    region 512x384 at offset 8,0   (scale = min(528/512, 384/384) = 1.0, so the
+                         resample is a bit-exact identity — the bicubic taps at
+                         integer distances are [0,1,0,0] — and the 16 columns of
+                         padding are ALL the alignment added)
+    grid 33x24, 792 patches, 88 soft tokens   (the reference: "image_tokens->nx
+                         = 88"; n_cols = image_size_width / patch_size)
+    padding, structurally: columns "1*8 0*512 1*8", rows "0*384" — i.e. every
+                         channel value in the first and last 8 columns is exactly
+                         the pad value, and no row is
+    positions: pos_x[i] = i % 33, pos_y[i] = i / 33 for all 792 (clip.cpp:5562-5568)
+
+This is why the gate cannot be satisfied by a port that STRETCHES the image to
+the aligned size: the canvas is 528 wide, the region is 512, and the padding is
+structural.  tools/eg2_mmproj_check.sh (gate 22) checks the mmproj; this checks
+what the port does with the pixels.
+
+
+4. THE DISCRIMINATION TABLE — WHAT MAKES THIS GATE MEAN SOMETHING
+-----------------------------------------------------------------
+
+Every row below is a real measurement from this session: the port with ONE
+change made, run over the same fixture, compared to the same frozen dump.  The
+change is named exactly, so any row can be reproduced by editing the file
+(ds4_eg2vq_vision_graph.inc, line numbers at the time of writing).
+
+  configuration (one change from the port)        pattern            gradient
+                                                 relrms  maxabs      relrms  maxabs
+  THE PORT                                       0.82%   0.103      0.53%   0.066
+  tanh GELU for the FFN (eg2vq_gelu)             7.60%   1.409      --      --
+  position slices swapped (tbl_x <-> tbl_y)     47.20%   4.527      --      --
+  rope axes swapped (pos_y first)              103.50%   5.889      --      --
+  attention kq_scale = 1/sqrt(64)              114.75%   5.713      --      --
+  weightless V RMS over the whole 768           58.27%   5.972      --      --
+  gate/up exchanged in the GEGLU               134.64%   6.983      --      --
+  bf16-rounding the conv's activation            1.46%   0.346      3.11%   0.548
+  no bf16 activation quantization                1.51%   0.360      0.96%   0.154
+  gelu_quick without the f16 table               0.84%   0.142      0.61%   0.080
+  f32 K/V instead of the reference's f16 cast      --    0.019       --      --
+  per-head RMS applied after the rope            1.51%   0.364      --      --
+
+What this table says, in words:
+
+  - every GROSS mechanism was tested by flipping it, and every flip is 5x to
+    100x further from the frozen numbers than the port is.  The port is not
+    "close by accident": it is at the minimum of this table.
+  - (c) and (b) are the two changes that move the port CLOSER, and they are the
+    two mechanisms section 2 found by reading ggml's kernels rather than the
+    graph.  Both fixtures agree on the sign of (c): rounding the conv's
+    activation (d) moves BOTH away, quantizing the layer matmuls' activations
+    moves BOTH closer.
+  - the last row is honest about a limit: the reference's order (RMS then rope,
+    clip.cpp:457-478) and the other order are 1.5% apart, which is the same
+    size as the port's own residual, so THAT row is not discriminable by a
+    threshold.  The port implements the reference's order because the source
+    says so, not because this table can see it.
+
+
+5. THE DECLARED BOUND, AND WHAT THE PORT'S OWN NOISE FLOOR IS
+--------------------------------------------------------------
+
+Gate 23 declares, prints BEFORE the run, and never widens:
+
+    max |difference| <= 0.30      (measured 0.103 / 0.066)
+    relative RMS     <= 0.025     (measured 0.0082 / 0.0053)
+    min row cosine   >= 0.998     (measured 0.99978457 / 0.99988406)
+
+With those numbers the bound is not arbitrary; it sits between the port and the
+nearest wrong configuration, and the port's own sensitivity was measured too:
+
+  - a 1e-7 relative perturbation of the position contribution moves the port's
+    output by 0.068% RMS (max-abs 0.0103), and RAISING the perturbation to 1e-6
+    and 1e-5 changes nothing more (0.073%, 0.068%): the response SATURATES, so
+    the residual is a decision-boundary effect, not a growth with error size.
+  - scaling every matvec's output by (1 + 1e-5), i.e. kicking all 112 matvec
+    sites at once, gives 0.069% — the same size as one kick.
+  - the SAME source built at -O2 (no -ffast-math) versus -O3 -ffast-math
+    -march=native differs by 0.064% RMS (max-abs 0.009).  Adding two dead
+    branches to the tower moved it by ~0.4%.
+  - swapping the matvec accumulation from double to float (the same precision
+    class as ggml's own f32 accumulators) did not move the result out of that
+    noise: 1.5120% vs 1.5017% before the mechanisms of section 2 were applied.
+
+So the port reproduces every mechanism this table can see, and what remains
+(0.5-0.8% RMS) is the tower's own sensitivity to op-level rounding order: this
+tower's attention runs at kq_scale 1.0 with RMS-normalized q/k, i.e. a very
+peaked softmax, and the same port moves 0.06-0.4% under a pure recompilation.
+The port is a reference implementation, not a bit-exact clone of ggml's SIMD
+kernels, and the residual is named rather than hidden.
+
+The gate therefore discriminates: every gross mechanism (7.6% and up) fails the
+2.5% bound on both fixtures, and the conv-activation error (d) fails it on the
+gradient fixture (3.11%) and on max-abs for both (0.346/0.548 > 0.30).  The two
+fine-grained choices of section 2 are 2x away and are evidenced by this table
+rather than by the threshold — stated here rather than implied by a loose bound.
+
+
+6. THE GATE OUTPUT, VERBATIM
+-----------------------------
+
+  VISION GATE 23: building the oracle: cc -O3 -ffast-math -march=native -Wall -Wextra -std=c99 -D_GNU_SOURCE
+             -fno-finite-math-only -DDS4_NO_GPU -ffunction-sections -fdata-sections
+             -Wno-unused-function -I. -o <tmp> tests/parity/eg2vq_vision_c_oracle.c
+  VISION GATE 23: the declared bound (printed before the run):
+  VISION GATE 23:   max |difference| <= 0.30
+  VISION GATE 23:   relative RMS    <= 0.025
+  VISION GATE 23:   min row cosine  >= 0.998
+  VISION GATE 23: pattern preprocessing: canvas 528x384 (reference the anchor's own log, which agrees with the recorded facts: 528x384),
+  VISION GATE 23:   region 512x384 at offset 8,0, grid 33x24, 792 patches, 88 soft tokens
+  VISION GATE 23:   padding: columns '1*8 0*512 1*8' (8 + 8 pad columns), rows '0*384'
+  VISION GATE 23:   positions: 792 (pos_x, pos_y) pairs follow clip.cpp:5562-5568
+  VISION GATE 23: gradient preprocessing: canvas 528x384 (reference the anchor's own log, which agrees with the recorded facts: 528x384),
+  VISION GATE 23:   region 512x384 at offset 8,0, grid 33x24, 792 patches, 88 soft tokens
+  VISION GATE 23:   padding: columns '1*8 0*512 1*8' (8 + 8 pad columns), rows '0*384'
+  VISION GATE 23:   positions: 792 (pos_x, pos_y) pairs follow clip.cpp:5562-5568
+  VISION GATE 23: pattern: eg2vq_vision: bind 0.19s tower 4.38s dense_mb=576.0 f16kv=1
+  VISION GATE 23: pattern: rows 88, maxabs 0.10275560 (bound 0.30), relrms 0.008235 (bound 0.025), min row cosine 0.99978457 (bound 0.998)
+  VISION GATE 23: pattern: sum of squares 65828.280406, the anchor printed 65827.217181
+  VISION GATE 23: gradient: eg2vq_vision: bind 0.19s tower 4.57s dense_mb=576.0 f16kv=1
+  VISION GATE 23: gradient: rows 88, maxabs 0.06645030 (bound 0.30), relrms 0.005285 (bound 0.025), min row cosine 0.99988406 (bound 0.998)
+  VISION GATE 23: gradient: sum of squares 69223.788734, the anchor printed 69219.023404
+  EG2VQ_VISION_GATE23_PASS
+
+The sum-of-squares lines are the reference's OWN printed scalar for each fixture
+(out/eg2vq-vision-anchor.log), used as a magnitude cross-check: the port is
+1.6e-5 and 6.9e-5 relative away from it.  Wall time for the whole gate: ~19 s
+(about 10 s of it the oracle build at -O3, 4.5 s per fixture).
+
+
+7. THE CODE, AND WHERE IT LIVES
+--------------------------------
+
+  - The tower reads the mmproj as a COMPANION MODEL, the family pattern
+    (ds4.c:72689 opens opt->vision_path as its own ds4_model for GLM-5.3); the
+    binder requires every tensor by name and shape, so a file that is not this
+    tower stops the load by name.
+  - The 16 blocks' matrices are widened once into one 576.0 MiB f32 cache; the
+    norms (f32 in the file) and the position table are read on demand, so the
+    position table costs nothing (57 rows of 768 are ever touched).
+  - The resampler moved to ds4-rs/ds4_resize_pillow.inc, unchanged, because it
+    lived inside the GPU-only Qwen4exp section that opens at ds4.c:18444 while
+    the vision oracle is a DS4_NO_GPU build.  Its authority comment stays with
+    it, and the two callers now share one implementation instead of two.
+  - ds4_eg2vq_vision_opts carries exactly ONE switch: f16_kv, which mirrors the
+    reference's executed flash-attention cast.  Nothing else in the tower is a
+    knob: the other decisions are the graph, and the table in section 4 is how
+    they were settled.
+
+
+8. WHAT UNIT 24 INHERITS
+-------------------------
+
+  - The device (CUDA) vision tower has to reproduce THIS leg, and this leg is
+    now a fixed target with a printed envelope.  Note for that unit: the device
+    implementation must decide the same two questions of section 2 explicitly —
+    quantize the bf16 matmuls' activations, and keep the conv's in f32 — or it
+    will be ~1.5% off for reasons that look like a kernel bug.
+  - The device tower cannot reuse eg2vq_attn.cuh: there is no sliding window and
+    no causal mask here, kq_scale is 1.0, and head_dim is 64 with 12/12 heads.
+  - The pooled *.text.tsv dumps (the splice) are still unit 25's: nothing in this
+    unit fakes them, and the oracle deliberately does not print them.

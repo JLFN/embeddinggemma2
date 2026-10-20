@@ -1,0 +1,18 @@
+# tests/vision/reference/preproc-facts.txt — what the PIN's own run printed about
+# the image path, committed so gate 23 does not need out/ (gitignored) or the pin.
+#
+# Extracted 2026-10-20 from out/eg2vq-vision-anchor.log — the log of
+# tools/eg2_vision_anchor.sh, the opt-in reference-regeneration instrument — with
+# this command, one line per fixture:
+#
+#   awk '/^\[soft\]/ { split($2, a, "x"); print $0 }
+#        /clip_encode: copying image/ { print }' out/eg2vq-vision-anchor.log
+#
+# The anchor runs the gradient fixture first and the pattern fixture second, and
+# each run prints its own canvas ("clip_encode: copying image 1/1 to input buffer
+# (nx=528, ny=384)"), its own token count ("image_tokens->nx = 88") and its own
+# soft-token digest ("[soft] 88 x 512 ... (sum of squares ...)").  The digest is
+# the reference's own printed scalar, used by gate 23 only as a magnitude
+# cross-check.
+REFERENCE_gradient CANVAS=528x384 TOKENS=88 SUMSQ=69219.023404
+REFERENCE_pattern CANVAS=528x384 TOKENS=88 SUMSQ=65827.217181

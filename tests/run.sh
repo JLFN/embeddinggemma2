@@ -7,7 +7,7 @@
 # lists them, cheapest first (handoff section 8, "Progress and staleness check").
 #
 # Fast path (seconds to a minute):
-#   1. the five recorded digests (SHA256SUMS)
+#   1. the fourteen recorded digests (SHA256SUMS)
 #   2. the DQVD container's structure and hashes (gate 1b's input)
 #   3. the retrieval scorer's self-test (8 hand-checked cases)
 #   4. loader gate 3: 1376 tensors agree with the writer's manifest, 8 tampered
@@ -19,12 +19,16 @@
 #      is intact and its two fixtures differ. Nothing here executes llama.cpp;
 #      the pin's own reproduction of the frozen numbers is opt-in
 #      (tools/eg2_vision_anchor.sh) and is superseded by gate 23.
-#   6. tests/qa-gate.sh (rule 19)
+#   6. gate 23: the vision TOWER (phase 8, unit 23) — the port's own
+#      preprocessing checked before any matmul, then its 88x512 soft tokens for
+#      both frozen fixtures against tests/vision/reference, with the bound
+#      declared and printed before the run (tools/eg2_vision_gate23.sh)
+#   7. tests/qa-gate.sh (rule 19)
 #
 # Deep path (tests/run.sh --deep, about half an hour):
-#   7. the artifact gate 1b (byte-identical to the container, metadata read back)
-#   8. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
-#   9. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
+#   8. the artifact gate 1b (byte-identical to the container, metadata read back)
+#   9. the Rust suite (cargo test -p ds4-core) in the nested ds4-rs checkout
+#  10. gate 4, the CPU reference tower against the frozen anchor (about 20 min)
 #
 # Usage: tests/run.sh [--deep]
 set -eu
@@ -59,7 +63,10 @@ tools/eg2_loader_check.sh "$ART" "$MANIFEST"
 step "5. gate 22: the vision mmproj, read back by our own reader (phase 8)"
 bash tools/eg2_mmproj_check.sh
 
-step "6. rule 19 QA gate"
+step "6. gate 23: the vision tower against the frozen reference (phase 8)"
+bash tools/eg2_vision_gate23.sh
+
+step "7. rule 19 QA gate"
 bash tests/qa-gate.sh
 
 if [ "$DEEP" -eq 0 ]; then
@@ -67,14 +74,14 @@ if [ "$DEEP" -eq 0 ]; then
     exit 0
 fi
 
-step "7. artifact gate 1b"
+step "8. artifact gate 1b"
 tools/eg2_artifact_check.sh "$ART" "$MANIFEST" "$DQVD" \
     "${EG2_MODEL_DIR:-.models/EmbeddingGemma-2-914f7f8}" out/artifact-inventory.txt
 
-step "8. the Rust suite (ds4-core)"
+step "9. the Rust suite (ds4-core)"
 (cd ds4-rs && cargo test -q -p ds4-core)
 
-step "9. gate 4: the CPU reference tower against the frozen anchor"
+step "10. gate 4: the CPU reference tower against the frozen anchor"
 (cd ds4-rs && make ds4_cpu.o tests/parity/eg2vq_embd_c_oracle >/dev/null)
 EG2_TOK_REF_LOG=out/tok-anchor-verbose.log tools/eg2_phase4_gate.sh \
     "$ART" "$BASELINE" tests/anchor/anchor-items.tsv \

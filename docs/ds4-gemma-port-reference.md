@@ -194,6 +194,24 @@ default it from this file.
   `src/models/gemma4.cpp` and the sibling tower code, not in
   `gemma-embedding2.cpp`. Those are the P4 phase, and the `embed_vision` /
   `embed_audio` projections in our inventory are the tie-in tensors.
+
+  The VISION tower was read first-hand on 2026-10-20 (unit 23) and is now the
+  port's own `ds4_eg2vq_vision_graph.inc`: the projector is
+  `tools/mtmd/models/gemma4v.cpp` (133 lines) over the builders in
+  `tools/mtmd/clip.cpp`, and four facts that the GRAPH alone does not state
+  decide whether a port agrees with the frozen numbers — (i) the FFN activation
+  is `FFN_GELU_QUICK` because the mmproj sets neither `clip.use_gelu` nor
+  `clip.use_silu` (`clip.cpp:1414-1429`), and ggml's f32 gelu_quick is an f16
+  table lookup (`ggml-cpu/vec.h:47`, `:1047-1057`); (ii) every bf16-weight
+  matmul quantizes its ACTIVATION to bf16, because this revision's BF16
+  `vec_dot_type` is BF16 (`ggml-cpu/ggml-cpu.c:395-400`, conversion at
+  `:1328-1340`); (iii) the patch conv is the exception — `ggml_conv_2d` passes
+  `(im2col, weight)` so the f32 im2col drives `vec_dot_type` and the bf16 weight
+  is merely widened (`ggml.c:4785-4789`); (iv) the reference's encode ran with
+  flash attention ENABLED, so K and V are cast to f16 before the kernel
+  (`clip.cpp:3928-3961`, `:787-790`). All four are measured in
+  `docs/eg2vq-vision-tower-gate23.txt`, whose discrimination table shows what
+  each wrong choice costs.
 - Tokenization. The reference reads pretokenized ids; the port owns the BPE
   tokenizer (our `tokenizer.json`: 262144 entries, `byte_fallback: true`, merges
   present, a normalizer, a Split pre-tokenizer and a Replace `▁`→space decoder),
