@@ -1,16 +1,16 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 3128553122f57b5010d66af28163232669af3a98
+last_updated_commit: d3b53979914eb9c26e8f099d31b9a2038f6dccbf
 branch: feat/eg2vq-attn-perf
 remote: 
-handoff_written_at_context_usage: 15%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T21:02:00+02:00
+handoff_written_at_context_usage: 4%
+handoff_written_at: 2026-10-21T08:22:23+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-10-20 past the records sweep: the port is code-complete AND QA'd, the three stale-state places a later verification found are corrected, and everything that remains is the owner's -- section 3)
+Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-10-21 after the SECOND performance unit: the VQ payload GEMM's rows-per-thread change landed with a measured 1.2x-1.8x, three QA rounds closed on record defects with no code defect, and the next unit's target is named in section 3 — the attention kernel, which is now the co-largest item)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -74,55 +74,54 @@ Nothing about rule 19 remains open.
    and the commits are in place, call the compact_session tool as the last action
    of that turn. The handoff write itself also parks a compaction.
 
-2. Current state (2026-10-20, re-verified IN THIS SESSION at the performance unit's boundary: the port is code-complete, gated and QA'd; this boundary is a PERFORMANCE unit, the owner's own request, landed on a feature branch and NOT PUSHED)
+2. Current state (2026-10-21, re-verified IN THIS SESSION at the second performance unit's boundary: the port is code-complete, gated and QA'd; this boundary is a PERFORMANCE unit, the owner's own request, on a feature branch and NOT PUSHED)
 
-- THE PERFORMANCE UNIT'S FIRST HALF, LANDED: engine feat/eg2vq-attn-perf = 31285531, ONE commit over dev 10e73aa0 — and dev is untouched, proved by `git rev-list --count publish/dev..dev` = 0 in the engine repo (the outer repo is on feat/eg2vq-attn-perf too, equal to its dev a43479d plus this unit's record commits). The owner asked for exactly that: "dont tought dev we need a new Feat branch for this". Nothing is pushed.
-- WHAT IT IS: the device attention's pass 1 reads K as float4 and pass 3 reads V and writes the output as float4 (cuda/eg2vq_attn.cuh), guarded by head_dim % 128 == 0 and 16-byte alignment, with the scalar loops kept as the fallback. The accumulation order is unchanged element for element, so the vector path is BIT-IDENTICAL to the scalar one — the QA tester's own probe compared 22,335,488 floats with zero differing bytes, and the harness's maxabs/rel numbers equal the pre-change kernel's exactly.
-- WHY THIS KERNEL: nsys put eg2vq_attn_kernel at 47.9% of a 294-token item's kernel time (31.5 of 65.7 ms) and 58.9% of a packed 8-item / 2451-token batch's (337.2 of 572.8 ms) while doing 1.2% of the forward's arithmetic, at 0.29-0.46 TFLOP/s.
-- MEASURED (tests/bench_eg2vq_attn, 30 reps, the tower's nine shapes): 2.98x to 3.88x, every shape; 291-465 -> 867-1497 GFLOP/s. In a batch profile attention fell 337.2 -> 159.7 ms (2.11x). Corpus, 143 pages: batch 8 18.80 -> 11.65 s (4,295 -> 6,929 tok/s). Record: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/attention-occupancy.md, with bench-attn-{before,after}.txt and one committed CSV per policy.
-- THE PLANE-SIZING HALF WAS MEASURED AND REJECTED: a per-call score plane (longest item, clamped by the layer window) looked like a win on the shape bench but was SLOWER end to end on every corpus row (13.09 s against 11.05 and 10.60 s at batch 8, same sitting), and its plane-size curve is non-monotonic and not predicted by occupancy. The plane is the item ceiling again, with no caller plumbing and no tuning constant.
-- GATES, ALL RE-RUN HERE ON THE FINAL REVISION: `make test-eg2vq-attn` -> EG2VQ_ATTN_PASS (min cosine 1.000000000 on every case); gate 7 `tests/parity/eg2vq_embd_gpu_oracle` -> EG2VQ_GPU_PASS (min cos(device,cpu) 0.999999950, max rel_rms 3.150e-04, inside its declared 0.999999 / 1e-03); GET /health byte-identical to speed-bench/eg2_embed_vizzio_health.json (the caps did not move: item_tokens_max 2048, batch_rows_max 8192, image 70..1120, embd 512, per_item_max 1, serial true).
-- RULE 19 IS SATISFIED FOR THIS UNIT: the surface extractor names NO new surface (no ds4_*( entry point, no route, no pub fn) and exits 0, so two QA-tester passes were run by hand anyway (model deepseek-v4.1-CC-flash, the project's recorded one) — both read VERDICT: PASS; the first caught the plane mistake, the second found no code defect but four RECORD defects (a mislabelled corpus CSV, three table rows with no artifact, an overstated bench-stability claim, stale line citations), all fixed before this boundary. Evidence: qa-evidence/qa-report.md and qa-evidence/qa-findings-attn-perf.md (which SUPERSEDES qa-findings-u28.md as the operative findings file; the unit-28 report content is in git history).
-- THE LESSON THIS UNIT COST, now written into the kernel's own header: corpus sweeps on this machine are comparable only INSIDE one window — three sweeps of one build read 11.654/11.718/11.658 s while four sweeps of two other builds read 10.596-11.045 s twenty minutes earlier, and rebuilding the earlier configuration reproduced the LATER number. The isolated bench's own error bar is about 10% on any single row, so the claim is the ratio (3.0x-3.9x), not a millisecond.
-- NOT RE-RUN AT THIS BOUNDARY, and named so the next session does not assume them: the fast path (tests/run.sh) and the deep path (tests/run.sh --deep), the gates 20-27, the loader digest check, and the OSV scan. They were green at the previous boundary (10e73aa0) and THIS UNIT TOUCHES ONE KERNEL plus a new bench harness, its make target, .gitignore, three stale citations and documentation — no crate, no route, no cap, no artifact.
-- INSTRUMENTS ADDED (both with make targets, both committed): tests/bench_eg2vq_attn.cu (`make bench-eg2vq-attn`) and tests/bench_eg2vq_vq.cu (`make bench-eg2vq-vq`, built and smoke-run, NOT yet measured — it is the next unit's instrument).
+- THE PERFORMANCE UNIT'S SECOND HALF, LANDED: engine feat/eg2vq-attn-perf = 1c9938ba, FOUR commits over dev 10e73aa0 (8d618ecb the kernel; 793386db, 0f9ab8cf, 1c9938ba the evidence and the QA rounds), and dev is untouched — proved by `git rev-list --count publish/dev..dev` = 0 in the engine repo. The outer repo is on feat/eg2vq-attn-perf: its dev a43479d plus 0406051 (the attention unit) and d3b5397 (this one). Nothing is pushed in either.
+- WHAT IT IS: eg2vq_vq_gemm_kernel's block goes 16x16 -> 16x8 and each thread owns 8 output rows instead of 4 (32 accumulators), with the two-pass index unpack a 128-thread block needs. The 64x64 tile, the 8.5 KB slab, the 41,472 B of static shared, the launcher's guard and grid math, and the accumulation order are unchanged, so the kernel is BIT-IDENTICAL.
+- WHY: an ablation, because ncu refuses on this machine (ERR_NVGPUCTRPERM). The kernel is not arithmetic-bound (the whole outer product replaced by FADDs with every load kept: 1.00x-1.12x) and not gather-bound (1.08x-1.18x); it is bound by the ACTIVATION LOAD — one load per K step instead of four: 2.0x-3.1x; the same four loads addressed block-uniformly, one 32-byte sector per instruction instead of sixteen: 2.4x-4.2x. Per K step a thread loads 16 B per token and spends T*R*4 scalar multiply-adds, so R (rows per thread) is the only register-blocking lever.
+- MEASURED, same window with both binaries interleaved (the only honest form here): kernel 1.26x-1.79x round-1 pairs and 1.23x-1.75x round-2 pairs, mostly ~1.6x, 3,674-4,337 -> 6,519-7,002 GFLOP/s at 4520 tokens; corpus 143 pages batch 8 11.153/11.146 -> 8.893/8.903 s (7,240 -> 9,070 tok/s), batch 1-8 pooled 1.20x-1.25x; device tower 1,499.0 (phase 7's own record) -> 2,060.9 tok/s, both sides cross-window. CUMULATIVE over both performance units: 18.7998 -> 8.903 s at batch 8 = 2.11x, 4,295 -> 9,070 tok/s.
+- THE RECORD: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/vq-gemm-rows.md and every raw file beside it (ab-table.txt, ab-sweep.txt, four speed-bench CSVs, three probe outputs plus their sources, qa-identity/ the byte-identity driver, gate7-embd-gpu-oracle.txt, two nsys kernel summaries, bench-vq-before.txt). REJECTED WITH ITS MEASUREMENT: a 128-row/256-thread tile on 50,176 B of dynamic shared (0.83x at 512x512 x 306 tokens), and T=2/R=8 with 32-token blocks (1.28x-1.38x).
+- GATES, ALL RE-RUN ON THE FINAL REVISION: `make test-eg2vq-vq` -> EG2VQ_VQ_PASS (mincos 1.000000000 everywhere, wrong-geometry payload refused with the output untouched); gate 7 `tests/parity/eg2vq_embd_gpu_oracle` -> EG2VQ_GPU_PASS (min cos 0.999999950, max rel_rms 3.150e-04 — numerically identical to the attention unit's record); compute-sanitizer memcheck 0 errors; REG 80 -> 128, STACK 0 LOCAL 0, shared 41,472 B; the caps did not move.
+- RULE 19: THREE PASSES, FAIL-FAIL-PASS, AND NO CODE DEFECT IN ANY OF THEM. The extractor names no new surface and exits 0, and the pass ran by hand anyway (deepseek-v4.1-CC-flash, the project's recorded model). Pass 1 caught a probe that had become self-comparing, a probe that crashed when rebuilt from the documented command, an unbacked figure, a range taken from the favourable round, three numbers that traced to nothing, and one false agreement claim; pass 2 caught the same class again in three one-line places (a corpus pairing claim batch 1 contradicts, a citation to a line that does not contain the figure, a bytes-per-multiply-add sentence that contradicted itself by 4x); pass 3 confirmed the corrections by recomputing every cell. Evidence: qa-evidence/qa-report.md and qa-evidence/qa-findings-vq-r8.md (which SUPERSEDES qa-findings-attn-perf.md as the operative findings file).
+- THE LESSONS THIS UNIT COST, both now in the kernel's own header: an ablation probe that takes its tile from the header stops being an instrument the moment the header changes (the rebuilt probe crashed with an illegal memory access; it pins PVQ_T/PVQ_R now), and a measurement is only as good as the sentence that reports it — the QA pass failed twice on sentences that claimed more than the numbers support, with every number in them real.
+- NOT RE-RUN AT THIS BOUNDARY, named so the next session does not assume them: the fast path (tests/run.sh) and the deep path (tests/run.sh --deep), gates 20-27, the loader digest check, and the OSV scan. THIS UNIT TOUCHES ONE KERNEL plus documentation, benchmark artifacts and the Makefile-free probe sources — no crate, no route, no cap, no artifact — and they were green at 10e73aa0.
 
-3. Next unit plan — THE VQ GEMM (the largest thing left), then the owner's standing list
+3. Next unit plan — the next PERFORMANCE unit (attention is the co-largest item), then the owner's standing list
 
-(1) THE VQ GEMM — the next unit, and MEASURE BEFORE CHANGING ANYTHING. With
-    attention at ~160 ms, eg2vq_vq_gemm_kernel is the largest single item left in
-    a batch forward: 212.6 ms of 401.1 ms of kernel time (53%), 434 launches for
-    2,451 tokens, at ~2.9 TFLOP/s against this part's ~35.5 TFLOP/s of FP32. Its
-    LIMITER IS NOT ESTABLISHED — do not guess at it, and do not repeat this unit's
-    mistake of shipping a plausible story: measure first, then change.
-    What is known (read from the code, not inferred): cuda/eg2vq_vq.cuh runs a
-    16x16-thread block with a 64-token x 64-row tile and a 256-column K slab; the
-    block holds a 32 KB codebook pane (4096 codewords x 8 B, loaded by EVERY
-    block from global) plus an 8.5 KB index slab, 41,472 B total, which by
-    cuobjdump's own figure and sm_89's 100 KB of shared per SM is 2 blocks/SM
-    (16 warps of 64). Per thread per K step it does 4 index-slab reads, 4
-    codebook gathers with 8 half->float conversions, 4 float4 activation loads
-    and 16 FMAs, so the arithmetic is a minority of the instructions.
-    Instruments and method, in order:
-      a. `./tests/bench_eg2vq_vq [reps]` (already in the tree) — per-shape ms and
-         exact GFLOP/s for the tower's matrices at token counts 1..4520. Freeze
-         its numbers BEFORE any edit; that is the baseline the record needs.
-      b. nsys on a real forward for the per-launch attribution (the same method
-         that found the attention kernel), since the shapes differ by 10x in
-         height and by 40x in token count.
-      c. Then, and only then, one candidate change at a time, each A/B'd with (a)
-         inside one window, and each gated by `make test-eg2vq-vq` (the kernel's
-         own gate against the payload bytes and against FP64) plus gate 7.
-    Candidate levers the code suggests, none of them measured yet, so none of
-    them is a plan until (a) and (b) say which matters: the codebook pane is
-    re-loaded by every block and is the shared-memory hog; the per-(row, key)
-    codeword conversion (8 halves -> 8 floats) is paid once per 16 FMAs and is
-    redundantly repeated by every thread with the same row group; the activation
-    loads are repeated by all 16 threads that share a token group; and a 64-token
-    tile makes grid.y = ceil(tokens/64), so a short item's grid may simply be too
-    small for the part. NO hardware counters are available here (ncu refuses with
-    ERR_NVGPUCTRPERM), so an ablation probe is the honest instrument for "which
-    of these is it" — build the variant, measure it, throw the variant away.
+(1) THE NEXT PERFORMANCE UNIT, AND MEASURE BEFORE CHANGING ANYTHING. Where the
+    batch forward's kernel time sits now (nsys, 8 items / 2451 tokens):
+    eg2vq_vq_gemm_kernel 139.2 ms (48.4%), eg2vq_attn_kernel 116.7 ms (40.5%,
+    of a 287.8 ms total), the small ops ~11%. The two big items are now
+    comparable, but their arithmetic intensity is not: the GEMM reaches
+    6,519-7,002 GFLOP/s at 4,520 tokens while attention reaches 867-1,497 at any
+    size, and in the batch profile attention does about 1.2% of the forward's
+    arithmetic. So the attention kernel's headroom is the larger one, and its
+    LIMITER IS NOT ESTABLISHED — do not guess at it. Read
+    cuda/eg2vq_attn.cuh first-hand before proposing anything (rule 0.2): 4 warps
+    per item, a 2048-key score plane (32 KB of static shared, so 2 blocks/SM),
+    pass 1 writing the plane and pass 3 reading it back, and the vision tower's
+    cuda/eg2vq_vis.cuh as the in-tree precedent for an online softmax.
+    Method, in order, exactly as the GEMM unit did it:
+      a. Freeze the baseline: `./tests/bench_eg2vq_attn [reps]` on the tower's
+         nine shapes, and `./tests/bench_eg2vq_vq [reps]` for the GEMM's own
+         post-change numbers. Same window or nothing.
+      b. Ablate the SHIPPED attention kernel with the same one-component-at-a-time
+         method (probes/probe-vq.cu is the worked example: a template<int V> with
+         every variant register-neutral, and the probe pinned to its own tile so
+         it cannot drift into the header). Candidate components, none measured
+         yet: the shared score plane's write-then-read traffic, the K/V loads'
+         sector pattern (the same 16-sectors-per-instruction question the GEMM
+         answered), the softmax pass's exponentials and the two barriers per
+         slab. NO counters exist here, so the ablation is the instrument.
+      c. One change at a time, A/B'd inside one window against (a), gated by
+         `make test-eg2vq-attn` (min cosine 1.000000000 against the CPU
+         reference) plus gate 7, and — if the attention arithmetic itself moves —
+         the oracle's min cos 0.999999950 / max rel_rms 3.150e-04 budget, which
+         is the declared bound and must not be weakened.
+    Also worth one measurement each before any code: the GEMM's remaining 48.4%
+    (re-ablate it at R=8 — the activation pressure halved, so what binds now is
+    unmeasured) and the small ops' ~11% (242 rms launches, 144 rms_head, 144 add
+    for 2,451 tokens: 434+144+144 launches of tiny grids).
 
 (2) THE OWNER'S STANDING LIST, unchanged by this unit: the C CLI's tokenizer gap;
     the AUDIO tower (out of scope; vision was asked for); a MULTI-IMAGE item (the
@@ -133,10 +132,17 @@ Nothing about rule 19 remains open.
     qa-evidence/qa-deferral.txt would silence rule 19's verdict); and the three
     decisions the branch standard left open (the default branch, the
     chore/fmt-workspace formatting unit at c595fca3 whose rule 19 gate is red,
-    and retiring the duplicate feat/ds41-dsml-carriage).
+    and retiring the duplicate feat/ds41-dsml-carriage). NEW at this boundary:
+    the engine repo carries an INHERITED STALE rule-19 mount
+    (ds4-rs/tests/qa-gate.sh and ds4-rs/qa-evidence/qa-report.md dated
+    2026-10-18, from the ds4-dfm-rs lineage) — the QA tester ran it, found it red
+    with 342 checks over surfaces that belong to another project, and reported it
+    as this unit's gate. The project's mount is the OUTER tests/qa-gate.sh, which
+    scans both trees. Retiring the stale inner copy is an owner decision (it is
+    engine-branch surgery) and belongs on this list.
 
 (3) PUSH DISCIPLINE, unchanged: every push is an OFFER (rule 23), and no unit
-    pushes itself. This unit's two branches (engine and outer, both
+    pushes itself. The two branches (engine and outer, both
     feat/eg2vq-attn-perf) hold everything that is unpushed, with dev untouched in
     both repositories. When the owner says push, re-run the four pre-push checks
     fresh — rule 6 `gh repo view` on both targets, rule 10 OSV, rule 19's gate,
@@ -144,16 +150,18 @@ Nothing about rule 19 remains open.
     `git rev-list --count publish/dev..HEAD` rather than from this document, and
     then push the branch and open the dev PR rather than pushing to dev.
 
-(4) WHEN NOTHING IS ASKED: finish the VQ GEMM unit as (1) describes — measure,
-    change, A/B, gate, record, QA — and keep the handoff and the memory entry
-    current at each boundary. Do not re-open a closed row to "improve" it, do not
-    weaken a declared bound, do not run the pinned llama.cpp in a default path,
-    and do not push without the owner's word.
+(4) WHEN NOTHING IS ASKED: run the next performance unit as (1) describes —
+    measure, ablate, change one thing, A/B in one window, gate, record, QA — and
+    keep this handoff and the memory entry current at each boundary. Do not
+    re-open a closed row to "improve" it, do not weaken a declared bound, do not
+    run the pinned llama.cpp in a default path, and do not push without the
+    owner's word.
 WHAT A SESSION MUST NOT DO AT THIS BOUNDARY: re-open a closed row to "improve" it
 (the port's quality floor, the caps and the cost model are pinned by tests and
-gates), weaken a declared bound, run the pin in a default path (owner directive),
-or push without the owner's word — the only thing standing between this state and a
-release is the owner's answer, not more code.
+gates), weaken a declared bound (gate 7's cos >= 0.999999 / rel_rms <= 1e-03 is
+the tightest one and it is a measurement, not a preference), run the pin in a
+default path (owner directive), or push without the owner's word — the only thing
+standing between this state and a release is the owner's answer, not more code.
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
 | Role | Root and pin | What is read from it |
@@ -270,7 +278,8 @@ release is the owner's answer, not more code.
 7. Guardrails and open items
 
 - P-1 (no Python in the runtime, ever) and P-2 hold; all five P-1 checks return zero and `sha256sum -c SHA256SUMS` passes (14/14, re-verified at this boundary).
-- RULE 19 IS SATISFIED for the whole accumulated port: qa-evidence/qa-report.md is fresh and reads `verdict: overall PASS`, qa-evidence/qa-deferral.txt is deleted, and tests/qa-gate.sh (fast-path step 11) prints `QA GATE: overall PASS` with 15 checks. Any NEW commit that adds a surface makes the report stale again and the gate red — which is the rule working, not a problem: a push must therefore happen with no unprepared surface after the report.
+- RULE 19 IS SATISFIED for the whole accumulated port AND for the two performance units: qa-evidence/qa-report.md is the VQ GEMM unit's report (fresh at d3b5397) and reads `verdict: overall PASS`, qa-evidence/qa-deferral.txt is deleted, and tests/qa-gate.sh prints `QA GATE: ALL PASS (no new runtime, route or public-API surfaces relative to publish/dev and ds4-rs/publish/dev)` with exit 0. Any NEW commit that adds a surface makes the report stale again and the gate red — which is the rule working, not a problem: a push must therefore happen with no unprepared surface after the report.
+- OPEN (owner), added at this boundary: the ENGINE repo carries an inherited stale rule-19 mount — ds4-rs/tests/qa-gate.sh and ds4-rs/qa-evidence/qa-report.md (2026-10-18, from the ds4-dfm-rs lineage, 76 KB, covering that project's PR 67). The QA tester ran it by mistake, got "QA GATE: FAIL (342 check(s) red)" over surfaces belonging to another project, and reported it as this unit's gate. The project's mount is the OUTER tests/qa-gate.sh, which scans both trees. Retiring the inner copy is engine-branch surgery, so it is an owner decision.
 - F6 stands: the surface extractor matches single-line definitions, so multi-line C entry points never appear in its list. Unit 27's are ds4_engine_embed_gemma_vq_batch, ds4_gpu_eg2vq_embed_batch, ds4_eg2vq_ref_embed_batch, eg2vq_ops_proj768_pool_batch, ds4_bridge_eg2vq_embed_batch and Model::embed_gemma_vq_batch's Rust checks; unit 26's are listed in section 3 of its evidence doc.
 - OPEN FLAKE, RECORDED NOT FIXED: `cargo test -p ds4-server --lib` fails `cache_identity::tests::bounded_sidecar_and_ple` intermittently (3 runs: 1 pass, 2 fail; the two identity arrays come out identical, so the test's own premise — that a rewrite changes the stat — does not hold on this filesystem). cache_identity.rs is not in units 25-27's diffs; the fast path does not run it. Fixing it touches the shared engine branch: a finding for the owner.
 - CLOSED: the container, the quality floor, the caps, the llama-free boundary, phase 7's device path, the vision tower on both legs, the splice, the engine entries, the wire, the batch (units 23-27), and the FINAL RULE 19 PASS (unit 28: eleven surfaces covered, three findings fixed and closed).
@@ -284,17 +293,20 @@ release is the owner's answer, not more code.
 8. Progress and staleness check (run this first, every session)
 
     cd /data/embeddinggemma2
-    git status --short && git branch -vv                 # clean, on feat/eg2vq-attn-perf, which holds dev a43479d plus this unit's record commits; read the count with `git rev-list --count publish/dev..HEAD`, never from a comment
-    git log --oneline publish/dev..HEAD                  # what the outer branch carries unpushed
-    git -C ds4-rs status --short && git -C ds4-rs log --oneline -3   # clean; HEAD = the performance unit (31285531) on feat/eg2vq-attn-perf, based on dev 10e73aa0 = publish/dev
-    git -C ds4-rs rev-list --count publish/dev..HEAD     # 1 (the attention vectorization unit) -- and `publish/dev..dev` must be 0
-    make -C ds4-rs test-eg2vq-attn                      # EG2VQ_ATTN_PASS: the kernel this unit changed, gated
-    make -C ds4-rs bench-eg2vq-attn                     # the per-shape table the unit's record quotes (~10% error bar per row)
-    tests/run.sh                                         # the fast path (2 m 51 s, gates 22-27 included), ending in the rule 19 gate -- NOT re-run at this boundary
+    git status --short && git branch -vv                 # clean, on feat/eg2vq-attn-perf; read the count with `git rev-list --count publish/dev..HEAD`, never from a comment
+    git log --oneline publish/dev..HEAD                  # what the outer branch carries unpushed (0406051, then this unit's d3b5397 + the handoff commit)
+    git -C ds4-rs status --short && git -C ds4-rs log --oneline -5   # clean; HEAD = the VQ GEMM unit (1c9938ba) on feat/eg2vq-attn-perf, based on dev 10e73aa0 = publish/dev
+    git -C ds4-rs rev-list --count publish/dev..HEAD     # 4 (8d618ecb the kernel, then three evidence/QA commits) -- and `publish/dev..dev` must be 0
+    make -C ds4-rs test-eg2vq-vq                         # EG2VQ_VQ_PASS: the kernel this unit changed, gated
+    make -C ds4-rs bench-eg2vq-vq                        # the per-shape table the unit's record quotes (~10% error bar per row)
+    make -C ds4-rs test-eg2vq-attn                       # EG2VQ_ATTN_PASS: the previous unit's kernel, unchanged since
+    make -C ds4-rs bench-eg2vq-attn                      # attention's per-shape table (the next unit's baseline)
+    tests/run.sh                                         # the fast path (2 m 51 s at 6cd172f, gates 22-27 included), ending in the rule 19 gate -- NOT re-run at this boundary
     sha256sum -c SHA256SUMS                              # FOURTEEN entries
     tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv
-    bash tests/qa-gate.sh                                # rule 19: must print "QA GATE: overall PASS"
+    bash tests/qa-gate.sh                                # rule 19: must print the ALL PASS line (the OUTER mount, not ds4-rs/tests/qa-gate.sh)
     bash tools/eg2_embed_route_gate.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf   # gate 20: EG2VQ_EMBED_ROUTE_PASS (NOT in the fast path -- the unit-28 QA pass found it red for two units, so run it by hand)
+    cd ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/qa-identity && bash build.sh && ./qa-identity   # QA_IDENTITY_OK: 12,492,416 floats, old vs new, 0 differing
     cuobjdump --list-elf ds4-rs/ds4_cuda.o | tail -2     # ds4_cuda.sm_89.cubin = the arch record is real
     cat ds4-rs/.ds4-cuda-config.mk                       # CUDA_ARCH := sm_89
     tail -8 out/phase5-gate.log                          # the agreement + retrieval tables
