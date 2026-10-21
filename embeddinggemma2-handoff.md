@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 3aa7f99cf322111d478648b87afc4ccbaa421e63
+last_updated_commit: 198fbc9c4020c4a4c953f44714f2ea67287f345b
 branch: feat/eg2vq-attn-perf
 remote: 
-handoff_written_at_context_usage: 33%
-handoff_written_at: 2026-10-21T09:56:00+02:00
+handoff_written_at_context_usage: 35%   (recorded fact at this event; target 25-35, hard cap 40)
+handoff_written_at: 2026-10-21T10:00:41+02:00
 session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
 boundary_state: clean
 ---
@@ -74,9 +74,10 @@ Nothing about rule 19 remains open.
    and the commits are in place, call the compact_session tool as the last action
    of that turn. The handoff write itself also parks a compaction.
 
-2. Current state (2026-10-21, re-verified IN THIS SESSION at the THIRD performance unit's boundary: the port is code-complete, gated and QA'd; this boundary is a PERFORMANCE unit, the owner's own request, on a feature branch and NOT PUSHED)
+2. Current state (2026-10-21, re-verified IN THIS SESSION at the THIRD performance unit's boundary, plus the owner-ordered PUSH that followed it: the port is code-complete, gated and QA'd, the branch is PUBLISHED as feat/eg2vq-attn-perf in both repositories with PR #1 open in each, and dev is untouched in both)
 
-- THE THIRD PERFORMANCE UNIT, LANDED: engine feat/eg2vq-attn-perf = 803decb7, SIX commits over 1c9938ba (72ef3ac1 the kernel plus the gate's two new cases; 9e74b2ed the record and its artifacts; 947d15f2 the fresh profile; f0639289, 58ea1da5, 803decb7 the three QA rounds), and dev is untouched — proved by `git rev-list --count publish/dev..dev` = 0 in the engine repo. The outer repo is on the same branch: its dev a43479d plus 0406051, d3b5397, 259ce6b (the two earlier units) and 3aa7f99 (this unit's rule-19 evidence). Nothing is pushed in either.
+- PUSHED, ON THE OWNER'S WORD ("we need to push this feat branch"), not as an offer: engine feat/eg2vq-attn-perf -> publish/feat/eg2vq-attn-perf at PR JLFN/embeddinggemma2-ds4-rs#1 (base dev), outer feat/eg2vq-attn-perf -> PR JLFN/embeddinggemma2#1 (base dev). The four pre-push checks were re-run FRESH immediately before: rule 6 `gh repo view` (both targets PUBLIC, default branch dev), rule 10 OSV (140 packages, 0 vulnerable, ds4-rs/Cargo.lock), rule 19 (tests/qa-gate.sh -> `QA GATE: ALL PASS`, and the whole fast path exit 0), rule 23 ranges read from git (engine 12 over publish/dev, `publish/dev..dev` = 0; outer 10 over publish/dev with dev 5 ahead, dev an ancestor of HEAD). The outer PR therefore carries dev's own five unpushed handoff/doc commits (4ec3085..a43479d) in addition to the branch's five. **The push was the owner's call, once: nothing below this line authorizes another.**
+- THE THIRD PERFORMANCE UNIT, LANDED: engine feat/eg2vq-attn-perf started at 1c9938ba with SIX commits (72ef3ac1 the kernel plus the gate's two new cases; 9e74b2ed the record and its artifacts; 947d15f2 the fresh profile; f0639289, 58ea1da5, 803decb7 the three QA rounds), then 7cafa2a2 added the chart and the error measurement after the unit closed. The outer repo is on the same branch: its dev a43479d plus 0406051, d3b5397, 259ce6b (the two earlier units) and 3aa7f99 (this unit's rule-19 evidence).
 - WHAT IT IS: attention's pass 1 goes from one lane owning one whole K row to LAB = head_dim/64 lanes cooperating on one key, each owning 16 float4 chunks of it 4*LAB elements apart, so a group's lanes read consecutive addresses and one warp load covers whole 128 B lines; the lane's 64-float slice of the query row lives in registers instead of being re-read once per key, the group's LAB partial sums are reduced by a butterfly, and the score store is one predicated store per chunk. The kernel becomes template<int LAB> (2/4/8/16 dispatched on head_dim, 0 = the unchanged lane-per-key body, which is also each window's remainder). Passes 2 and 3, the score plane and its 32 KB, the mask, the launcher's guards and every gate's declared bound are unchanged.
 - WHY: an ablation of the SHIPPED kernel (probes/probe-attn.cu, one component removed per variant, every variant register-neutral, STACK:0 LOCAL:0), because ncu still refuses here (ERR_NVGPUCTRPERM). The K access is the cost and nothing else is: the K address made block-uniform (1 line instead of 32, same instruction count) 1.86x-2.25x; the K operand taken out of memory 2.25x-2.66x; the exponentials 0.95x-1.05x, the plane's write side 1.01x-1.07x and its read side 1.00x-1.08x — all three free. Pass 1 plus the row max was 60-73% of the kernel.
 - MEASURED, one window, both round pairings published: kernel 1.95x-2.61x (round 1) and 1.94x-2.57x (round 2) on the nine tower shapes, 869-1,498 -> 1,881-3,473 GFLOP/s. Corpus 143 pages: batch 8 8.42 -> 6.40 s, 9,490-9,761 -> 12,507-12,720 tokens/s, 1.32x pooled and 1.30x-1.33x paired (each new run between old runs); the cross-window figure against the pre-GEMM baseline is 18.7998 -> 6.40 s = 2.9x and is labelled cross-window. The fresh profile (8 items / 2451 tokens) reads attention 46.0 ms of 197.5 ms (23.3%) against 116.7 of 287.8 (40.5%) for the older kernel, and eg2vq_vq_gemm_kernel 126.9 ms (64.3%).
@@ -84,7 +85,8 @@ Nothing about rule 19 remains open.
 - GATES, ALL RE-RUN ON THE FINAL REVISION: `make test-eg2vq-attn` -> EG2VQ_ATTN_PASS (nine arithmetic cases plus the mask-edge, packed and refusal cases; mincos 1.000000000, rel 3.31e-07-9.73e-07); compute-sanitizer memcheck 0 errors; gate 7 -> EG2VQ_GPU_PASS (min cos 0.999999950, max rel_rms 3.149e-04, against the printed declared cos >= 0.999999 / rel_rms <= 1e-03); tests/run.sh exit 0 (the fourteen digests, gates 23-27, the QA gate). REG 48 -> 98/100 on the grouped instantiations, STACK 0 LOCAL 0, shared 32,768 B, the caps unmoved.
 - RULE 19: THREE ROUNDS, FAIL-FAIL-PASS, AND NO CODE DEFECT IN ANY OF THEM (deepseek-v4.1-CC-flash, the project's recorded model; the extractor names no new surface and the outer gate prints ALL PASS). Round 1 caught ONE BLOCKING EVIDENCE DEFECT — both probes anchor their baseline to the live header, so section 7's commands stopped reproducing their committed output and printed "V0 IS NOT THE SHIPPED KERNEL" on every shape — plus eight record defects (an unbacked 1.63x factor, swapped pairing labels, a 1-4% range that is 0.3-6.4%, a truncated GFLOP/s maximum, a speedup column mixing truncation with rounding, a wrong pairing named as the fast-and-wrong one, "the same numbers" that differed in the fifth digit, a declared bound quoted as measured, missing working directories). Round 2 verified all ten fixed and failed on six text items the FIX commit itself introduced. Round 3 recomputed and re-ran and returned PASS with no finding open. The tester also wrote its own driver over head dims 128/256/320/384/512/1024 and agreed with the shipped launcher to cosine 1.000000000. Evidence: qa-evidence/qa-report.md and qa-evidence/qa-findings-attn-grouped.md (which SUPERSEDES qa-findings-vq-r8.md as the operative findings file).
 - THE LESSONS THIS UNIT COST, all three now in the record: a probe anchored to the live header must be documented with the header it was measured against (both probes here are, the same requirement vq-gemm-rows.md carries for probe-r8/probe-big); a sweep's /health probe cannot tell another listener from ds4-server (ports 8099/8101 were held by an unrelated python3 process, so the first corpus A/B measured nothing and every row came back as a 5-7 ms non-JSON body); and a stale ds4-server from an earlier session holding /tmp/ds4.lock makes tests/run.sh's gate 25 fail with no code change at all (which is exactly what happened, and why the first fast-path log is not kept).
-- NOT RE-RUN AT THIS BOUNDARY, named so the next session does not assume them: the deep path (tests/run.sh --deep), gate 20's route gate, the loader digest check's own script, and the OSV scan. THIS UNIT TOUCHES ONE KERNEL, two cases in one test file and documentation — no crate, no route, no cap, no artifact — and the fast path plus every gate that names this kernel is green.
+- THE CHART, AND THE ERROR PAIR (7cafa2a2, after the unit closed): docs/benchmarks/plot-eg2-embed-perf.py follows the repository's own matplotlib convention (plot-glm53-vq-64k.py) and reads the committed raw files — the corpus CSVs, the attention bench outputs, the nsys reports — to write perf-before-after.png, perf-summary.json and perf-tables.md into the date directory, which the directory README now links. Its own numbers: 4,295 -> 6,915 -> 9,075 -> 12,614 tokens/s at batch 8 (2.94x), attention 0.1860 -> 0.0287 ms on the CLI shape and 3.8973 -> 0.4204 ms on the corpus mean shape. Record section 4.6 adds what the gates did not state: the error, measured by building the same test against the pre-change header (1 instantiation) and this tree (5) in one sitting, MOVED DOWN — rel 5.77e-07-1.78e-06 -> 3.31e-07-9.73e-07, maxabs down 1.5x-1.9x, mincos 1.000000000 both, and the two fallback shapes that take no grouped path print identical numbers in both binaries as the control (attn-error-{before,after}.txt are committed).
+- NOT RE-RUN AT THIS BOUNDARY, named so the next session does not assume them: the deep path (tests/run.sh --deep), gate 20's route gate, the loader digest check's own script, and gate 5 (the retrieval floor, which runs the CPU oracle the performance units never touch). THIS UNIT TOUCHES ONE KERNEL, two cases in one test file and documentation — no crate, no route, no cap, no artifact — and the fast path plus every gate that names this kernel is green.
 
 3. Next unit plan — the next PERFORMANCE unit (the payload GEMM again), then the owner's standing list
 
@@ -150,13 +152,18 @@ Nothing about rule 19 remains open.
     an owner decision.
 
 (3) PUSH DISCIPLINE, unchanged: every push is an OFFER (rule 23), and no unit
-    pushes itself. Both repositories' feat/eg2vq-attn-perf hold everything
-    unpushed, with dev untouched in both (engine dev = publish/dev = 10e73aa0;
-    outer dev = a43479d). When the owner says push, re-run the four pre-push
-    checks fresh — rule 6 `gh repo view` on both targets, rule 10 OSV, rule 19's
-    gate, and the rule 23 branch/range checks — read the counts from
-    `git rev-list --count publish/dev..HEAD` rather than from this document, and
-    then push the branch and open the dev PR rather than pushing to dev.
+    pushes itself — the one push this project has taken was the owner's own
+    words ("we need to push this feat branch"), at which point the four pre-push
+    checks were re-run fresh and the branch was pushed with a dev PR opened (see
+    section 2 and section 7). It is an offer again from that moment: feat/eg2vq-attn-perf
+    is now the published branch in both repositories with PR #1 open in each, the
+    only local-only commit is this handoff's own edit, and dev is untouched in
+    both (engine dev = publish/dev = 10e73aa0; outer dev = a43479d). For the next
+    push: re-run the four checks fresh — rule 6 `gh repo view` on both targets,
+    rule 10 OSV, rule 19's gate, and the rule 23 branch/range checks — read the
+    counts from `git rev-list --count publish/dev..HEAD` and the local-only set
+    from `git log --oneline @{u}..HEAD` rather than from this document, and push
+    the branch and open (or update) the dev PR rather than pushing to dev.
 
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
@@ -279,7 +286,7 @@ Nothing about rule 19 remains open.
 - F6 stands: the surface extractor matches single-line definitions, so multi-line C entry points never appear in its list. Unit 27's are ds4_engine_embed_gemma_vq_batch, ds4_gpu_eg2vq_embed_batch, ds4_eg2vq_ref_embed_batch, eg2vq_ops_proj768_pool_batch, ds4_bridge_eg2vq_embed_batch and Model::embed_gemma_vq_batch's Rust checks; unit 26's are listed in section 3 of its evidence doc.
 - OPEN FLAKE, RECORDED NOT FIXED: `cargo test -p ds4-server --lib` fails `cache_identity::tests::bounded_sidecar_and_ple` intermittently (3 runs: 1 pass, 2 fail; the two identity arrays come out identical, so the test's own premise — that a rewrite changes the stat — does not hold on this filesystem). cache_identity.rs is not in units 25-27's diffs; the fast path does not run it. Fixing it touches the shared engine branch: a finding for the owner.
 - CLOSED: the container, the quality floor, the caps, the llama-free boundary, phase 7's device path, the vision tower on both legs, the splice, the engine entries, the wire, the batch (units 23-27), and the FINAL RULE 19 PASS (unit 28: eleven surfaces covered, three findings fixed and closed).
-- OPEN (owner): the two pushes, ready to take. Rule 10 is re-run and fresh (osv-mcp: 140 packages, 0 vulnerable, ds4-rs/Cargo.lock, 2026-10-20T12:11Z), rule 19 is satisfied as of the report, and both local histories are clean. Outer: `git push publish dev`, range d45394f..HEAD (read `git rev-list --count publish/dev..HEAD` for the exact number; docs/tools/tests/gates 22-27 and their evidence — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates, and the anchor binary is deliberately NOT tracked because it links the pin). Target publish = https://github.com/JLFN/embeddinggemma2 (rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..HEAD (TWELVE commits as of e01eba8e). Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (re-run 2026-10-20, fresh), rule 19 satisfied (report fresh, gate green), rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
+- LANDED (2026-10-21, on the owner's word): the push, which was an OFFER for three units and is now done. Both targets were verified fresh first (rule 6: JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC, default branch dev), rule 10 OSV was re-run (140 packages, 0 vulnerable), rule 19's gate and the whole fast path were green at the pushed revision, and the ranges were read from git rather than from this file. Result: `publish/feat/eg2vq-attn-perf` in both repositories, and PR #1 into dev in each (JLFN/embeddinggemma2-ds4-rs#1 and JLFN/embeddinggemma2#1). dev was NOT pushed to directly, per rule 23. The outer PR carries dev's five unpushed doc commits with it. NO FURTHER PUSH IS AUTHORIZED: the next one is an offer again, and it must re-run the same four checks fresh.
 - OPEN (owner): the C CLI's tokenizer gap (the family's gemma4 BPE is Rust-side; the C CLI refuses the artifact by name) and the AUDIO tower (out of scope; the owner asked for vision).
 - STANDING (owner, 2026-10-19): AFK; automatic continuation after each handoff and compaction; pushes stay offers. Recorded in section 1 with the two later directives.
 - Nothing is in flight in either repository. The nested checkout's working tree is clean at e01eba8e; the outer tree carries the unit-27 and unit-28 commits and this handoff.
@@ -290,9 +297,9 @@ Nothing about rule 19 remains open.
 
     cd /data/embeddinggemma2
     git status --short && git branch -vv                 # clean, on feat/eg2vq-attn-perf; read the count with `git rev-list --count publish/dev..HEAD`, never from a comment
-    git log --oneline publish/dev..HEAD                  # what the outer branch carries unpushed (0406051, d3b5397, 259ce6b, then this unit's 3aa7f99)
-    git -C ds4-rs status --short && git -C ds4-rs log --oneline -8   # clean; HEAD = the attention unit's QA close-out (803decb7) on feat/eg2vq-attn-perf, based on dev 10e73aa0 = publish/dev
-    git -C ds4-rs rev-list --count publish/dev..HEAD     # 11 over publish/dev in total, of which THIS unit added 6 (72ef3ac1 the kernel + the gate cases, then five evidence/QA commits) -- and `publish/dev..dev` must be 0
+    git log --oneline publish/dev..HEAD                  # what the outer branch carries BELOW the push (0406051, d3b5397, 259ce6b, 3aa7f99, 198fbc9 are published; only this handoff's own commit is local)
+    git -C ds4-rs status --short && git -C ds4-rs log --oneline -8   # clean; HEAD = 7cafa2a2 (the chart and the error pair) on feat/eg2vq-attn-perf, based on dev 10e73aa0 = publish/dev
+    git -C ds4-rs rev-list --count publish/dev..HEAD     # 12 over publish/dev, ALL PUBLISHED (the three units: 31285531, 8d618ecb, 72ef3ac1 and their records/QA commits, then 7cafa2a2 the chart) -- and `publish/dev..dev` must be 0
     make -C ds4-rs test-eg2vq-attn                       # EG2VQ_ATTN_PASS: the kernel THIS unit changed (nine arithmetic cases, mincos 1.000000000), plus the two dispatcher-fallback cases
     make -C ds4-rs bench-eg2vq-attn                      # attention's per-shape table (the shape A/B this unit's record quotes)
     make -C ds4-rs test-eg2vq-vq                         # EG2VQ_VQ_PASS: the previous unit's kernel, unchanged since
@@ -341,24 +348,26 @@ Nothing about rule 19 remains open.
 Trust git over this document's headings: every unit whose work this document
 describes is in the diff, both repositories are clean on
 feat/eg2vq-attn-perf, and dev is untouched in BOTH (engine dev = publish/dev =
-10e73aa0, zero commits ahead; outer dev = a43479d). The port itself is complete
-through phase 8 — code-complete, gated, QA'd (rule 19's report reads
-verdict: overall PASS and the gate is green) — and section 3's item 1 is the one
-code unit in flight-by-plan: the payload GEMM, re-ablated before it is changed.
-Nothing in this unit is pushed, and every push stays an offer.
+10e73aa0, zero commits ahead; outer dev = a43479d, which the published PR
+carries). The port itself is complete through phase 8 — code-complete, gated,
+QA'd (rule 19's report reads verdict: overall PASS and the gate is green) — and
+section 3's item 1 is the one code unit in flight-by-plan: the payload GEMM,
+re-ablated before it is changed. The three performance units are PUBLISHED and
+their PRs are open; everything after this handoff's own commit is unpushed and
+every push stays an offer.
 
-What is unpushed at this boundary, in one line each: the engine's
-feat/eg2vq-attn-perf = 803decb7 (six commits over dev: the attention kernel's
-grouped pass 1 plus two gate cases, the VQ GEMM's rows-per-thread change, the two
-units' records with all their artifacts and probes, and three QA rounds) and the
-outer repo's feat/eg2vq-attn-perf (this handoff, the two units' record commits and
-qa-evidence/qa-report.md with qa-findings-attn-perf.md, qa-findings-vq-r8.md and
-qa-findings-attn-grouped.md). Read `git rev-list --count publish/dev..HEAD` in
-each repository rather than a number printed here. The artifacts, the retrieval
-source, every out/ log and the CUDA objects live under gitignored paths (out/,
-.models/, ds4-rs/), so they never appear in a diff: they are identified by the
-digests in SHA256SUMS, by the pins inside the gate scripts, and by the evidence
-docs' own digests.
+What is published, and what is not: both repositories'
+feat/eg2vq-attn-perf is on the remote through the engine's 7cafa2a2 (the chart)
+and the outer's 198fbc9 (this handoff's rotation), with PR #1 open into dev in
+each; the only local-only commit is THIS handoff's edit. The engine's branch
+carries the attention kernel's vec4 loads, the VQ GEMM's rows-per-thread change
+and the attention grouped pass 1 with their records, probes and three QA rounds.
+Read `git rev-list --count publish/dev..HEAD` in each repository, and
+`git log --oneline @{u}..HEAD` for what is still local, rather than a number
+printed here. The artifacts, the retrieval source, every out/ log and the CUDA
+objects live under gitignored paths (out/, .models/, ds4-rs/), so they never
+appear in a diff: they are identified by the digests in SHA256SUMS, by the pins
+inside the gate scripts, and by the evidence docs' own digests.
 
 This document is self-contained: a new session can act on it alone. At this
 boundary that means section 3 item 1 — re-ablate the payload GEMM at its shipped
