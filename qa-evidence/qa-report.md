@@ -1,197 +1,124 @@
-QA report - unit 28: the FINAL accumulated rule 19 pass (units 25, 26 and 27)
+QA report - the embedding-path performance unit, third: the attention kernel's
+grouped score pass
 ============================================================================
 
 Unit and repositories at verification time
 
-Outer /data/embeddinggemma2, branch dev, HEAD 84d0849 (read with
-git rev-parse --short HEAD); its only remote is the publish remote, whose last
-pushed dev is d45394f, and the outer tree carries 30 commits over it.  Nested
-/data/embeddinggemma2/ds4-rs, branch feat/ds41-dsml-carriage, HEAD 0b28cb40
-(unit 27) at verification time, with the three unit-28 fixes since committed on
-top of it as e01eba8e; its publish/dev is 29873445, and the nested tree carries
-12 commits over it.  This is the owner's third directive executed ONCE over the
-WHOLE accumulated port since unit 24's report -- units 25, 26 and 27 -- and it
-discharges qa-evidence/qa-deferral.txt: the parent session deletes that file
-together with this report's commit.
+Engine /data/embeddinggemma2/ds4-rs, branch feat/eg2vq-attn-perf, HEAD 803decb7,
+five commits over 1c9938ba (the previous, already-QA'd unit's tip):
 
-State of the three unit-28 fixes: COMMITTED.  The nested fixes
-(ds4_eg2vq.h's and ds4_eg2vq_gpu.cuh's cost figures, crates/ds4-core/src/lib.rs's
-span rise check) are nested commit e01eba8e, on top of 0b28cb40.  The outer
-gate-20 fix (tools/eg2_embed_route_gate.sh's caps check plus the LATER NOTE in
-docs/eg2vq-serving-caps-gate20.txt) is landed in the same outer commit that
-carries this report: a file cannot name the commit that contains it, and the
-report is finalized at that commit.  Every check named below was run against
-exactly the code those commits carry -- it was verified while the fixes were
-working-tree edits, and the commits change none of that content.
+    72ef3ac1  perf(attn): have LAB lanes share one key row in attention's score
+              pass
+    9e74b2ed  docs(bench): the attention unit's record, its ablation and its
+              probes
+    947d15f2  docs(bench): the forward's split after the change, from one fresh
+              profile
+    f0639289  docs(qa): the attention unit's first QA round -- E1 and eight
+              record defects
+    58ea1da5  docs(qa): the attention unit's second QA round -- six text items
+              the fix commit introduced
+    803decb7  docs(bench): rewrap the two lines the third QA round called cosmetic
 
-QA model: deepseek-v4.1-CC-flash (tests/qa-gate.sh:9-10; the model this project
-recorded, never substituted).  Date 2026-10-20.  Host: RTX 4070 SUPER, sm_89,
-CUDA 13.3, 28 CPUs.
+Only 72ef3ac1 touches code (the kernel and the gate's two new cases); every
+commit after it is evidence or comments, and the QA tester verified that with its
+own filter of the diffs.
 
-Method: the project's own gates, suites and oracle, run live on this machine,
-plus a file:line read for every surface the gate's extractor cannot see
-(finding F6).  No code was modified by this pass; the only file it writes is
-this report.  Scratch logs: /tmp/qa28-routegate-after.log,
-/tmp/qa28-fastpath-after.log, /tmp/qa28-coretests-after.log.  No Python, ONNX
-or PyTorch anywhere in the verification (P-1/P-2 respected), and the pin
-(/data/llama.cpp) was neither built nor executed.
+Outer /data/embeddinggemma2, branch feat/eg2vq-attn-perf, equal to its dev
+a43479d plus the previous unit's record commits plus this unit's record commits.
+Nothing in either repository has been pushed.  Lineage, measured not assumed:
+`git rev-list --count publish/dev..dev` is 0 in the engine repository, so dev
+carries none of this work.
 
-SURFACES COVERED (the eleven the gate's own extractor names, each verbatim)
+This report supersedes the previous unit's (the VQ payload GEMM's), which is
+preserved at the revision that carried it: `git show 1c9938ba \
+docs/benchmarks/eg2-embedding-2026-10-20/vq-gemm-rows.md` cites it, and the file
+itself is in that commit's history under the same path this one occupies.
 
-- decode_image_data_uri - live: gate 26 leg 4's "not a data URI" 400 and the
-  serve test an_image_uri_that_is_not_a_data_uri_is_refused_by_name; read:
-  crates/ds4-server/src/parse.rs:486-495 (the chat route's own decoder and its
-  own refusal words).
-- ds4_bridge_eg2vq_embed_batch - live: gate 27's wire legs (the array request
-  byte-identical to the single requests on BOTH backends) and this pass's
-  device-oracle run; read: native/bridge/ds4_bridge.c:989-998.
-- ds4_bridge_eg2vq_embed_image - live: gate 26's four device and three CPU
-  image requests; read: native/bridge/ds4_bridge.c:1003-1011.
-- ds4_bridge_model_vision_encode_rows - live: every image request (the engine's
-  encode half); read: native/bridge/ds4_bridge.c:1015-1050, including the
-  caller-owned-buffer facts (the expect_rows refusal at :1035-1038 and the
-  buffer-size refusal at :1042-1047).
-- embed_caps - live: gate 26 leg 1's served /health body, which is exactly the
-  contract the route enforces, and cargo test -q -p ds4-core --test
-  eg2vq_serving_caps (4 passed, 0 failed, which holds the Rust numbers equal to
-  ds4_eg2vq.h and ds4_eg2vq_vision.h as text); read:
-  crates/ds4-core/src/serving.rs:243-261.
-- embed_gemma_vq_batch - live: gate 27's wire legs on both backends and the
-  four serve_embed_batch_test tests; read: crates/ds4-core/src/lib.rs:2474-2560,
-  span loop included (and now the fixed loop at :2509-2543, see U28-3).
-- embed_gemma_vq_image - live: gate 26's device and CPU media requests; read:
-  crates/ds4-core/src/lib.rs:2672-2761 (item ceiling, soft-row width, the
-  contiguous-run check).
-- embed_item_media_ids - live: every media item of gate 26 builds its sequence
-  through it; read: crates/ds4-core/src/lib.rs:2604-2612.
-- embed_media_ids - live: gate 26 leg 0's 92-position sequence check (BOS 2,
-  boi 255999, 88 x 258880, eoi 258882, EOS 1, span [2, 90)); read:
-  crates/ds4-core/src/lib.rs:2777-2845.
-- to_json - live: /health's embed object exactly as served (gate 26 leg 1's own
-  line, image half included); read: crates/ds4-core/src/serving.rs:269-279 for
-  the image half and :282-291 for the whole object, whose two callers are the
-  /health body (crates/ds4-server/src/serve.rs:1646) and the plan diagnostics
-  (serving.rs:1908).
-- vision_encode_rows - live: the encode half of every image request on both
-  legs; read: crates/ds4-core/src/lib.rs:2623-2661 (empty image, the expect_rows
-  window, exactly expect_rows x 512 floats).
+What the unit changes
 
-F6 HAND-READ SET (the multi-line C entries the extractor cannot match), each
-read by hand and reached live by the gates named
+cuda/eg2vq_attn.cuh, one kernel: eg2vq_attn_kernel, the gemma_vq text tower's
+attention.  Pass 1 goes from one lane owning one whole K row to LAB =
+head_dim/64 lanes cooperating on one key, each owning 16 float4 chunks of it
+4*LAB elements apart, with the lane's 64-float slice of the query row in
+registers.  The kernel becomes template <int LAB>; the launcher dispatches on
+head_dim == 64*LAB for LAB in {2,4,8,16} and to LAB = 0 (the unchanged
+lane-per-key body) otherwise.  Unchanged: the window arithmetic, the score plane
+and its 32 KB static allocation, the row maximum, pass 2, pass 3, the scale, the
+mask, the launcher's guards, and every gate's declared bound.
 
-- ds4_engine_embed_gemma_vq_batch - ds4.c:73827-73923; gate 27's wire legs and
-  its CPU backend leg.
-- ds4_engine_embed_gemma_vq_image - ds4.c:73945-74040 (the placeholder run
-  checked by name before any arithmetic); gate 26's six refusals and its four
-  device requests.
-- ds4_gpu_eg2vq_embed_batch - ds4_eg2vq_gpu.cuh:657-660, into
-  eg2vq_gpu_embed_core, which derives pos/len from the spans in one place and
-  pools per item; the device oracle's --batch and --batch-bad legs.
-- ds4_eg2vq_ref_embed_batch - ds4_eg2vq_graph.inc:418-434 (it loops the gated
-  one-item core, deliberately); gate 27's CPU leg and the wire's CPU leg.
-- eg2vq_ops_proj768_pool_batch - cuda/eg2vq_ops.cuh:405-414 with
-  eg2vq_ops_pool_item_kernel at :364-398; every batched run of gate 27 and the
-  ops unit test's packed case.
-- the route's POST /v1/embeddings item shape (crates/ds4-server/src/serve.rs's
-  embed_input_item, :942-1010: OpenAI content parts, one image_url, the URI
-  through the chat route's decoder, every other part refused by name) and its
-  two-pass grouping in run_embed (:1703-1909: all items prepared and
-  caps-checked, then the TEXT items in ONE batch call and each media item in
-  its own); gate 27's wire legs and the four serve_embed_batch_test tests.
+tests/test_eg2vq_attn.cu gains two cases, head_dim 384 and 320, because the
+dispatcher's LAB = 0 arm -- the instantiation every other shape takes, and the
+only path that executes the scalar bodies -- was otherwise reachable and gated by
+nothing.
 
-LIVE EVIDENCE FROM THIS PASS, ON THE FIXED TREE
+Surfaces added by this unit (publish/dev..HEAD in both repositories)
 
-- tests/run.sh: exit 0, 2 m 46 s, ending "fast path complete".  Steps 1-10
-  green: 14/14 recorded digests; the DQVD container's structure; the scorer
-  self-test; loader gate 3; gate 22 EG2VQ_VISION_MMPROJ_PASS; gate 23
-  EG2VQ_VISION_GATE23_PASS; gate 24 EG2VQ_VISION_GATE24_PASS; gate 25
-  EG2VQ_SPLICE_GATE25_PASS; gate 26 EG2VQ_EMBED_MEDIA_GATE26_PASS; gate 27
-  EMBED BATCH GATE 27: PASS.  Step 11 prints the deferral, which is correct and
-  expected until the parent deletes qa-evidence/qa-deferral.txt.
-- Gate 25 reproduced its evidence: the splice leg worst 0.00018850 / 0.001579 /
-  0.99999875, device vs CPU 0.00057164 / 0.004348 / 0.99999055, refusals 4 of 4.
-- Gate 26 reproduced its evidence: the served /health body (item_tokens_max
-  2048, batch_rows_max 8192, the whole image half); device vs CPU
-  0.00057160 / 0.004348 / 0.99999055 for the pattern fixture; six refusals each
-  a 400; the frozen-baseline cross-check 0.03686520 / 0.242455 / 0.97060790.
-- Gate 27 reproduced its evidence: "every element byte-identical to the
-  per-item run, max per-element delta 0.000e+00" over 6 items / 3881 rows and
-  64 items / 1280 rows; 8192 rows accepted in one call (one workspace of
-  912.13 MiB) while 8193 is refused; five malformed span tables "refused,
-  output untouched"; the wire byte-identical on both backends; four items of
-  exactly 2048 tokens accepted (200) and the fifth a 400 quoting
-  embed.batch_rows_max.
-- The device oracle run earlier in this pass (--batch --batch-bad --no-cpu):
-  exit 0, the same byte-identity line and the same five refusals.
-- cargo test -q -p ds4-core with the fixes in place: 664 passed, 0 failed,
-  20 ignored.  cargo test -p ds4-server --lib serve_embed: 12 passed, 0 failed
-  (the 8 media and 4 batch route tests).  The two CUDA unit tests:
-  EG2VQ_ATTN_PASS (packed two items) and EG2VQ_OPS_PASS (3 items packed).
-- bash tools/eg2_embed_route_gate.sh <artifact>: exit 0 and
-  EG2VQ_EMBED_ROUTE_PASS (U28-1's confirming check, below).
+None.  The rule-19 mount's own extractor names no new surface for this unit: no
+new `ds4_*` C entry point, no new /v1/ route, no new `pub fn`.  The mount's
+reading at this boundary is "QA GATE: ALL PASS (no new runtime, route or
+public-API surfaces relative to publish/dev and ds4-rs/publish/dev)", exit 0,
+and that gate is step 11 of the fast path, which exits 0 as a whole.  The unit's
+whole surface is one device kernel whose launcher signature, call site and
+behaviour are unchanged, plus its measurement artifacts.  ALL NEW SURFACES is
+therefore empty by the extractor's own reading, and the QA pass below was run
+over the unit anyway, by hand, exactly as the previous two were.
 
-FINDINGS FROM THIS PASS - ALL THREE CLOSED
+What the unit claims, and where each claim's evidence is
 
-U28-1 CLOSED - the route gate's stale /health expectation (a checked-in gate
-that exited 1 on HEAD).
-  Fix: tools/eg2_embed_route_gate.sh:176 now greps the PREFIX of the served
-  object, '"embed":{"item_tokens_max":2048,"batch_rows_max":8192,', with the
-  reason in the comment above it (:169-175: the whole literal could not survive
-  unit 26's growth of the contract, and gate 26 leg 1 owns the image half's
-  numbers); docs/eg2vq-serving-caps-gate20.txt:198-220 records the drift and
-  the fix as a dated LATER NOTE.
-  Confirming check: bash tools/eg2_embed_route_gate.sh
-  out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf -> exit 0,
-  EG2VQ_EMBED_ROUTE_PASS, its 4b section printing the served embed object with
-  unit 26's image half.
+1. The kernel is 1.94x-2.61x faster on the tower's nine shapes, both round
+   pairings of an interleaved A/B against the pre-change binary.
+   Evidence: attn-ab-{old,new}-r{1,2}.txt (raw bench output, 30 repeats per
+   row), attn-before.cuh.txt (the header the old binary is built from), and the
+   table in attn-kernel-grouped.md section 4.1, which is recomputable from the
+   two files by joining on the shape name and dividing the ms_med columns.
+2. The corpus is 1.32x faster end to end (8.42 s -> 6.40 s at batch 8, 9,490-9,761
+   -> 12,507-12,720 tokens/s) over 143 pages / 80,747 tokens.
+   Evidence: the six CSVs under speed-bench/ and their _health.json beside them,
+   joined in attn-ab-sweep.txt; the runs are old r1, old r2, new r1, old r3,
+   new r2, old r4 in wall-clock order, so each new run sits between old runs.
+3. The K access is what the kernel was paying for, and the exponentials and the
+   score plane are free.
+   Evidence: attn-ablation.txt, the output of probes/probe-attn.cu (V1, V2, V3,
+   V5, V6, V7, V8, V9 rows), with the probe's own V0 measured twice per shape in
+   the same run.
+4. The candidate form was measured before it was landed, and the shipped form
+   agrees with it to cosine 1.000000000 and 2.4e-06-6.5e-06 maximum element-wise
+   relative difference.
+   Evidence: attn-grouped-probe.txt, the output of probes/probe-attn-grp.cu,
+   whose ON=0 instantiation is also checked byte for byte against the shipped
+   launcher in the same run.
+5. The gates pass: make test-eg2vq-attn (nine arithmetic cases, mincos
+   1.000000000, rel 3.31e-07 to 9.73e-07), compute-sanitizer memcheck 0 errors,
+   gate 7 EG2VQ_GPU_PASS at min cos 0.999999950 / max rel_rms 3.149e-04,
+   tests/run.sh exit 0 with gates 23-27 and the QA gate green.
+   Evidence: gate7-embd-attn-grouped.txt and the gate's own printed lines; the
+   rest is reproduced by the commands in the record's section 7.
+6. One `nsys` profile of a batch-8 forward now reads attention at 46.0 ms of
+   197.5 ms of kernel time, against the previous unit's profile of the older
+   kernel at 116.7 ms of 287.8 ms.
+   Evidence: nsys-kern-sum-b8-attn-grouped.txt.  The record labels this split as
+   the profile's contribution and explicitly not as evidence of the delta.
 
-U28-2 CLOSED - the C sources' per-row workspace cost was one plane stale.
-  Fix: ds4_eg2vq.h:192 and :195 now say 116,748 bytes a row and 912.13 MiB
-  (pointing at the layout as the authority and at gate 27 as the measurement);
-  ds4_eg2vq_gpu.cuh:60-66 now states 116,748 with the plane list (the tower's
-  27,648 f32 = 110,592 bytes a row, in_soft included) and :519 says 116,748.
-  Confirming check: the three sites re-read, and the layout recomputed from the
-  constants in the same file (ds4_eg2vq_gpu.cuh:84-122) -> 8192 rows =
-  956,432,400 bytes = 912.1250 MiB, with the interior per row 110,592 + 4 + 4
-  + 4 + 3,072 + 3,072 = 116,748; gate 27's own output prints the same 116,748
-  and the 8192-row call's 912.13 MiB.
+The QA pass's verdict: THREE ROUNDS, FAIL-FAIL-PASS, NO CODE DEFECT IN ANY OF
+THEM. Round 1 verified every gate, every number in the record and an independent
+nine-case driver of its own, and failed on one blocking evidence defect (both
+probes' documented commands, which after this unit no longer reproduce their
+committed output without the pre-change header) and eight record defects. Round 2
+verified all ten fixed and failed on six text items the fix commit itself
+introduced. Round 3 verified those six fixed by recomputation and live run and
+returned PASS with no finding open, naming one cosmetic byproduct (fixed in
+803decb7). The findings and their dispositions are in
+qa-findings-attn-grouped.md.
 
-U28-3 CLOSED - the Rust batch entry had no rise check, so a descending span
-table underflowed (a debug-build panic) instead of the documented Err.
-  Fix: crates/ds4-core/src/lib.rs:2510-2534 checks item_off[i + 1] ==
-  item_off[i] (the empty item, :2515-2523) and item_off[i + 1] < item_off[i]
-  (does not rise, :2525-2533) BEFORE the subtraction at :2535, each with its
-  own Err message, so no build profile can underflow; the comment at
-  :2510-2514 states why.
-  Confirming check: the loop read; cargo check -q -p ds4-core exit 0; and
-  cargo test -q -p ds4-core with the fix in place 664 passed, 0 failed.
+Open at this boundary
 
-RESIDUAL RISK ACCEPTED, AND WHAT WAS NOT TESTED
-
-- No sanitizers, no valgrind and no concurrency stress were run; the gates'
-  clean exits are not a leak or race proof.  The engine is single-owner and the
-  media path is serial by design, and none of the evidence claims otherwise.
-- The pin (/data/llama.cpp) was neither built nor executed; its citations are
-  read as the pinned revision through the units' own docs.
-- At the oracle level the 8193-row refusal is reached through the workspace
-  create (8193 rounds to 8448 rows, past the 8192 clamp, refused by name)
-  rather than through the device core's own per-call row check; the engine
-  refuses 8193 rows by name before any allocation and gate 27 exercises the
-  boundary at the wire, so the boundary itself is covered.  Recorded for
-  precision, not as an open defect.
-- The cache_identity flake (crates/ds4-server/src/cache_identity.rs:500-501)
-  is UNCHANGED and is not this pass's to fix: it is recorded in
-  embeddinggemma2-handoff.md section 7 as an open, owner-owned finding, it is
-  outside units 25-27's diffs, and the fast path does not run it.  Re-confirmed
-  live during the pass (the full ds4-server lib suite 357 passed / 1 failed;
-  focused re-runs 1 fail / 2 pass).
-- Out of scope by the owner's decisions: the audio tower, a multi-image item,
-  the C CLI's tokenizer gap, and the two pushes.
-
-post-write confirmation: bash tests/qa-gate.sh -- after this report was written
-and with the owner's deferral bypassed (QA_DEFERRAL=/dev/null, exactly the
-check that runs once the parent deletes the file) -- prints
-QA GATE: overall PASS (deepseek-v4.1-CC-flash evidence fresh and covering) and
-exits 0, covering every surface named above.
-
-verdict: overall PASS
+- The unit was NOT pushed (rule 23 offer, recorded in the handoff).
+- Pass 3's V loads (measured at 1.29x-1.48x by V4) are untouched by this unit.
+- The engine repository's inherited stale QA mount (ds4-rs/tests/qa-gate.sh and
+  ds4-rs/qa-evidence/qa-report.md, from the ds4-dfm-rs lineage) is still there;
+  the project's gate is the outer tests/qa-gate.sh.  This is an owner decision
+  and was open before this unit too.
+- The deep path (tests/run.sh --deep), the loader digest check's own script and
+  the OSV scan were not re-run at this boundary; the fast path (which includes
+  the fourteen digests and gates 23-27) was, exit 0, and the QA pass did not
+  re-run it either — its own verification covered the gates named above.
