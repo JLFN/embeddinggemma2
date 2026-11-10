@@ -284,7 +284,7 @@ it is close to indistinguishable.
 ## 11. Verifying it yourself
 
 ```sh
-cd /data/embeddinggemma2
+cd <root>/embeddinggemma2
 tests/run.sh            # fast path: digests, container, loader gate, vision gates
                         # 22-27, the rule 19 QA gate — about 3 minutes
 tests/run.sh --deep     # adds gate 1b, cargo test -p ds4-core, and gate 4

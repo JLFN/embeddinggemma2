@@ -41,7 +41,7 @@ vector.
 THE DESIGN, and where it is read from (rule 0.2 — read these before writing):
 
 - The reference semantics are llama.cpp's own batched path at the pin
-  (/data/llama.cpp @ 31288c9c): src/llama-batch.cpp's `llama_ubatch` packs the
+  (<root>/llama.cpp @ 31288c9c): src/llama-batch.cpp's `llama_ubatch` packs the
   tokens of several sequences contiguously and carries per-token `seq_id[]` and
   `pos[]`, and src/llama-graph.cpp builds the attention mask so tokens of different
   sequences cannot attend to each other (the same mechanism the anchor's

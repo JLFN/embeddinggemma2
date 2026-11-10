@@ -6,7 +6,7 @@
  * Every key, type, name and dim below is READ from the file cited next to it,
  * per project rule 0.2; nothing here is invented. The sources:
  *
- *   /data/llama.cpp @ 31288c9c (the form authority, read-only)
+ *   <root>/llama.cpp @ 31288c9c (the form authority, read-only)
  *     src/models/gemma-embedding2.cpp:3-13    the hparams keys the loader resolves
  *     src/models/gemma-embedding2.cpp:34-72   the 413 text-tower tensors and their
  *                                             declared shape, which is what the
@@ -56,7 +56,7 @@
  *     gguf-py/gguf/constants.py:6274          general.file_type = 32 (MOSTLY_BF16)
  *     gguf-py/gguf/constants.py:6184-6187     PoolingType.MEAN = 1
  *
- *   /data/YoungAi (the writer and payload precedent, revision a4e6d31)
+ *   <root>/YoungAi (the writer and payload precedent, revision a4e6d31)
  *     src/common/ds4_gguf_write.h             vendored byte-identical at
  *                                             tools/ds4_gguf_write.h, sha256
  *                                             5bfc5dd4fc8646709d521ad9a212aa0c6cba83cce2f0016baf0ff698364f1fff
@@ -83,7 +83,7 @@
  * (docs/ds4-gemma-payload-contract.md section 2), so the artifact step is a
  * re-wrap — the bytes are copied, only the addressing changes. Sources for it:
  *
- *   /data/YoungAi (the writer and payload precedent, revision a4e6d31)
+ *   <root>/YoungAi (the writer and payload precedent, revision a4e6d31)
  *     gguf-tools/quantize/v41_to_gguf.c:137-142   plan_vqblob: the VQ tensor is
  *         registered nd=1, ne={total bytes}, type DS4_GGT_VQBLOB
  *     gguf-tools/quantize/v41_to_gguf.c:285-313   gen_vqblob: the tensor's bytes
@@ -116,7 +116,7 @@
  *
  * Build (the reference toolchain's include paths, as RECIPE.md section 4 does):
  *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -Itools \
- *      -I/data/YoungAi/src/common -I/data/YoungAi/gguf-tools/quantize \
+ *      -I<root>/YoungAi/src/common -I<root>/YoungAi/gguf-tools/quantize \
  *      -o bin/eg2_gguf tools/eg2_gguf.c -lm
  */
 #define _POSIX_C_SOURCE 200809L
@@ -132,7 +132,7 @@
 #include "vq_qc_bytes.h"       /* the reference's DQVQ byte account (one copy, shared) */
 
 /* GGUF tensor type numbers (ggml), the same table the engine uses
- * (/data/YoungAi/src/core/core_gguf.c:94-97, our crates/ds4-core/src/tensors.rs:60-112).
+ * (<root>/YoungAi/src/core/core_gguf.c:94-97, our crates/ds4-core/src/tensors.rs:60-112).
  * The baseline writes f32 (0) and bf16 (30); the artifact adds q8_0 (8) for its
  * token table and vqblob (42) for its 461 VQ payloads. */
 #define GGT_F32    0u
@@ -1284,7 +1284,7 @@ int main(int argc, char **argv) {
         if (widen_flags[i]) {
             /* BF16 -> F32, the widening the reference applies: the BF16 bit
              * pattern becomes the F32 word's high half (ds4_bf16_to_f32,
-             * /data/YoungAi/src/common/ds4_float.h:34). */
+             * <root>/YoungAi/src/common/ds4_float.h:34). */
             uint64_t n = t->nbytes / 4;
             uint8_t *buf = xmalloc(t->nbytes);
             for (uint64_t k = 0; k < n; k++) {

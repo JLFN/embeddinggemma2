@@ -113,5 +113,5 @@ verify shard 1 exit=0
 verifies done:
 14
 === artifact ===
--rw-rw-r-- 1 leandro leandro 421758160 Oct 18 22:02 out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
+-rw-rw-r-- 421758160 Oct 18 22:02 out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
 done 20:21:45Z

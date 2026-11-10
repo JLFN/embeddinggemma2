@@ -15,7 +15,7 @@
 #
 # Both sides must give the same token count AND the same id sequence, per item.
 #
-# Authority (all /data/llama.cpp): the `gemma4` pre-tokenizer and its BPE,
+# Authority (all <root>/llama.cpp): the `gemma4` pre-tokenizer and its BPE,
 # llama-vocab.cpp:528-536 (:2360-2362 selects it, :3652-3654 escapes spaces),
 # the special-token cache at :3026-3054 + :3168-3191 partitioned at
 # :3401-3500, and the merge queue at :264-278 + :589-745.

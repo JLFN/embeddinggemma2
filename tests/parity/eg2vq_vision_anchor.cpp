@@ -12,7 +12,7 @@
  * (llama-embedding at the pin). No shipped binary at the pin embeds an image —
  * examples/embedding/embedding.cpp has no mtmd support and tools/mtmd/mtmd-cli.cpp
  * has no embedding or pooling mode — so the reference has to be an instrument we
- * build. This one links the pinned mtmd (built in /data/llama-anchor-build) and
+ * build. This one links the pinned mtmd (built in <root>/llama-anchor-build) and
  * dumps, for one image:
  *
  *   (i)  the projected image soft tokens: the output of the vision tower, its
@@ -35,11 +35,11 @@
  *
  * Build (recorded in tools/eg2_vision_anchor.sh; the anchor tree is the pin's own
  * CPU build):
- *   g++ -O2 -std=c++17 -I/data/llama.cpp/include -I/data/llama.cpp/ggml/include \
- *       -I/data/llama.cpp/tools/mtmd -o bin/eg2vq_vision_anchor \
+ *   g++ -O2 -std=c++17 -I<root>/llama.cpp/include -I<root>/llama.cpp/ggml/include \
+ *       -I<root>/llama.cpp/tools/mtmd -o bin/eg2vq_vision_anchor \
  *       tests/parity/eg2vq_vision_anchor.cpp \
- *       -L/data/llama-anchor-build/bin -lmtmd -llama -lggml -lggml-base -lggml-cpu \
- *       -Wl,-rpath,/data/llama-anchor-build/bin
+ *       -L<root>/llama-anchor-build/bin -lmtmd -llama -lggml -lggml-base -lggml-cpu \
+ *       -Wl,-rpath,<root>/llama-anchor-build/bin
  *
  * Usage: eg2vq_vision_anchor <mmproj.gguf> <text-model.gguf> <image file> <out prefix>
  *   writes <out>.soft.tsv   the image soft tokens, one row per token

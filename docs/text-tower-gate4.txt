@@ -58,7 +58,7 @@ running `--verbose-prompt` over the same item file. The script also regenerates 
 dump by itself (its default path, exercised this session: `out/tok-anchor-verbose.log`,
 byte-stable) rather than trusting the phase-2 log; both paths give the same verdict.
 
-What the port had to mirror, and where it is pinned (`/data/llama.cpp`):
+What the port had to mirror, and where it is pinned (`<root>/llama.cpp`):
 `tokenizer.ggml.model == "gemma4"` selects the pre-type and whitespace escaping
 (`src/llama-vocab.cpp:2360-2362`, `:3652-3654`); the only pre-tokenizer regex is
 `[^\n]+|[\n]+` with `byte_encode = false` (`:528-536`, fast path
@@ -209,6 +209,6 @@ Neither finding was caused by this work and neither is fixed here:
 CUDA sources it depends on and its rebuild fails in ptxas
 (`Feature 'mbarrier.try_wait.parity' requires .target sm_90 or higher`) while
 `.ds4-cuda-config.mk` pins `CUDA_ARCH := native` = sm_89 on this GPU; and
-`/data/build/linux/build.sh` still cannot build this tree's binaries at all (they
+`<root>/build/linux/build.sh` still cannot build this tree's binaries at all (they
 require `--features native`, which it cannot pass). Both are phase 6/7 currency; the
 CPU reference path this unit delivers needs neither.

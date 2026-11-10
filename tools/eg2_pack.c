@@ -3,7 +3,7 @@
  *
  * Every payload is produced by the reference toolchain, unmodified. Citations:
  *
- *   /data/YoungAi @ a4e6d31
+ *   <root>/YoungAi @ a4e6d31
  *     gguf-tools/quantize/vq_qc.h:86       vq_encode_full — kmeans on the
  *         weights alone (strided subsample <= 200k vectors, 8 Lloyd rounds,
  *         codebook round-tripped through f16 before assignment at :109), GPTQ
@@ -41,7 +41,7 @@
  *         decode), so the reader is not reimplemented
  *     src/common/ds4_float.h:34            ds4_bf16_to_f32
  *
- *   /data/ds4-dfm-rs/ds41_vq_fmt.h:7       DQVQ value rule:
+ *   <root>/ds4-dfm-rs/ds41_vq_fmt.h:7       DQVQ value rule:
  *         value[row][col] = codebook[idx][col % dim] * gain[row]
  *
  * The container is the only new structure. It carries the payloads unchanged,
@@ -98,17 +98,17 @@
  * the vq_qc.h include for the measurement behind that).
  *
  *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L \
- *      -I/data/YoungAi/gguf-tools/quantize -I/data/YoungAi/src/common \
- *      -o bin/eg2_pack_cpu tools/eg2_pack.c /data/YoungAi/gguf-tools/quantize/quants.c \
- *      /data/YoungAi/gguf-tools/quantize/onebit_quant.c \
- *      /data/YoungAi/src/common/ds4_quantfmt.c -lm -lpthread
+ *      -I<root>/YoungAi/gguf-tools/quantize -I<root>/YoungAi/src/common \
+ *      -o bin/eg2_pack_cpu tools/eg2_pack.c <root>/YoungAi/gguf-tools/quantize/quants.c \
+ *      <root>/YoungAi/gguf-tools/quantize/onebit_quant.c \
+ *      <root>/YoungAi/src/common/ds4_quantfmt.c -lm -lpthread
  *
- *   nvcc -O3 -arch=native -c /data/YoungAi/gguf-tools/quantize/vq_gpu.cu -o out/vq_gpu.o
+ *   nvcc -O3 -arch=native -c <root>/YoungAi/gguf-tools/quantize/vq_gpu.cu -o out/vq_gpu.o
  *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -DEG2_CUDA \
- *      -I/data/YoungAi/gguf-tools/quantize -I/data/YoungAi/src/common -I/usr/local/cuda/include \
- *      -o bin/eg2_pack tools/eg2_pack.c /data/YoungAi/gguf-tools/quantize/quants.c \
- *      /data/YoungAi/gguf-tools/quantize/onebit_quant.c \
- *      /data/YoungAi/src/common/ds4_quantfmt.c out/vq_gpu.o \
+ *      -I<root>/YoungAi/gguf-tools/quantize -I<root>/YoungAi/src/common -I/usr/local/cuda/include \
+ *      -o bin/eg2_pack tools/eg2_pack.c <root>/YoungAi/gguf-tools/quantize/quants.c \
+ *      <root>/YoungAi/gguf-tools/quantize/onebit_quant.c \
+ *      <root>/YoungAi/src/common/ds4_quantfmt.c out/vq_gpu.o \
  *      -L/usr/local/cuda/lib64 -lcudart -lcublas -lstdc++ -lm -lpthread
  *
  * vq_gpu.o carries the reference's own flags (Makefile:197: nvcc -O3 -arch=native
@@ -138,7 +138,7 @@
 #include <time.h>
 
 /* dq_matmul must precede vq_qc.h (it calls it). Semantic copied from the
- * reference: /data/YoungAi/gguf-tools/quantize/vq_shim.c:9
+ * reference: <root>/YoungAi/gguf-tools/quantize/vq_shim.c:9
  *   out[S,M] = X[S,K] @ W[M,K]^T */
 static void dq_matmul(const float *X, const float *W, float *out, int S, int K, int M) {
     for (int s = 0; s < S; s++)

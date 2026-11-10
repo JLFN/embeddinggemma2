@@ -79,7 +79,7 @@ with __funnelshift, and reads its four tokens' four activation values as float4.
       to 1e-6, both far above what f32 rounding of a 512 to 2048 term dot costs.
 
 The synthetic payloads are packed by the test's own p_pack, which mirrors the
-project's writer byte for byte (/data/YoungAi/gguf-tools/quantize/vq_qc.h
+project's writer byte for byte (<root>/YoungAi/gguf-tools/quantize/vq_qc.h
 `vq_pack`:242-266): header, nc*dim f16 codebook, rows f16 gains, one continuous
 little-endian 12-bit stream, padded to whole bytes plus one guard byte.
 
@@ -119,7 +119,7 @@ Writing the kernel surfaced a divergence that is not the kernel's:
   ds4vq_f16 (ds4-rs/ds41_vq_fmt.h:38-43) returns exactly HALF the IEEE value for
   every subnormal f16 input (0 < |v| < 2^-14 = 6.10352e-05), while the payload
   writer's own reader, go1b_fp16_to_fp32
-  (/data/YoungAi/gguf-tools/quantize/onebit_quant.h:141-159), matches the IEEE
+  (<root>/YoungAi/gguf-tools/quantize/onebit_quant.h:141-159), matches the IEEE
   rule on every pattern tested.  Normals agree exactly in both.
 
   measured, half bit -> value:

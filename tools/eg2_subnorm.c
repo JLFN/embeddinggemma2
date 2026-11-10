@@ -6,7 +6,7 @@
  * subnormal f16 input (0 < |v| < 2^-14 = 6.10352e-05) the tree's vendored
  * `ds4vq_f16` (ds4-rs/ds41_vq_fmt.h:38-43) returns exactly HALF the value the
  * IEEE rule gives, while the artifact writer's own reader `go1b_fp16_to_fp32`
- * (/data/YoungAi/gguf-tools/quantize/onebit_quant.h:141-159) matches the IEEE
+ * (<root>/YoungAi/gguf-tools/quantize/onebit_quant.h:141-159) matches the IEEE
  * rule on every pattern tested.  Normals agree exactly in both.  The CPU
  * reference path binds its dense cache through `ds4vq_dequant_f32`
  * (ds4_eg2vq_bind.inc:305-310), so it decodes every subnormal codebook entry at

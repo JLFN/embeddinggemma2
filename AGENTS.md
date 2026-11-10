@@ -3,7 +3,7 @@
 Scope: this file adds to this project's loaded guardrails: the always-on core in
 `~/.opengrok/AGENTS.md` and the mounted project-work rules in
 `.opengrok/rules/project-work-rules.md`. Nothing here weakens those; where this
-file is more specific, it wins for `/data/embeddinggemma2` and everything under
+file is more specific, it wins for this repository and everything under
 it. A rule below is binding on any session in this workspace, and a fresh agent
 with nothing but this file must be able to execute it — that is why every rule
 carries its own verification command.
@@ -56,7 +56,7 @@ runtime's build, source or startup path. (`ds4-rs` is a copied upstream tree and
 keeps its own 164 harness scripts under `tests/`, `docs/benchmarks/` and
 `dir-steering/`; those are harnesses, not runtime.)
 
-Verification — run these in `/data/embeddinggemma2` and report the result. Each
+Verification — run these at the project root and report the result. Each
 must come back with zero hits:
 
     grep -rn 'Command::new("python\|python3\|pyo3\|libpython\|cpython' ds4-rs/crates/*/src ds4-rs/native
@@ -107,7 +107,7 @@ kernels. Everything else is evidence:
    check is recorded.
 5. No ONNX and no PyTorch in this project at all — not in the runtime, not in the
    verification chain, not as a measuring instrument (owner, 2026-10-19: "remove
-   this onnx i dont want it and no pytorch see how /data/ds4-dfm-rs works"). The
+   this onnx i dont want it and no pytorch see how the ds4-dfm-rs engine works"). The
    verification is the ds4-dfm-rs method: the project's own native C oracle
    against the Rust candidate, committed golden snapshots, and device parity,
    with the upstream implementation read and cited as the authority

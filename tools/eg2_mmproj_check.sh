@@ -34,7 +34,7 @@
 set -eu
 REPO=$(pwd)
 : "${HF:=$REPO/.models/EmbeddingGemma-2-914f7f8}"
-: "${YA:=/data/YoungAi}"
+: "${YA:=../YoungAi}"
 : "${MMPROJ_SHA:=9ffb86e3eeb5834095e0bd42b6f5fc0505f02b8e208a6037d01db448e6566838}"
 : "${DS4_ROOT:=$REPO/ds4-rs}"
 : "${DS4_INVENTORY:=cargo run -q -p ds4-core --release --example gguf_inventory --}"

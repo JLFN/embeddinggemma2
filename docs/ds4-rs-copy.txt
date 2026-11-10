@@ -2,24 +2,24 @@ ds4 runtime copy — how it was made, what it contains, how it was verified
 =======================================================================
 
 Date        2026-10-19
-Source      /data/ds4-dfm-rs   @ eb67d493ec82c9602961d93c9f089a56cdef7ffe
+Source      <root>/ds4-dfm-rs   @ eb67d493ec82c9602961d93c9f089a56cdef7ffe
                               branch feat/ds41-dsml-carriage, working tree clean
-Destination /data/embeddinggemma2/ds4-rs   (nested clone, gitignored by this repo)
+Destination <root>/embeddinggemma2/ds4-rs   (nested clone, gitignored by this repo)
 
 Why a copy exists
 -----------------
 The EmbeddingGemma-2 VQ artifact (out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin)
 cannot be run by anything on this machine today: ds4-dfm-rs has no gemma
 string anywhere and no embeddings endpoint (grep over *.rs/*.c/*.h/*.cu/*.md
-under /data/ds4-dfm-rs, target/ excluded: only unrelated hf-chat-template
+under <root>/ds4-dfm-rs, target/ excluded: only unrelated hf-chat-template
 vendor files). The copy is the base for adding that support without touching
 the live ds4 workspace, which has its own session, handoff and remotes.
 
 The copy command (exact, reproducible)
 --------------------------------------
-    mkdir -p /data/embeddinggemma2/ds4-rs
+    mkdir -p <root>/embeddinggemma2/ds4-rs
     rsync -a --exclude='target/' --exclude='misc/' \
-          /data/ds4-dfm-rs/ /data/embeddinggemma2/ds4-rs/
+          <root>/ds4-dfm-rs/ <root>/embeddinggemma2/ds4-rs/
 
 Measured result: 9,126 files (8,606 regular, 520 directories), 2,631,391,376
 bytes, 14.1 s wall, 181 MB/s.
@@ -29,7 +29,7 @@ What was excluded, and why (both measured, not assumed)
 target/   69 GB of cargo output (63 GB debug, 6.1 GB release). Copying it
           would buy nothing: cargo build fingerprints bake in absolute
           paths. 16 files under target/release/.fingerprint/ reference
-          /data/ds4-dfm-rs (for example /data/ds4-dfm-rs/cuda/mmq/ds4_mmq.o),
+          <root>/ds4-dfm-rs (for example <root>/ds4-dfm-rs/cuda/mmq/ds4_mmq.o),
           so a build at a new path rebuilds regardless of what is copied.
 misc/     1.8 GB of scratch worktrees and old trees, none of it needed to
           build or run. Its seven tracked files were restored from the
@@ -50,10 +50,10 @@ git branch                         17 branches; both remotes present
 git fsck --connectivity-only       no corruption; only the expected dangling
                                    objects from prior fetches/resets
 make -n ds4                        the whole build graph resolves inside the
-                                   copy; 0 lines reference /data/ds4-dfm-rs,
+                                   copy; 0 lines reference <root>/ds4-dfm-rs,
                                    so a build here cannot write into the
                                    source workspace
-git grep /data/ds4-dfm-rs          5 files, all prose: docs/BONSAI.md,
+git grep <root>/ds4-dfm-rs          5 files, all prose: docs/BONSAI.md,
                                    docs/ds41-dsml-port-inventory.md,
                                    docs/releases/bonsai-cpu-reference-2026-09-30.md,
                                    misc/posttrain-research-2026-10-11.md,
