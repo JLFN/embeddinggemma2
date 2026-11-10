@@ -44,8 +44,8 @@ R1 (record defect). The cross-window product quoted "1.63 (attention)" as an
 not interleaved (its own record says corpus rows that far apart are not
 comparable).
 FIXED. The sentence now recomputes the attention factor from the committed CSVs
-(1.61x: eg2_embed_vizzio.csv 18.799776866 s against 11.654060797 / 11.717910747 /
-11.658361879 s in the three eg2_embed_vizzio_attn-vec4 runs), drops the word
+(1.61x: eg2_embed_bench.csv 18.799776866 s against 11.654060797 / 11.717910747 /
+11.658361879 s in the three eg2_embed_bench_attn-vec4 runs), drops the word
 "interleaved", and publishes both the product (1.61 x 1.25 x 1.32 = 2.66x) and
 the endpoint ratio (18.7998 -> 6.40 = 2.94x) with the drift that separates them,
 naming today's own 8.42-vs-8.89 s old-build discrepancy as the measure of that

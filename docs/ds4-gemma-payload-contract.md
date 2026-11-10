@@ -1,6 +1,6 @@
 # ds4-gemma-payload-contract.md — the `gemma_vq` contract (phase 0, row X.8; extended by phase 1a, row X.5a, phase 2, row X.5, and phase 1b, row X.5b)
 
-Derived 2026-10-19 in `/data/embeddinggemma2`, reading only: no reader, writer or
+Derived 2026-10-19 in `<root>/embeddinggemma2`, reading only: no reader, writer or
 encoder code was written for this document. Phase 1a then wrote the baseline GGUF
 against it and corrected four of its rows by measurement; phase 1b wrote the
 artifact GGUF and corrected a sixth (section 4: the file's rank is never 0).
@@ -24,7 +24,7 @@ Two families ship today and are the pattern for the third.
 | --- | --- | --- | --- |
 | architecture string | `glm5_next` (`crates/ds4-core/src/glm_vq.rs:425`, `:436`) | `ling31_vq` (`crates/ds4-core/src/ling31_vq.rs:23`) | `gemma_vq` |
 | self-identifying gate | `glm_vq.format_version` in 1..=2 (`crates/ds4-core/src/glm_vq.rs:22`; gate `crates/ds4-core/src/identify.rs:183-186`) | directory release `format: ling31-vq8` (`crates/ds4-core/src/ling31_vq/release.rs:139-146`), `FORMAT_VERSION = 1` (`ling31_vq.rs:33`) | `gemma_vq.format_version` = 1 (u32), checked in `identify.rs` |
-| alignment | 128 (`glm_vq.rs:18`), enforced `glm_vq.rs:437` | 128 (`ling31_vq.rs:30-31`) | 32, the writer's default (`/data/YoungAi/src/common/ds4_gguf_write.h:37`) and the precedent's choice (`/data/YoungAi/gguf-tools/quantize/v41_to_gguf.c:361`) |
+| alignment | 128 (`glm_vq.rs:18`), enforced `glm_vq.rs:437` | 128 (`ling31_vq.rs:30-31`) | 32, the writer's default (`<root>/YoungAi/src/common/ds4_gguf_write.h:37`) and the precedent's choice (`<root>/YoungAi/gguf-tools/quantize/v41_to_gguf.c:361`) |
 | private tensor types | FP8 `0x47514638`, CODEBOOK `0x47564342`, VQ `0x47565138`, RESIDUAL `0x47565238` (`glm_vq.rs:24-27`) | FP8/CODEBOOK/VQ, the same three (`ling31_vq.rs:34-36`) | none new: the payload tensor is ds4's existing type 42 |
 | family metadata keys | `glm_vq.codebooks` (`glm_vq.rs:276`), `.fp8_scales` (`:324`), `.logical_shapes` (`:353`, `:366`), `.residuals` (`:381`), `.format_version` (`:435`), `.native_policy` (`:466`) | `ARCH`/`VARIANT`/`SOURCE_MODEL`/`RECIPE`/`RECIPE_V2` (`ling31_vq.rs:23-29`) | `general.architecture`, `general.alignment`, `gemma_vq.format_version`, `gemma_vq.recipe` |
 | recipe | `deepseek4.recipe` string (`v41_to_gguf.c:363`) | `RECIPE` / `RECIPE_V2` (`ling31_vq.rs:26`, `:29`) | `gemma_vq.recipe` (str) |
@@ -33,13 +33,13 @@ Two families ship today and are the pattern for the third.
 
 The C side has a table of private GGUF type numbers, and only two of them are VQ:
 42 `vqblob` (opaque bytes, 1 byte per element) and 43 `fp4x32`
-(`/data/YoungAi/src/core/core_gguf.c:94-97`; the enum that names them,
-`/data/YoungAi/src/common/ds4_quantfmt.h:29` and `:34`). `gemma_vq` uses 42 and
+(`<root>/YoungAi/src/core/core_gguf.c:94-97`; the enum that names them,
+`<root>/YoungAi/src/common/ds4_quantfmt.h:29` and `:34`). `gemma_vq` uses 42 and
 nothing else custom.
 
 ## 1. The payload: a DQVQ matrix payload, exactly as the reference writes it
 
-Authority: `/data/YoungAi/vq_fmt.h`, the file the quantizer and the engine share;
+Authority: `<root>/YoungAi/vq_fmt.h`, the file the quantizer and the engine share;
 our tree already carries a vendored copy at `ds4-rs/ds41_vq_fmt.h`, with the
 layout documented at `:4-12` and the decoded value rule at the head of the file
 (`vq_fmt.h:7`: `value = codebook[idx][d] * g_r[row]`).
@@ -56,7 +56,7 @@ layout documented at `:4-12` and the decoded value rule at the head of the file
 | then | `idx_bytes` | index stream, `ceil(log2 nc)` bits per index |
 
 Byte account, the single copy both the writer and the size allocator include
-(`/data/YoungAi/gguf-tools/quantize/vq_qc_bytes.h:15` and `:20`):
+(`<root>/YoungAi/gguf-tools/quantize/vq_qc_bytes.h:15` and `:20`):
 
     vq_payload_bytes(rows, cols, dim, nc) =
         16 + nc*dim*2 + rows*2 + vq_idx_bytes(rows, cols, dim, nc)
@@ -93,7 +93,7 @@ Settled by measurement, both at the source and on disk.
 Source: the packer never writes a payload of its own. `emit_payload` allocates
 `vq_payload_bytes(...)` (`tools/eg2_pack.c:513`) and fills it with the reference's
 own `vq_pack(Cb, idx, gr, s->rows, s->cols, dim, nc, out)` (`tools/eg2_pack.c:514`,
-writer at `/data/YoungAi/gguf-tools/quantize/vq_qc.h:241-267`). So the container's
+writer at `<root>/YoungAi/gguf-tools/quantize/vq_qc.h:241-267`). So the container's
 kind-0 bytes are the reference payload by construction, and the DQVD checker's
 independent rule for them is exactly the DQVQ byte account
 (`tools/eg2_pack.c:1044`, `const size_t want = vq_payload_bytes(...)`).
@@ -235,7 +235,7 @@ else.
   every `nd != 2` tensor to `C_KEEP` (`tools/eg2_pack.c:331-334`);
 - GGUF carries a tensor's rank natively, up to four dimensions: the tensor info
   is name, `n_dims`, `ne[n_dims]`, type, offset (the format's own field list in
-  the comment at the head of `/data/llama.cpp/ggml/include/gguf.h`, and the
+  the comment at the head of `<root>/llama.cpp/ggml/include/gguf.h`, and the
   writer's implementation of it at `ds4_gguf_write.h:73-105`).
 
 So the 15 rank>2 tensors keep their true rank in the tensor table, and no VQ
@@ -285,18 +285,18 @@ dim-4 device kernel is in scope now.
 ## 7. The baseline GGUF (phase 1a / row X.5a) — the same writer, the other arch
 
 STATUS 2026-10-19: WRITTEN AND VERIFIED. `tools/eg2_gguf.c` emits it, the port's own
-reader reads it back tensor by tensor, and `/data/llama.cpp` at 31288c9c loads it and
+reader reads it back tensor by tensor, and `<root>/llama.cpp` at 31288c9c loads it and
 computes a 768-dimensional embedding. Evidence: `docs/baseline-gguf-gate1a.txt`. The
 tables below are corrected against what the writer had to do; the four corrections
 (sliding_window doubled, the pattern as a bool array, 1-D tensors in F32, and the
 converter's extra keys) are each cited and were each measured, the first as a crash
 and the third as a crash, before they were fixed.
 
-The baseline is a plain GGUF that `/data/llama.cpp` can load, because phase 2's
+The baseline is a plain GGUF that `<root>/llama.cpp` can load, because phase 2's
 anchor run feeds it to `examples/embedding/embedding.cpp`. Arch string
-`gemma-embedding2` (`/data/llama.cpp/src/llama-arch.cpp:64`), alignment 32. The
+`gemma-embedding2` (`<root>/llama.cpp/src/llama-arch.cpp:64`), alignment 32. The
 authority for the key set is the converter that would write this file,
-`/data/llama.cpp/conversion/gemma.py:676-733` and `:815-832`, read against the loader
+`<root>/llama.cpp/conversion/gemma.py:676-733` and `:815-832`, read against the loader
 that consumes it.
 
 Key set, every name read from the loader that consumes it:
@@ -363,7 +363,7 @@ Norm weights ship **verbatim**: `Gemma3Model` adds +1.0 to every `norm.weight`
 (`:815-816`). The port must not add a shift either.
 
 Tensor names, the checkpoint name → the GGUF name
-(`/data/llama.cpp/src/llama-arch.cpp` name table):
+(`<root>/llama.cpp/src/llama-arch.cpp` name table):
 
 | checkpoint | GGUF | cite |
 | --- | --- | --- |
@@ -410,14 +410,14 @@ string and the byte account.
 
 | role | path | revision |
 | --- | --- | --- |
-| port base | `/data/embeddinggemma2/ds4-rs` | `eb67d493` |
-| form authority (read-only) | `/data/llama.cpp` | `31288c9c` |
-| writer and payload precedent | `/data/YoungAi` | `a4e6d31` for the quantizer sources cited by the packer, `3946dbc` for the vendored `vq_fmt.h` |
+| port base | `<root>/embeddinggemma2/ds4-rs` | `eb67d493` |
+| form authority (read-only) | `<root>/llama.cpp` | `31288c9c` |
+| writer and payload precedent | `<root>/YoungAi` | `a4e6d31` for the quantizer sources cited by the packer, `3946dbc` for the vendored `vq_fmt.h` |
 | our artifact and its evidence | `out/`, `docs/artifact-verify-summary.txt`, `docs/encode-plan.tsv`, `docs/tensor-inventory.tsv` | artifact sha256 `8902fb8a86ef7fdbd1dd079f08a0d1c4210237c1e9681d5545c983ccf0ce43fe` |
 | the artifact GGUF, written in phase 1b (the runnable form) | `out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf`, `out/artifact-manifest.tsv`, `out/artifact-inventory.txt`, `out/artifact-kv.txt`, `tools/eg2_artifact_check.sh` | sha256 `5bcf22161dda46bccbd5123b26d519efccad981cbfe11cce7227415b3373b33f`; evidence `docs/artifact-gguf-gate1b.txt` |
 | the baseline and its evidence (phase 1a, re-emitted in phase 2) | `out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf`, `docs/baseline-gguf-gate1a.txt`, `docs/anchor-gate2.txt` | baseline sha256 `0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201` |
 | the anchor: the frozen set and the reference's vectors (phase 2) | `tests/anchor/anchor-items.tsv`, `tests/expected/anchor-embeddinggemma2.jsonl` | anchor sha256 `7561254c85591521716ec801336e3cbc2bf47e7f00c945c4f97cb643d0d4961d` |
-| the anchor build (phase 2) | `/data/llama-anchor-build` (built from the pin above, never inside its tree) | llama-embedding, CPU backend |
+| the anchor build (phase 2) | `<root>/llama-anchor-build` (built from the pin above, never inside its tree) | llama-embedding, CPU backend |
 
 ## 9. Open items this document does not decide
 

@@ -31,7 +31,7 @@ was run and every number measured on 2026-10-20).
 |---|---|
 | Weights | [`google/embeddinggemma-2`](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b) `914f7f89142e33e77833254d9c9b90c3cef7303b`, Apache-2.0; `model.safetensors` 1,488,915,288 B, 1376 BF16 tensors, 1,488,743,984 B of tensor data |
 | Quantizer and container tool | YoungAi `a4e6d3177f310cabf3e8d5d214d437a7068ddf23` (the local checkout this bake ran against) |
-| Payload value rule | [`/data/ds4-dfm-rs`](file:///data/ds4-dfm-rs) `233dc7a944f556d53f0a4496368ec90d6c430bcb`, `ds41_vq_fmt.h:7`: `value[row][col] = codebook[idx][col % dim] * gain[row]` |
+| Payload value rule | `<root>/ds4-dfm-rs` `233dc7a944f556d53f0a4496368ec90d6c430bcb`, `ds41_vq_fmt.h:7`: `value[row][col] = codebook[idx][col % dim] * gain[row]` |
 | Encoder build | x86_64, no CUDA in the encode path (see section 8); CUDA 13.3 was used only to measure the GPU facts quoted there |
 
 The model is multimodal (`EmbeddingGemma2Model`: a 24-layer text tower, a 12-layer
@@ -87,9 +87,12 @@ nothing is padded into place.
 ## 4. Commands
 
 ```sh
-HF=/data/embeddinggemma2/.models/EmbeddingGemma-2-914f7f8   # the pinned checkpoint
-YA=/data/YoungAi                                            # a4e6d3177f310
-OUT=/data/embeddinggemma2/out
+# ROOT is the directory that holds this repository beside its read-only sibling
+# checkouts (YoungAi, llama.cpp, llama-anchor-build, ds4-dfm-rs)
+ROOT=/path/to/checkouts
+HF=$ROOT/embeddinggemma2/.models/EmbeddingGemma-2-914f7f8   # the pinned checkpoint
+YA=$ROOT/YoungAi                                            # a4e6d3177f310
+OUT=$ROOT/embeddinggemma2/out
 B=EmbeddingGemma-2-914f7f8-vq4x4096-q80token-dqvd.bin
 
 # 1. Fetch the pinned checkpoint (15 files, 1.49 GB)
@@ -166,7 +169,7 @@ tools/eg2_gguf_check.sh $OUT/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf \
 
 `--limit N` and `--only SUBSTR` write a smoke file whose `general.name` carries the
 marker `SMOKE-TEST-NOT-A-RELEASE`. The metadata is the converter's own key set for
-this arch (`/data/llama.cpp/conversion/gemma.py:676-733`, `:815-832`), read against
+this arch (`<root>/llama.cpp/conversion/gemma.py:676-733`, `:815-832`), read against
 the loader that consumes it (`src/llama-model.cpp:1382-1541`,
 `src/models/gemma-embedding2.cpp:3-13`); the tokenizer block is `gemma4` BPE with
 the checkpoint's own `model.vocab` as the token list, `-1000.0` scores, and the

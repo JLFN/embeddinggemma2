@@ -63,7 +63,7 @@ code is ds4-rs, branch feat/ds41-dsml-carriage.
 
    The batch is not an invention: llama.cpp's own batched path packs the tokens of
    several sequences CONTIGUOUSLY and carries per-token seq_id[] and pos[]
-   (/data/llama.cpp @ 31288c9c, src/llama-batch.cpp:140-193), and its mask keeps
+   (<root>/llama.cpp @ 31288c9c, src/llama-batch.cpp:140-193), and its mask keeps
    different sequences apart (src/llama-graph.cpp:482-517, `s0 != s1`) while the
    positions stay per-sequence.  The port mirrors exactly those two facts: rows
    packed with no padding, and every query's key range inside its own item with

@@ -56,7 +56,7 @@ F6.  No code defect found.  The load-bearing claims were driven independently:
      every head count but 4, and the removed plumbing leaves nothing dangling.
 
 F7.  THE ITEM-PLANE CSV WAS MISLABELLED.  Severity: record-only, but severe.
-     Evidence: speed-bench/eg2_embed_vizzio_attn-itemplane.csv held the fixed
+     Evidence: speed-bench/eg2_embed_bench_attn-itemplane.csv held the fixed
      ceiling plane's numbers (11.0454 s at batch 8), not the rejected item plane's
      (13.0896 s); read literally, the two committed CSVs would have shown the
      rejected variant FASTER than the shipped build, the opposite of the record's

@@ -2,7 +2,7 @@
  * to be driven on this machine's GPU (RTX 4070 SUPER, sm_89, CUDA 13.3).
  *
  * Why this file exists. The reference kernels in
- * /data/YoungAi @ a4e6d31 gguf-tools/quantize/vq_gpu.cu take host pointers
+ * <root>/YoungAi @ a4e6d31 gguf-tools/quantize/vq_gpu.cu take host pointers
  * directly and move nothing: vq_gpu.cu:8 states the assumption in its own words,
  * "GB10 统一内存: malloc 指针直传, 无显式搬运" (on the GB10 box the host malloc'd
  * buffers are device-accessible, so no copy and no pinning is needed). Whether
@@ -33,8 +33,8 @@
  *   all      the three allocation modes of assign, in three child processes
  *
  * Build (the reference's own flags for vq_gpu.cu; the Makefile rule at
- * /data/YoungAi/gguf-tools/Makefile:197 uses exactly "nvcc -O3 -arch=native -c"):
- *   nvcc -O3 -arch=native -c /data/YoungAi/gguf-tools/quantize/vq_gpu.cu -o out/vq_gpu.o
+ * <root>/YoungAi/gguf-tools/Makefile:197 uses exactly "nvcc -O3 -arch=native -c"):
+ *   nvcc -O3 -arch=native -c <root>/YoungAi/gguf-tools/quantize/vq_gpu.cu -o out/vq_gpu.o
  *   nvcc -O3 -arch=native -o bin/eg2_gpuprobe tools/eg2_gpuprobe.cu out/vq_gpu.o -lcublas -lcudart
  */
 #include <cuda_runtime.h>

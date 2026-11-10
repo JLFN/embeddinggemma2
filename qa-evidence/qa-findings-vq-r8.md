@@ -99,7 +99,7 @@ F16 (process) The tester first ran the engine repository's own tests/qa-gate.sh,
 which is an inherited stale mount from the ds4-dfm-rs lineage, with a
 qa-evidence/qa-report.md dated 2026-10-18 belonging to that project. That gate is
 red and unrelated to this unit. This project's rule-19 mount is the outer
-/data/embeddinggemma2/tests/qa-gate.sh, which scans both repositories against
+<root>/embeddinggemma2/tests/qa-gate.sh, which scans both repositories against
 their publish/dev bases; its result for this unit is recorded in qa-report.md.
 
 What the tester could NOT verify, kept visible: it did not re-measure the

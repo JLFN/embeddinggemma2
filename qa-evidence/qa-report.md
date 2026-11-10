@@ -4,7 +4,7 @@ grouped score pass
 
 Unit and repositories at verification time
 
-Engine /data/embeddinggemma2/ds4-rs, branch feat/eg2vq-attn-perf, HEAD 803decb7,
+Engine <root>/embeddinggemma2/ds4-rs, branch feat/eg2vq-attn-perf, HEAD 803decb7,
 five commits over 1c9938ba (the previous, already-QA'd unit's tip):
 
     72ef3ac1  perf(attn): have LAB lanes share one key row in attention's score
@@ -23,7 +23,7 @@ Only 72ef3ac1 touches code (the kernel and the gate's two new cases); every
 commit after it is evidence or comments, and the QA tester verified that with its
 own filter of the diffs.
 
-Outer /data/embeddinggemma2, branch feat/eg2vq-attn-perf, equal to its dev
+Outer <root>/embeddinggemma2, branch feat/eg2vq-attn-perf, equal to its dev
 a43479d plus the previous unit's record commits plus this unit's record commits.
 Nothing in either repository has been pushed.  Lineage, measured not assumed:
 `git rev-list --count publish/dev..dev` is 0 in the engine repository, so dev

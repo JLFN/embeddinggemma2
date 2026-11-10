@@ -4,7 +4,7 @@
 # Why this exists: tools/eg2_gguf.c hand-writes the checkpoint's tokenizer
 # metadata, reproducing llama.cpp's conversion/vocab path (conversion/gemma.py
 # set_vocab -> special_vocab.add_to_gguf). This probe runs that SAME reference
-# code (gguf-py from the pinned /data/llama.cpp) over the same checkpoint and
+# code (gguf-py from the pinned <root>/llama.cpp) over the same checkpoint and
 # dumps the GGUF keys it would write, so the hand-written key set can be
 # compared against the reference instead of assumed. The output is frozen into
 # docs/ as evidence; the runtime never reads this file (project rule P-1 allows
@@ -18,10 +18,13 @@
 # writes. Dump it with the port's own reader:
 #   cargo run -q -p ds4-core --release --example gguf_inventory -- <out_gguf>
 import json
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/data/llama.cpp/gguf-py")
+# the pinned reference checkout; override with LLAMA_CPP when it is not a
+# sibling of this repository
+sys.path.insert(0, os.environ.get("LLAMA_CPP", "../llama.cpp") + "/gguf-py")
 import gguf  # noqa: E402
 
 

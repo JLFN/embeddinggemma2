@@ -39,7 +39,7 @@ unit 22 froze (tests/vision/reference), which are already digest-recorded.
 2. THE AUTHORITY, AND THE FOUR THINGS THE GRAPH DOES NOT SAY
 ------------------------------------------------------------
 
-The graph is /data/llama.cpp @ 31288c9c tools/mtmd/models/gemma4v.cpp:5-117 with
+The graph is <root>/llama.cpp @ 31288c9c tools/mtmd/models/gemma4v.cpp:5-117 with
 the builders it calls in tools/mtmd/clip.cpp (build_vit :337-560, build_norm
 :607-628, build_ffn :628-700, build_attn :762-830) and the preprocessing in
 tools/mtmd/mtmd-image.cpp.  Every mechanism in ds4_eg2vq_vision_graph.inc

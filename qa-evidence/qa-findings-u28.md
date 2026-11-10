@@ -23,8 +23,8 @@ sites are section 1.
 - QA model: deepseek-v4.1-CC-flash (tests/qa-gate.sh:9-10, the model this
   project recorded; no substitution).
 - Date 2026-10-20. Host: RTX 4070 SUPER, sm_89, CUDA 13.3, 28 CPUs.
-  Workspace /data/embeddinggemma2, branch dev, outer HEAD 84d0849 (30 commits
-  over publish/dev d45394f); nested /data/embeddinggemma2/ds4-rs, branch
+  Workspace <root>/embeddinggemma2, branch dev, outer HEAD 84d0849 (30 commits
+  over publish/dev d45394f); nested <root>/embeddinggemma2/ds4-rs, branch
   feat/ds41-dsml-carriage, HEAD 0b28cb40 (11 commits over its publish/dev
   29873445). Both trees clean at the start of this pass.
 - No code was modified by this pass. The only file written in either tree is
@@ -348,7 +348,7 @@ where both C layers refuse)
   rather than by the core's own row check; the engine refuses 8193 rows by
   name before any allocation either way, so the boundary holds - noted for
   precision, not as a defect.
-- The pin (/data/llama.cpp) was not built or run; its citations were read as
+- The pin (<root>/llama.cpp) was not built or run; its citations were read as
   recorded by the units' own docs.
 - Out of scope by the owner's decisions: the audio tower, a multi-image item,
   the C CLI's tokenizer gap, and the two pushes.
