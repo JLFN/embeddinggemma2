@@ -1,16 +1,38 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: fee444bd561fcac6419de5ec3ea259fdde96a4c5
-branch: dev
+last_updated_commit: 7061fe094fcde946aa831ddb844cf00d0e8ce56c
+branch: feat/eg2vq-attn-perf
 remote: 
-handoff_written_at_context_usage: 16%   (recorded fact at this event; target 25-35, hard cap 40)
-handoff_written_at: 2026-10-20T18:11:08+02:00
-session_id: 01a1504c-af14-7c62-be24-2051df3b25e8
-boundary_state: clean
+handoff_written_at_context_usage: 23%
+handoff_written_at: 2026-11-10T15:20:00+01:00
+session_id: 01a1c513-c770-7f32-943d-da6a4603e4da
+boundary_state: clean/unpushed
 ---
+--- handoff probe (auto) ---
+=== handoff probe (embeddinggemma2) ===
+--- units completed since plan start (9f252ef):
+  (none)
+--- progress diff stat:
+README.md                               | 176 ++++++++++++++++++
+ RECIPE.md                               |   4 +
+ docs/USAGE.md                           | 296 ++++++++++++++++++++++++++++++
+ docs/ds4-gemma-port-phases.md           |   2 +-
+ docs/eg2vq-batch-gate27.txt             |  14 ++
+ docs/eg2vq-embed-media-gate26.txt       |  18 ++
+ embeddinggemma2-handoff.md              | 251 +++++++++++++++----------
+ qa-evidence/qa-findings-attn-grouped.md | 176 ++++++++++++++++++
+ qa-evidence/qa-findings-attn-perf.md    |  94 ++++++++++
+ qa-evidence/qa-findings-vq-r8.md        | 111 +++++++++++
+ qa-evidence/qa-report.md                | 313 ++++++++++++--------------------
+ tests/run.sh                            |   8 +-
+ 12 files changed, 1169 insertions(+), 294 deletions(-)
+--- staleness (last_updated_commit e5d9e9ce30d5b1223999a0a35bc67d8e722a5e36 .. HEAD):
+  (clean: handoff is current)
+--- end handoff probe ---
 
-Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-10-20 past the records sweep: the port is code-complete AND QA'd, the three stale-state places a later verification found are corrected, and everything that remains is the owner's -- section 3)
+
+Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-11-10 after the SEVENTH performance unit: the 768 projection runs on bf16 tensor cores, 7.13 -> 0.178 ms of a 33.0 ms forward; section 3 now points at the VQ payload GEMM, 58.7% of what is left)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -74,118 +96,75 @@ Nothing about rule 19 remains open.
    and the commits are in place, call the compact_session tool as the last action
    of that turn. The handoff write itself also parks a compaction.
 
-2. Current state (2026-10-20, re-verified at this boundary: everything the plan specified IS DONE — the port is code-complete, gated and QA'd — the whole test entry point was re-run here, fast AND deep, the record has been swept for stale state, and the only open items are the owner's)
+2. Current state (2026-11-10, re-verified IN THIS SESSION at the SEVENTH performance unit's boundary: the 768 projection runs on bf16 tensor cores, the request's kernel time is 33.0 ms; feat/eg2vq-attn-perf carries seven units and PR #1 is open in each repo into dev)
 
-- UNITS 19-28 LANDED: phases 1-8 complete (the image path end to end, and the batch), and rule 19 satisfied once over the whole accumulated port.
-- UNIT 27 (the batch, ds4-rs 0b28cb40) and UNIT 28 (the QA pass, nested e01eba8e, outer 9f252ef) closed: several items reach the tower in ONE call, a batched item's vector is its single-item vector BYTE FOR BYTE (6 items / 3881 rows and 64 items / 1280 rows), one call is 1.18x the warm per-item rate on the mixed set and 8.65x on 64 small items (1323 -> 11190 rows/s), 8192 rows are accepted in one call (912.13 MiB workspace) while 8193 are refused, and on the wire an array request equals the same items one per request byte for byte on both backends.
-- THE QA PASS (unit 28) IS DONE: qa-evidence/qa-report.md is fresh, names all eleven surfaces the gate's extractor finds plus the multi-line F6 set, and ends `verdict: overall PASS`; qa-evidence/qa-deferral.txt is DELETED; tests/qa-gate.sh runs for real in the fast path (step 11) and prints `QA GATE: overall PASS` (15 checks). The pass found three defects, each now fixed with its confirming check (qa-evidence/qa-findings-u28.md): tools/eg2_embed_route_gate.sh's caps check had been RED on HEAD since unit 26 grew the /health contract (fixed; the supersession is recorded in docs/eg2vq-serving-caps-gate20.txt's LATER NOTE); the C sources' per-row cost was one plane stale (116,748 B / 912.13 MiB now, and the layout comment is the one place the arithmetic lives); and Model::embed_gemma_vq_batch now checks its span table rises BEFORE subtracting, so no build profile underflows where the docstring promises an Err.
-- THE ROW COST detail (still the most-cited number): 116,748 B a row, 228.03 MiB at 2048 rows, 912.13 MiB at the 8192 budget; the old 108,548 / 848.0 MiB figures were one plane stale since unit 25 (the image splice's in_soft plane). gate 27 checks the model against the workspace a real call allocates.
-- Machine-facing facts RE-RUN AT THIS BOUNDARY (HEAD d9b3693) — NOTHING IS CARRIED any more: the WHOLE test entry point, fast AND deep, in one frozen run; `tests/run.sh --deep` GREEN, steps 1-14 ALL PASS, 24 m 55 s wall (1495.61 s, 191 m 11 s CPU), logs in the gitignored `out/reverify-d9b3693/` (`run-deep.log` plus the five standalone ones below). FAST PATH (steps 1-11): the fourteen digests, the DQVD container's structure, the scorer's 8-case self-test, loader gate 3 over 1376 tensors, gates 22, 23, 24, 25, 26 and 27, and the REAL rule 19 gate printing `QA GATE: overall PASS (deepseek-v4.1-CC-flash evidence fresh and covering)` over 15 checks. DEEP PATH (steps 12-14): gate 1b — 1376 tensors agree with the writer's manifest AND are byte-identical to the container's payloads, 914 verbatim, 461 carrying the DQVQ magic; the Rust suite `cargo test -q -p ds4-core` 664 passed / 0 failed across 41 result lines; and gate 4, the CPU reference tower against the frozen anchor, whose BASELINE leg is min cos 0.999987125 / mean 0.999997377 over 113 items (worst e06) and whose ARTIFACT leg is REPORTED, not asserted, by the gate's own design line (`no DS4_EG2VQ_MIN_COS: derived vectors, nothing asserted`) — 768 0.829453471 / 0.960067049, 512 0.838662031 / 0.961372995, 256 0.849044592 / 0.965512940, 128 0.890588368 / 0.976129403, 113 items, worst e05 at every width; that is the codec's own loss on this set, and gate 5's distribution in docs/retrieval-cost-gate5.txt is the analysis of it. FINAL BOUNDARY CHECK at 41534dc, after these very docs commits: the fast path again GREEN, steps 1-11, 3 m 0 s (179.77 s), the fourteen digests OK and the rule 19 gate reading `QA GATE: overall PASS` — log `out/reverify-d9b3693/run-fast.log` (an earlier attempt at the same commit died on a full /tmp: see the harness lessons below).
-- ALSO RE-RUN STANDALONE at this boundary, each in its own log under `out/reverify-d9b3693/`: `cargo check --workspace --all-targets` clean (warnings only); the three device harnesses EG2VQ_VQ_PASS, EG2VQ_ATTN_PASS (mask edge 512 sees / 513 blind, two items packed reading their own rows, the 5-head refusal) and EG2VQ_OPS_PASS (every bound printed before the comparison); gate 20 EG2VQ_EMBED_ROUTE_PASS — route vs CLI dim=768 cos=1.000000000000 against the tool's declared `>= 0.999999`, /health's caps literal unchanged, and both over-cap requests still refused by name; and a FRESH rule 10 OSV scan of ds4-rs/Cargo.lock (140 packages, 0 vulnerable, osv.dev, queried 2026-10-20T15:33:12Z; the outer repo carries no lockfile of its own, so one scan covers the project).
-- STALE-STATE SWEEP AT THIS BOUNDARY (commit 6cd172f, records only, no code): three tracked files still asserted rule 19 was DEFERRED after unit 28 had discharged it — tests/run.sh's step-11 prose (naming qa-evidence/qa-deferral.txt, a file deleted in 9f252ef) and sections 8 and 9 of the gate-26 and gate-27 evidence docs, each of which now carries a dated LATER NOTE in the shape unit 28 used on gate 20's document — and docs/ds4-gemma-port-phases.md row X.1's status cell read OPEN (the legend's "not started") although its four legs are delivered; the cell now records that with each leg cited, the row's content unchanged. The phase doc's genuinely open rows are now exactly three: P4.2 (the audio tower, the owner's scope decision), X.3 (KV checkpoints, out of scope) and X.4 (a push-time checklist).
-- LEFT IN PLACE, PUT TO THE OWNER (section 3 item 5): the deferral BRANCH in tests/qa-gate.sh (lines 150-162). It is live behaviour, not a stale string — a checked-in qa-evidence/qa-deferral.txt would still make the gate exit 0 holding no verdict — and the QA report on disk describes the gate as it stands, so retiring it is the owner's call rather than a sweep fix.
-- HARNESS LESSONS, both measured. (1) Never EDIT tests/run.sh while it is running: Bash reads a script by byte offset, so a mid-run edit killed a healthy run after step 7 with `tests/run.sh: line 102: syntax error near unexpected token '('` — and because the run was piped to tail, the pipeline's exit status was 0, so the wreckage looked like a pass until the output was read. Freeze the tree first, then run. (2) The fast path needs about 4 GB of free /tmp, because loader gate 3 (step 4) makes eight tamper copies of the 417 MiB artifact, and /tmp here is a 16 GiB tmpfs SHARED with every other session on this machine: a concurrent job's test run can take it to zero and step 4 dies with `cp: error copying '/tmp/eg2-loader-check.XXXXXX/base.gguf' ...: No space left on device` (measured 2026-10-20 18:06, while another session was writing /tmp/ds4-v41-disk-* and /tmp/ds4-cache-ple-*). Read that as environmental pressure, not as a defect in the port — the free-byte count is the diagnosis; this project's own /tmp/eg2-* litter (a 957 MiB pile of old gate copies and logs) was cleared and the same run went green in 3 m 0 s.
-- PUSHED AT THIS BOUNDARY, by the owner's word (2026-10-20): both repos went out as FAST-FORWARDS, after the three checks rule 6, rule 10 and rule 19 require. Rule 6: `gh repo view` with the authenticated CLI on both targets — JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC (`isPrivate: false`) and both the previously pushed targets (`pushedAt` 2026-10-19), so nothing private went anywhere. Rule 10: a FRESH `osv-mcp osv_map_dependencies` of ds4-rs — 1 manifest, 140 packages, 0 vulnerable, osv.dev, queried 2026-10-20T16:20:53Z (same clean result as this boundary's earlier 15:33:12Z scan). Rule 19: `bash tests/qa-gate.sh` at 1d834e9 — `QA GATE: overall PASS (deepseek-v4.1-CC-flash evidence fresh and covering)`, 15 checks, rc=0. Then `git push publish dev` (outer, d45394f..1d834e9) and `git push publish feat/ds41-dsml-carriage:refs/heads/dev` (nested, 29873445..e01eba8e), each rc=0, each verified afterwards by `git ls-remote --heads publish` — a SERVER-side read, not the push's own output: refs/heads/dev is 1d834e9 and e01eba8e, and `git rev-list --count publish/dev..HEAD` is 0 in both repos. What the push carried: no artifact (out/, .models/ and ds4-rs/ are gitignored), so the release is identified by SHA256SUMS' fourteen digests and by the pins inside the gate scripts.
-- Workspace: /data/embeddinggemma2, branch dev, HEAD = 1d834e9, which is now ALSO the remote tip of publish/dev; ds4-rs HEAD = e01eba8e, likewise published. Commits created AFTER this push (the record of the push itself, docs-only) are ahead of the remote by construction: read `git rev-list --count publish/dev..HEAD` in each repo rather than any number printed here. The nested branch stays named feat/ds41-dsml-carriage locally and lands as `dev` on publish, which is the recorded refspec. OUT/, .models/ and ds4-rs/ are gitignored: the artifacts are identified by the digests in SHA256SUMS, and this boundary's six verification logs are in the gitignored out/reverify-d9b3693/.
-- TWO RECORD-HYGIENE FACTS settled at this boundary, both measured, both about the tooling rather than the port. (a) A handoff file left DIRTY by the hooks is normal at a boundary: the previous turn's boundary was committed and then the SessionEnd/PreCompact hook rewrote only the three volatile frontmatter fields at 16:03:03 (last_updated_commit to HEAD, the usage reading, the timestamp) — the body was byte-identical, and the next session should fold that write into its own frontmatter commit instead of reading it as uncommitted work. (b) `~/.opengrok/sessions/%2Fdata%2Fembeddinggemma2/handoff-note.txt` claimed this workspace "is NOT a git repository": the claim was TRUE when written — this session's directory was created 2026-10-18T18:36:05Z and the repo's first commit 0b12d1b is 20:47:44 the same evening — and nothing ever removed it, because the probe removes that note only on SessionStart and a session starts once. A hand run of the probe against the now-git workspace printed the correct readout (units since plan start, the progress diff stat, `clean: handoff is current`) and deleted the note. Do not hand-run the probe mid-session for fun: it appends its block into this very file (it was restored from a snapshot here).
-- WHAT IS LEFT IS THE OWNER'S, in order: (1) THE TWO PUSHES ARE TAKEN (taken 2026-10-20 on the owner's word, both fast-forwards, remote tips verified by ls-remote — see the push bullet above and section 3 item 1, now discharged; the only residual is a rollback, which would be the owner's call); (2) the C CLI's tokenizer gap (the Rust host owns encoding; the C CLI refuses the artifact by name); (3) the AUDIO tower (out of scope; the owner asked for vision); (4) a MULTI-IMAGE item (the checkpoint's card allows several `<|image|>`s; this port supports one, `embed.image.per_item_max`, because the splice fills one contiguous run — widening it needs the CPU graph, the device ops and the engine's span check together); (5) RETIRING THE QA GATE'S DEFERRAL BRANCH (tests/qa-gate.sh:150-162), now that the instruction it mechanises is discharged. NO unprompted code unit remains: if a session finds nothing new from the owner, the honest action is to stop and say so, not to invent work.
+- THE SEVENTH PERFORMANCE UNIT, COMMITTED: engine a2e69a41 (the kernel, its gate, the bench rows and the record). The branch is published; the promotion of dev into main is the last step this session performs and is recorded in section 7.
+- WHAT IT IS: cuda/eg2vq_ops.cuh's projection moved to mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32, a 64-token x 64-output tile per block with K in 64-wide shared chunks; the block-per-row kernel kept as eg2vq_ops_proj768_block_kernel (A/B and the fallback), the launcher split into eg2vq_ops_proj768_pool_form(..., form) with -1 the shipped dispatch. The row's output_norm RMS is the prologue and each row still lands in its own plane (unit 27).
+- THE OPERAND DECISION, MEASURED BEFORE THE KERNEL: one bf16 A puts the pooled vector at rel_rms 1.651e-03, one f16/tf32 A at 1.99e-04 (both outside the gate's 1e-5); A split into bf16 hi + bf16 lo with both products accumulated reads 2.495e-06, so that is what ships and B stays the file's bf16.
+- MEASURED, one window, both forms interleaved, reproduced in a second round: 6.5311 -> 0.3018 ms at 2,451 rows (21.64x), 12.68x at 294 rows, 5.89x at 27 rows. In the real forward: 7.13 -> 0.178 ms (40.0x, 10.8 TFLOP/s of useful work) and the request's kernel time 40.0 -> 33.0 ms.
+- END TO END, both round pairings, 143 pages / 80,747 tokens: batch 1 1.04x/1.04x, batch 4 1.14x/1.15x, batch 8 1.12x/1.12x.
+- GATES: test-eg2vq-ops PASS at 2.764e-06 against the unchanged 1e-5 (block fallback 4.121e-07, pair 2.75e-06, the three-item case 2.47e-06); test-eg2vq-attn and -vq PASS; gate 7 run A cos 0.999999768 / rel_rms 6.814e-04 and run B cos 0.999999744 / 7.156e-04 (declared 0.999999 / 1e-03); gate 27 byte-identical on both legs; fast path exit 0; P-1's five checks zero; digests 14/14; OSV 140 packages / 0 vulnerable.
+- A HARNESS DEFECT FIXED WITH IT: tests/test_eg2vq_ops.cu's report() printed "ok" for a NaN (rel > bound is false for NaN); it is now !(rel <= bound).
+- THE RECORD: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/proj768-tensor-cores.md, proj768-ab-bench{,-run2}.txt, nsys-kern-sum-b8-proj-mma.txt, corpus-proj-ab-{old,new}-{1,2}.csv with their health readouts.
+- NOT RE-RUN: the deep path (tests/run.sh --deep), gate 20's route gate, the loader digest and gate 5. The vision tower does not call this kernel.
+- THE ENGINE PR'S ONE RED CHECK is pre-existing and not this branch's: host-parity fails cargo fmt --check inside crates/ds4-server/tests/retry.rs, a path this branch does not touch (0 commits under crates/ds4-server over publish/dev..HEAD). No status check is required on either protected branch, so it does not block a merge; the recorded fix is the chore/fmt-workspace branch c595fca3.
 
-3. Next unit plan — NOTHING UNPROMPTED REMAINS: the owner's items, and the push mechanics
+3. Next unit plan — RE-ABLATE THE VQ PAYLOAD GEMM at its shipped R=8, then optimize what the ablation names
 
-The plan is complete: every code row this project owns is landed, gated and QA'd
-(section 2), the phase doc's three remaining OPEN rows are not code (P4.2 the audio
-tower, X.3 KV checkpoints, X.4 a push-time checklist), and the records were swept at
-this boundary for anything that still described the pre-QA state (section 2's sweep
-bullet). There is no further code unit this session may start on its own initiative.
-What follows is what a session may DO when the owner answers, in the order the
-owner's own instructions put it.
+(1) THE UNIT, AND WHY IT IS NEXT. MEASURED AT THIS BOUNDARY, from the nsys
+    profile of the same 8-item / 2,451-token batch (pages 001-008 of
+    out/live-demo/pages; raw: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/
+    nsys-kern-sum-b8-proj-mma.txt), 33.03 ms of kernel time in total:
+      VQ GEMM     19.40 ms (58.7%): mma<64> 10.79 / 144 launches,
+                                    mma<128> 8.61 / 73
+      attention    5.40 ms (16.3%): slide 3.82 / 20, full 1.58 / 4
+      norms        4.90 ms (14.8%): warp<16> 3.18 / 133, warp<8> 1.72 / 60
+      other ops    3.14 ms (9.5%): add 0.79, scale 0.69, gelu 0.65, rope 0.52,
+                                    gelu_strided 0.40, embed 0.06, pool 0.05
+      proj768      0.18 ms (0.5%): this unit
+    The payload GEMM is the tower's dominant cost and every other kernel is now
+    at or under a fifth of it. Freeze the baseline in the same window before
+    touching anything: ./tests/bench_eg2vq_vq 7 and ./tests/bench_eg2vq_ops 200.
 
-(1) THE TWO PUSHES — TAKEN 2026-10-20 on the owner's word ("yes push to thsi two
-    remote repo"): outer publish/dev d45394f..1d834e9 and nested publish/dev
-    29873445..e01eba8e, both fast-forwards, both rc=0, both verified by ls-remote
-    afterwards (section 2's push bullet carries the three pre-push checks and their
-    results). There are exactly TWO destinations — JLFN/embeddinggemma2 and
-    JLFN/embeddinggemma2-ds4-rs — and both are PUBLIC; the nested repo's other two
-    remotes (fork = JLFN/ds4-dfm-rs, origin = Baekpica/ds4-dfm-rs) are upstreams this
-    project reads and does not push to, and they were checked for visibility only
-    because rule 6 says check the target rather than assume it. The recipe stays here
-    for any later docs-only commit and because it is what a next push must re-run in
-    full — the counts MUST come from `git rev-list --count` in each repo, never from
-    this document:
+(2) WHAT TO READ BEFORE CHANGING IT: cuda/eg2vq_vq.cuh's mma kernel (the tile,
+    the 12-bit index gather, the codebook lookup, the two instantiated BN
+    tiles), and the two records that already chose its shape —
+    docs/benchmarks/eg2-embedding-2026-10-20/vq-gemm-rows.md (why 8 rows per
+    thread), mma-vq-gemm.md, probe-r8-rows.txt, probe-ablation.txt, probe-bn128.txt.
+    The unit is an ABLATION first: re-run the sweep over rows per thread, BN
+    tile and slab depth at the shipped configuration and report where the
+    measured optimum sits now, because two later units changed what the kernel
+    competes with.
 
-    OUTER (docs, tools, tests, gates, evidence):
-      cd /data/embeddinggemma2
-      git ls-remote --heads publish                 # the remote's own tip; never the prose's
-      gh repo view JLFN/embeddinggemma2             # rule 6: PUBLIC, and still the intended target
-      osv-mcp osv_map_dependencies /data/embeddinggemma2/ds4-rs   # rule 10, fresh (last: 140 pkgs / 0 vuln, 2026-10-20T16:20:53Z)
-      bash tests/qa-gate.sh                         # rule 19: must print QA GATE: overall PASS
-      git push publish dev                          # fast-forward
-    NESTED (the engine):
-      cd /data/embeddinggemma2/ds4-rs
-      git push publish feat/ds41-dsml-carriage:refs/heads/dev    # fast-forward
-    ROLLBACK if a push must be undone: the ranges are fast-forwards, so the reverse
-    is a force-push to the recorded tip (outer `git push --force-with-lease publish
-    d45394f:refs/heads/dev`, nested `git push --force-with-lease publish
-    29873445:refs/heads/dev`) — a force-push is the owner's call, and both local
-    histories are kept either way. CHECK BEFORE PUSHING: `git rev-list --count
-    publish/dev..HEAD` in each repo, and confirm the remote tip with ls-remote
-    rather than trusting this document's count.
+(3) THE METHOD, unchanged: one change per unit, A/B'd inside one window with
+    both round pairings, the bench harness extended first if the ablation needs
+    a column it does not have, gate 7 plus the interleaved 143-page corpus sweep
+    (batches 1, 4 and 8) as the end-to-end evidence, `make test-eg2vq-vq` for
+    the kernel gate, gate 27 and tests/run.sh for the contract legs, and
+    REG/STACK/LOCAL/SHARED from cuobjdump reported. The bench binary compiles the
+    header in, so rebuild it after every header edit.
 
-    WHAT THE PUSH CARRIES: no artifact. out/, .models/ and ds4-rs/ are gitignored,
-    so the release is identified by SHA256SUMS' fourteen digests and by the pins
-    inside the gate scripts. The tracked binaries in bin/ are rebuilt by the gates;
-    the anchor binary is deliberately NOT tracked (it links the pin).
+(4) THE OWNER'S STANDING LIST, unchanged: the C CLI's tokenizer gap; the AUDIO
+    tower (out of scope); a MULTI-IMAGE item; retiring the inert QA deferral
+    branch in tests/qa-gate.sh; the three branch-standard decisions (default
+    branch, the chore/fmt-workspace unit at c595fca3 whose gate is red, retiring
+    the duplicate feat/ds41-dsml-carriage); and the engine repo's inherited
+    stale rule-19 mount (ds4-rs/tests/qa-gate.sh — the project's mount is the
+    OUTER one). A kernel-level QA pass over the tensor-core arithmetic (four
+    units now) is the open discipline item; the rule-19 extractor cannot see a
+    kernel header.
 
-(2) THE C CLI'S TOKENIZER GAP — the owner's call. The family's gemma4 BPE lives in
-    the Rust host (crates/ds4-core/src/tok/gemma_vq.rs); the C CLI refuses this
-    artifact by name because it has no encoder for it. Closing it means porting the
-    tokenizer into C (a real unit, and a second implementation of something that
-    already has a gated one) or teaching the C CLI to call the host's encoder. Do
-    not start either without the owner's word: the port's contract today is that the
-    Rust host owns encoding, and every gate measures that.
+(5) PUSH DISCIPLINE: unchanged in form — a push is an OFFER, and the offer
+    carries branch, range, visibility, gate results and the exact rollback. The
+    2026-11-10 promotion (PR #1 into dev, then dev into main in both repos) was
+    performed on the owner's explicit instruction and is recorded in section 7;
+    it authorizes nothing beyond itself.
 
-(3) THE AUDIO TOWER — out of scope by the owner's own scope decision (vision was
-    asked for). The artifact carries 744 audio_tower.* tensors; nothing in this port
-    reads them.
-
-(4) A MULTI-IMAGE ITEM — the next FAITHFULNESS gap, not a defect. The checkpoint's
-    model card allows several `<|image|>` placeholders per item (its own example has
-    two); this port supports one (`embed.image.per_item_max` = 1) because the splice
-    fills ONE contiguous run. Widening it is a real unit: the CPU graph's splice,
-    the device entry's span handling, the engine's span check, the Rust sequence
-    builder and the caps all move together — and the reference's own expander
-    (tools/mtmd at the pin) is the thing to read first.
-
-(5) RETIRING THE QA GATE'S DEFERRAL BRANCH — the owner's call, and nothing is broken
-    without it. tests/qa-gate.sh:150-162 still carries the branch that mechanised
-    the owner's deferral: while qa-evidence/qa-deferral.txt exists and is non-empty,
-    the gate lists the new surfaces, prints that it holds NO VERDICT and exits 0.
-    The instruction it mechanises is discharged and the file is gone (deleted in
-    9f252ef), so the branch is inert today -- but it is live behaviour rather than a
-    stale string: whoever checks that file in again silences rule 19's verdict while
-    the fast path still shows a green step. Retiring it means the gate always holds a
-    verdict, which is the right steady state for a complete port; the QA report on
-    disk describes the gate WITH the branch, so a pass should follow the change (the
-    one check that matters: "QA GATE: overall PASS" with the branch gone) rather than
-    precede it. Until the owner says so, leave it: the sweep at this boundary
-    deliberately did not touch it.
-
-(6) WHEN NOTHING IS ASKED: the fast path is green, the QA gate is green, both trees
-    are clean and every number in the evidence docs has a run behind it. A session
-    that finds no new owner instruction should say so and stop; inventing work (a
-    refactor, a beauty pass, a new gate for a number nobody questioned) is not
-    "continuing the port" and would put the pushed series at risk for no reason.
-
-WHAT A SESSION MUST NOT DO AT THIS BOUNDARY: re-open a closed row to "improve" it
-(the port's quality floor, the caps and the cost model are pinned by tests and
-gates), weaken a declared bound, run the pin in a default path (owner directive),
-or push without the owner's word — the only thing standing between this state and a
-release is the owner's answer, not more code.
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
 | Role | Root and pin | What is read from it |
 |---|---|---|
-| Port base (all the work) | /data/embeddinggemma2/ds4-rs @ e01eba8e, branch feat/ds41-dsml-carriage, gitignored by the outer repo, own git | ds4.c, ds4.h, ds4_eg2vq.{h,inc,graph.inc,gpu.cuh}, ds4_eg2vq_vision.{h,inc}, ds4_glmvq*.{h,inc}, cuda/eg2vq_{attn,ops,vq,vis}.cuh, native/bridge/ds4_bridge.{c,h}, crates/ds4-core/src/**, crates/ds4-server/src/**, crates/ds4-sys/src/lib.rs, tests/parity/, tests/test_eg2vq_{attn,ops}.cu, the Makefile |
+| Port base (all the work) | /data/embeddinggemma2/ds4-rs @ 10e73aa0, branch dev (published as publish/dev), gitignored by the outer repo, own git | ds4.c, ds4.h, ds4_eg2vq.{h,inc,graph.inc,gpu.cuh}, ds4_eg2vq_vision.{h,inc}, ds4_glmvq*.{h,inc}, cuda/eg2vq_{attn,ops,vq,vis}.cuh, native/bridge/ds4_bridge.{c,h}, crates/ds4-core/src/**, crates/ds4-server/src/**, crates/ds4-sys/src/lib.rs, tests/parity/, tests/test_eg2vq_{attn,ops}.cu, the Makefile |
 | Form and metadata authority | /data/llama.cpp @ 31288c9c (b11723, MIT, read-only, source only) | src/models/gemma-embedding2.cpp, src/llama-{arch,hparams,model,graph,vocab,batch}.cpp (llama-batch.cpp's ubatch packing and llama-graph.cpp's fill_mask are unit 27's semantics), ggml/include/gguf.h, conversion/{gemma,base}.py, gguf-py/gguf/**, examples/embedding/embedding.cpp, tools/mtmd/** (phase 8) |
 | The VISION reference (phase 8) | /data/llama.cpp @ 31288c9c, the same pin | tools/mtmd/models/gemma4v.cpp (:5-117), tools/mtmd/clip.cpp (:337-450, :144-147, :254-256, :973-979, :1719-1736, :4419-4428, :1342-1352), clip-impl.h:112-157, mtmd.cpp:953-961, mtmd-image.cpp:57-96 / :122-156 / :204-390 / :7-14, clip-model.h:66-68 / :204-211, mtmd-helper.cpp:404, conversion/gemma.py:978-1063 |
 | The WIRE's own contract | our own committed data | .models/EmbeddingGemma-2-914f7f8/README.md section 5 (the model card: `<|image|>` marks the position, prefixes apply to text only, the 70..1120 budget) and config.json's ids (image 258880, boi 255999, eoi 258882) |
@@ -296,12 +275,14 @@ release is the owner's answer, not more code.
 
 7. Guardrails and open items
 
+- LANDED (2026-11-10, owner's instruction "do what is best so i get all the all the fix"): the promotion. PR #1 merged into dev in both repositories — engine merge commit fd30ce3e (dev tip), outer c9a6e04c — and then a dev -> main PR in each, merged the same way. Both remotes' main and dev now carry the same seven performance units and every port commit; nothing was force-pushed and no history was rewritten (main was 5 commits behind dev in the outer repo with no unique commits, and equal to dev in the engine). The feature branch is left in place until the owner asks for its deletion.
 - P-1 (no Python in the runtime, ever) and P-2 hold; all five P-1 checks return zero and `sha256sum -c SHA256SUMS` passes (14/14, re-verified at this boundary).
-- RULE 19 IS SATISFIED for the whole accumulated port: qa-evidence/qa-report.md is fresh and reads `verdict: overall PASS`, qa-evidence/qa-deferral.txt is deleted, and tests/qa-gate.sh (fast-path step 11) prints `QA GATE: overall PASS` with 15 checks. Any NEW commit that adds a surface makes the report stale again and the gate red — which is the rule working, not a problem: a push must therefore happen with no unprepared surface after the report.
+- RULE 19 IS SATISFIED for the whole accumulated port AND for the performance units: qa-evidence/qa-report.md reads `verdict: overall PASS`, qa-evidence/qa-deferral.txt is deleted, and tests/qa-gate.sh prints `QA GATE: ALL PASS (no new runtime, route or public-API surfaces relative to publish/dev and ds4-rs/publish/dev)` with exit 0, re-run after this unit's commit. Any NEW commit that adds a surface makes the report stale again and the gate red — which is the rule working, not a problem: a push must therefore happen with no unprepared surface after the report.
+- OPEN (owner), added at this boundary: the ENGINE repo carries an inherited stale rule-19 mount — ds4-rs/tests/qa-gate.sh and ds4-rs/qa-evidence/qa-report.md (2026-10-18, from the ds4-dfm-rs lineage, 76 KB, covering that project's PR 67). The QA tester ran it by mistake, got "QA GATE: FAIL (342 check(s) red)" over surfaces belonging to another project, and reported it as this unit's gate. The project's mount is the OUTER tests/qa-gate.sh, which scans both trees. Retiring the inner copy is engine-branch surgery, so it is an owner decision.
 - F6 stands: the surface extractor matches single-line definitions, so multi-line C entry points never appear in its list. Unit 27's are ds4_engine_embed_gemma_vq_batch, ds4_gpu_eg2vq_embed_batch, ds4_eg2vq_ref_embed_batch, eg2vq_ops_proj768_pool_batch, ds4_bridge_eg2vq_embed_batch and Model::embed_gemma_vq_batch's Rust checks; unit 26's are listed in section 3 of its evidence doc.
 - OPEN FLAKE, RECORDED NOT FIXED: `cargo test -p ds4-server --lib` fails `cache_identity::tests::bounded_sidecar_and_ple` intermittently (3 runs: 1 pass, 2 fail; the two identity arrays come out identical, so the test's own premise — that a rewrite changes the stat — does not hold on this filesystem). cache_identity.rs is not in units 25-27's diffs; the fast path does not run it. Fixing it touches the shared engine branch: a finding for the owner.
 - CLOSED: the container, the quality floor, the caps, the llama-free boundary, phase 7's device path, the vision tower on both legs, the splice, the engine entries, the wire, the batch (units 23-27), and the FINAL RULE 19 PASS (unit 28: eleven surfaces covered, three findings fixed and closed).
-- OPEN (owner): the two pushes, ready to take. Rule 10 is re-run and fresh (osv-mcp: 140 packages, 0 vulnerable, ds4-rs/Cargo.lock, 2026-10-20T12:11Z), rule 19 is satisfied as of the report, and both local histories are clean. Outer: `git push publish dev`, range d45394f..HEAD (read `git rev-list --count publish/dev..HEAD` for the exact number; docs/tools/tests/gates 22-27 and their evidence — no artifact: out/, .models/ and ds4-rs/ are gitignored; the tracked binaries in bin/ are rebuilt by the gates, and the anchor binary is deliberately NOT tracked because it links the pin). Target publish = https://github.com/JLFN/embeddinggemma2 (rule 6 wants a fresh `gh repo view` immediately before the push). Nested: `git push publish feat/ds41-dsml-carriage:refs/heads/dev`, range 29873445..HEAD (TWELVE commits as of e01eba8e). Gates already run for both: rule 10 OSV 140 packages / 0 vulnerable (re-run 2026-10-20, fresh), rule 19 satisfied (report fresh, gate green), rule 5/12 as recorded. Rollback if a push must be undone: `git push --force-with-lease publish d45394f:refs/heads/dev` (outer) — a force-push, so the owner's call; both local histories are kept either way.
+- LANDED (2026-10-21, on the owner's word): the push, which was an OFFER for three units and is now done. Both targets were verified fresh first (rule 6: JLFN/embeddinggemma2 and JLFN/embeddinggemma2-ds4-rs, both PUBLIC, default branch dev), rule 10 OSV was re-run (140 packages, 0 vulnerable), rule 19's gate and the whole fast path were green at the pushed revision, and the ranges were read from git rather than from this file. Result: `publish/feat/eg2vq-attn-perf` in both repositories, and PR #1 into dev in each (JLFN/embeddinggemma2-ds4-rs#1 and JLFN/embeddinggemma2#1). dev was NOT pushed to directly, per rule 23. The outer PR carries dev's five unpushed doc commits with it. NO FURTHER PUSH IS AUTHORIZED: the next one is an offer again, and it must re-run the same four checks fresh.
 - OPEN (owner): the C CLI's tokenizer gap (the family's gemma4 BPE is Rust-side; the C CLI refuses the artifact by name) and the AUDIO tower (out of scope; the owner asked for vision).
 - STANDING (owner, 2026-10-19): AFK; automatic continuation after each handoff and compaction; pushes stay offers. Recorded in section 1 with the two later directives.
 - Nothing is in flight in either repository. The nested checkout's working tree is clean at e01eba8e; the outer tree carries the unit-27 and unit-28 commits and this handoff.
@@ -311,15 +292,26 @@ release is the owner's answer, not more code.
 8. Progress and staleness check (run this first, every session)
 
     cd /data/embeddinggemma2
-    git log --oneline d6da36680643c48c144536caf658e360b6d30d82..HEAD
-    git log --grep "Unit: .* complete" d6da36680643c48c144536caf658e360b6d30d82..HEAD
-    git status --short && git branch -vv                 # clean, on dev; every commit since publish/dev d45394f is unpushed (read the count, never this comment)
-    tests/run.sh                                         # the fast path (2 m 51 s, gates 22-27 included), ending in the rule 19 gate
+    git status --short && git branch -vv                 # clean, on feat/eg2vq-attn-perf; read the count with `git rev-list --count publish/dev..HEAD`, never from a comment
+    git log --oneline publish/dev..HEAD                  # what the outer branch carries BELOW the push (0406051, d3b5397, 259ce6b, 3aa7f99, 198fbc9 are published; only this handoff's own commit is local)
+    git -C ds4-rs status --short && git -C ds4-rs log --oneline -8   # clean; HEAD = 7cafa2a2 (the chart and the error pair) on feat/eg2vq-attn-perf, based on dev 10e73aa0 = publish/dev
+    git -C ds4-rs rev-list --count publish/dev..HEAD     # 12 over publish/dev, ALL PUBLISHED (the three units: 31285531, 8d618ecb, 72ef3ac1 and their records/QA commits, then 7cafa2a2 the chart) -- and `publish/dev..dev` must be 0
+    make -C ds4-rs test-eg2vq-attn                       # EG2VQ_ATTN_PASS: the kernel THIS unit changed (nine arithmetic cases, mincos 1.000000000), plus the two dispatcher-fallback cases
+    make -C ds4-rs bench-eg2vq-attn                      # attention's per-shape table (the shape A/B this unit's record quotes)
+    make -C ds4-rs test-eg2vq-vq                         # EG2VQ_VQ_PASS: the previous unit's kernel, unchanged since
+    make -C ds4-rs bench-eg2vq-vq                        # the per-shape table the GEMM unit's record quotes (~10% error bar per row)
+    tests/run.sh                                         # the fast path (~2 m 36 s this boundary, gates 22-27 included), ending in the rule 19 gate -- RE-RUN and green at this boundary (the first attempt failed only because a stale ds4-server of an earlier session held /tmp/ds4.lock)
     sha256sum -c SHA256SUMS                              # FOURTEEN entries
     tools/eg2_loader_check.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf out/artifact-manifest.tsv
-    bash tests/qa-gate.sh                                # rule 19: must print "QA GATE: overall PASS" (fast-path step 11 runs it too)
+    bash tests/qa-gate.sh                                # rule 19: must print the ALL PASS line (the OUTER mount, not ds4-rs/tests/qa-gate.sh)
     bash tools/eg2_embed_route_gate.sh out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf   # gate 20: EG2VQ_EMBED_ROUTE_PASS (NOT in the fast path -- the unit-28 QA pass found it red for two units, so run it by hand)
-    git -C ds4-rs log --oneline -3 && git -C ds4-rs status --short   # e01eba8e, clean
+    cd ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/qa-identity && bash build.sh && ./qa-identity   # QA_IDENTITY_OK: 12,492,416 floats, old vs new, 0 differing
+    # the attention unit's own instruments (BOTH probes must be built against the
+    # PRE-change header, or they fail their own "V0 is not the shipped kernel"
+    # anchor -- see that unit's record section 7):
+    #   mkdir -p /tmp/ab-attn/cuda && cp ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/attn-before.cuh.txt /tmp/ab-attn/cuda/eg2vq_attn.cuh
+    #   nvcc ... -I/tmp/ab-attn -o /tmp/probe-attn ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/probes/probe-attn.cu && /tmp/probe-attn 20       # PROBE_ATTN_OK
+    #   nvcc ... -I/tmp/ab-attn -o /tmp/probe-attn-grp ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/probes/probe-attn-grp.cu && /tmp/probe-attn-grp 20   # PROBE_ATTN_GRP_OK
     cuobjdump --list-elf ds4-rs/ds4_cuda.o | tail -2     # ds4_cuda.sm_89.cubin = the arch record is real
     cat ds4-rs/.ds4-cuda-config.mk                       # CUDA_ARCH := sm_89
     tail -8 out/phase5-gate.log                          # the agreement + retrieval tables
@@ -350,21 +342,31 @@ release is the owner's answer, not more code.
     #   (cd ds4-rs && cargo run -q -p ds4-core --release --example gemma_vq_media_ids -- <artifact> '<|image|>' 88 Raw)
 
 Trust git over this document's headings: every unit whose work this document
-describes is in the diff, both repositories are clean, and NOTHING PROMPTED REMAINS
-— section 3 is the owner's list (the two pushes, ready to take, plus the four
-scope decisions the owner owns: the C CLI's tokenizer, the audio tower, a
-multi-image item, and the QA gate's deferral branch). Every code phase through 8 is
-landed, gated and QA'd
-(the report reads `verdict: overall PASS` and tests/qa-gate.sh is green). The outer
-repo's HEAD carries every commit since publish/dev d45394f (the range above
-d45394f, this handoff's own docs commits included); ds4-rs is at e01eba8e with its
-published dev at 29873445. Anything else in either unpushed range must be read
-before sections 2-6 are trusted. The artifacts, the retrieval source, every out/
-log and the CUDA objects live under gitignored paths (out/, .models/, ds4-rs/), so
-they never appear in a diff: they are identified by the digests in SHA256SUMS, by
-the pins inside the gate scripts, and by the evidence docs' own digests.
+describes is in the diff, both repositories are clean on
+feat/eg2vq-attn-perf, and dev is untouched in BOTH (engine dev = publish/dev =
+10e73aa0, zero commits ahead; outer dev = a43479d, which the published PR
+carries). The port itself is complete through phase 8 — code-complete, gated,
+QA'd (rule 19's report reads verdict: overall PASS and the gate is green) — and
+section 3's item 1 is the one code unit in flight-by-plan: the payload GEMM,
+re-ablated before it is changed. The three performance units are PUBLISHED and
+their PRs are open; everything after this handoff's own commit is unpushed and
+every push stays an offer.
 
-This document is self-contained: a new session can act on it alone — and at this
-boundary, acting means waiting for the owner (section 3), not starting code.
-History is deliberately absent — git log, the phase doc and the evidence docs are
-the historical record.
+What is published, and what is not: both repositories'
+feat/eg2vq-attn-perf is on the remote through the engine's 7cafa2a2 (the chart)
+and the outer's 198fbc9 (this handoff's rotation), with PR #1 open into dev in
+each; the only local-only commit is THIS handoff's edit. The engine's branch
+carries the attention kernel's vec4 loads, the VQ GEMM's rows-per-thread change
+and the attention grouped pass 1 with their records, probes and three QA rounds.
+Read `git rev-list --count publish/dev..HEAD` in each repository, and
+`git log --oneline @{u}..HEAD` for what is still local, rather than a number
+printed here. The artifacts, the retrieval source, every out/ log and the CUDA
+objects live under gitignored paths (out/, .models/, ds4-rs/), so they never
+appear in a diff: they are identified by the digests in SHA256SUMS, by the pins
+inside the gate scripts, and by the evidence docs' own digests.
+
+This document is self-contained: a new session can act on it alone. At this
+boundary that means section 3 item 1 — re-ablate the payload GEMM at its shipped
+R=8, then optimize what the ablation names — and nothing else without the owner's
+word. History is deliberately absent: git log, the phase doc and the evidence
+docs are the historical record.
