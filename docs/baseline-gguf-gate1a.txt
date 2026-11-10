@@ -56,13 +56,13 @@ The two-sided check
     T output.weight   ndim=2 dims=512,768    type=30(bf16) elems=393216    bytes=786432
     T output_norm.weight ndim=1 dims=512     type=0(f32)  elems=512       bytes=2048
 
-The reference's own acceptance (llama.cpp at 31288c9c, built in /data/llama-anchor-build)
-  $ cmake -S /data/llama.cpp -B /data/llama-anchor-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+The reference's own acceptance (llama.cpp at 31288c9c, built in <root>/llama-anchor-build)
+  $ cmake -S <root>/llama.cpp -B <root>/llama-anchor-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
         -DGGML_CUDA=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF
-  $ cmake --build /data/llama-anchor-build -j 28 --target llama-embedding
+  $ cmake --build <root>/llama-anchor-build -j 28 --target llama-embedding
     (24.4 s wall, 7m49 CPU)
-  $ LD_LIBRARY_PATH=/data/llama-anchor-build/bin \
-      /data/llama-anchor-build/bin/llama-embedding \
+  $ LD_LIBRARY_PATH=<root>/llama-anchor-build/bin \
+      <root>/llama-anchor-build/bin/llama-embedding \
       -m out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf -p "hello world" --pooling mean
   exit 0; the model loads, the graph runs, and the vector prints:
     batch_decode: n_tokens = 3, n_seq = 1

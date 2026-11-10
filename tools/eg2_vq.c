@@ -4,7 +4,7 @@
  * Nothing in the payload format is invented. Every field is copied from the
  * reference toolchain, cited with file:line:
  *
- *   /data/YoungAi @ a4e6d31
+ *   <root>/YoungAi @ a4e6d31
  *     gguf-tools/quantize/vq_qc.h:86      vq_encode_full — kmeans (strided
  *         subsample <= 200k vectors, 8 Lloyd rounds, codebook round-tripped
  *         through f16 before assignment, line 109), GPTQ over column groups of
@@ -27,14 +27,14 @@
  *         (locate only, no decode), so the reader is not reimplemented.
  *     src/common/ds4_float.h:34           ds4_bf16_to_f32
  *
- * /data/ds4-dfm-rs/ds41_vq_fmt.h:7     value rule:
+ * <root>/ds4-dfm-rs/ds41_vq_fmt.h:7     value rule:
  *         value[row][col] = codebook[idx][col % dim] * gain[row]
  *
  * Build (mirrors the reference recipe's CPU path; no CUDA, because this
  * machine's GPU path assumes unified memory and measured pageableMemoryAccess
  * = 0 — see vq_gpu.cu's header comment):
  *
- *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -I/data/YoungAi/gguf-tools/quantize \
+ *   cc -O3 -std=c99 -Wall -D_POSIX_C_SOURCE=200809L -I<root>/YoungAi/gguf-tools/quantize \
  *      -o bin/eg2_vq tools/eg2_vq.c -lm
  *
  * Usage:
@@ -48,7 +48,7 @@
 #include <math.h>
 
 /* dq_matmul must be defined before vq_qc.h (it calls it). Semantic copied from
- * the reference: /data/YoungAi/gguf-tools/quantize/vq_shim.c:9
+ * the reference: <root>/YoungAi/gguf-tools/quantize/vq_shim.c:9
  *   out[S,M] = X[S,K] @ W[M,K]^T */
 static void dq_matmul(const float *X, const float *W, float *out, int S, int K, int M) {
     for (int s = 0; s < S; s++)

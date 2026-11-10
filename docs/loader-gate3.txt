@@ -65,7 +65,7 @@ still agrees with the writer tensor for tensor.
 1. The loader on the artifact
 
   $ cd ds4-rs && cargo run -q -p ds4-core --release --example gguf_inventory -- \
-        /data/embeddinggemma2/out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
+        <root>/embeddinggemma2/out/EmbeddingGemma-2-914f7f8-vq4x4096-q80token-gemma_vq.gguf \
         --no-kv --family
   DATA_POS 15881824 ALIGN 32 PAGE 4096 SHARDS 1 N 1376
   T <name> ndim=.. dims=.. type=<n>(<name>) elems=.. bytes=.. rel=.. abs=.. shard=..   x1376
@@ -178,7 +178,7 @@ change and both material to phases 4 and 7:
   `cp.async.bulk.prefetch` errors — the tree's `.ds4-cuda-config.mk` pins
   `CUDA_ARCH := native` (sm_89 on this machine). `ds4.o` and `ds4_cpu.o` build
   fine; the CUDA object is a separate, larger question about the copied tree.
-- `/data/build/linux/build.sh -p /data/embeddinggemma2/ds4-rs` refuses this
+- `<root>/build/linux/build.sh -p <root>/embeddinggemma2/ds4-rs` refuses this
   project's binaries: `error: target ds4-agent-rs in package ds4-cli requires the
   features: native`. The canonical builder has no way to pass `--features native`,
   which every `ds4-cli` binary needs, so this tree's Rust deliverables are built
@@ -191,7 +191,7 @@ change and both material to phases 4 and 7:
   443 unit tests (436 passed, 7 ignored) and 29 integration targets, no failures
   $ cargo check -q --workspace --all-targets
   (clean: every binary, test and example target in the workspace type-checks)
-  $ the five P-1 guardrail greps, in /data/embeddinggemma2
+  $ the five P-1 guardrail greps, in <root>/embeddinggemma2
   0, 0, 0, 0, 0 hits
 
 6. What this proves, and what it does not

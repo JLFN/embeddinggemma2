@@ -190,7 +190,7 @@ this document:
       declared tolerance (1e-5) covers it; the fact is recorded here because the
       gate's own line differs between runs and a later reader will notice.
 
-What the pass could NOT test, in its own words: the canonical /data/build builder
+What the pass could NOT test, in its own words: the canonical <root>/build builder
 (which refuses this tree by design), any other GPU or arch than this card's sm_89,
 and the batching half of row P2.3, which does not exist yet. A later session should
 read section 5 of the report before treating its coverage as complete for the row.

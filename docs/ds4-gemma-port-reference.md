@@ -29,14 +29,14 @@ Three roles, never mixed:
 
 | Tree | Identity | Revision | Role |
 |---|---|---|---|
-| `/data/llama.cpp` | upstream `ggml-org/llama.cpp` (MIT) | `b11723`, commit `31288c9c66e59377f7788d920678a565bb89dd37`, 2026-10-18 | the reference implementation for this model |
-| `/data/llama-prism` | `PrismML-Eng/llama.cpp` fork (MIT) | `b10743`, commit `adfffbe41b2cabcd51fff326ab045662265062bb`, 2026-09-25 | cross-check only: it predates `gemma-embedding2` and carries the older `gemma-embedding` (`src/models/gemma-embedding.cpp`, the 300m text-only model) |
+| `<root>/llama.cpp` | upstream `ggml-org/llama.cpp` (MIT) | `b11723`, commit `31288c9c66e59377f7788d920678a565bb89dd37`, 2026-10-18 | the reference implementation for this model |
+| `<root>/llama-prism` | `PrismML-Eng/llama.cpp` fork (MIT) | `b10743`, commit `adfffbe41b2cabcd51fff326ab045662265062bb`, 2026-09-25 | cross-check only: it predates `gemma-embedding2` and carries the older `gemma-embedding` (`src/models/gemma-embedding.cpp`, the 300m text-only model) |
 
 Both trees are read-only inputs. Neither becomes a runtime dependency: llama.cpp
 is not built, linked, or invoked by the port, and its kernels are not used — the
 port reimplements the graph in the ds4 pattern and cites what it copied.
 
-Files that matter in `/data/llama.cpp`:
+Files that matter in `<root>/llama.cpp`:
 
 | Path | What it holds |
 |---|---|
@@ -117,7 +117,7 @@ false` ("embeddings do not use causal attention"), `f_attention_scale = 1.0` wit
 the stated reason "same as Gemma4, q_norm makes the scaling unnecessary",
 `rope_freq_base_swa`, `n_swa`, `f_norm_rms_eps`, `n_embd_per_layer` (`:12`).
 Note this differs from the older 300m implementation
-(`/data/llama-prism/src/models/gemma-embedding.cpp:28`), which scales by
+(`<root>/llama-prism/src/models/gemma-embedding.cpp:28`), which scales by
 `1/sqrt(head_dim)` — the two models are not the same graph, and using the older
 file for this model would silently change every attention score.
 
@@ -221,12 +221,12 @@ default it from this file.
 ## 6. Verification: the ds4 method, and no foreign instrument
 
 Owner decision, 2026-10-19: this port carries no ONNX and no PyTorch, in the
-runtime or in its verification. The method is the one `/data/ds4-dfm-rs` already
+runtime or in its verification. The method is the one `<root>/ds4-dfm-rs` already
 uses, read out of that tree:
 
 - The oracle is native code of the project's own. "C executables with `-c`
   suffixes are retained behavior oracles, not the production hosts"
-  (`/data/ds4-dfm-rs/AGENTS.md`). The Rust host is the candidate, and each
+  (`<root>/ds4-dfm-rs/AGENTS.md`). The Rust host is the candidate, and each
   surface has a parity harness against the C oracle
   (`tests/parity/<surface>_c_oracle.c`, with Makefile targets
   `test-route-parity`, `test-catalog-parity`, `test-tokenizer-parity`,
@@ -234,7 +234,7 @@ uses, read out of that tree:
 - A false green is a named failure, not an accident. `proof-rust-cuda-opp-c`
   refuses to run when candidate and oracle are the same binary or the same hash:
   "Same inode or same hash is a false-green (Rust-vs-Rust) and must die"
-  (`/data/ds4-dfm-rs/Makefile`).
+  (`<root>/ds4-dfm-rs/Makefile`).
 - Frozen numbers are committed snapshots, not a library call:
   `tests/proof/expected/<scenario>.json`, checked by `tests/ds4_proof.py
   --scenario <name> --check-expected <path>`; the report carries the same fields

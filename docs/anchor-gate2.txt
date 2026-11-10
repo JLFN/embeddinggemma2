@@ -75,7 +75,7 @@ it, in this session.
       sha256 a982ca419f2c302c2d38a5a6004e9ae0a3bb582bd893795d152b56559955c725
 
   The reference's own load, before and after (llama-embedding from
-  /data/llama-anchor-build, -p "hello world"):
+  <root>/llama-anchor-build, -p "hello world"):
     before  W main: last token in the prompt is not SEP or EOS
             W main: 'tokenizer.ggml.add_eos_token' should be set to 'true'
             batch_decode: n_tokens = 3
@@ -128,7 +128,7 @@ it, in this session.
     model      out/EmbeddingGemma-2-914f7f8-baseline-bf16.gguf
                sha256 0d84f1a93dcfe825d7391d0bc57bf2966be823757d0f1b349179733caebec201
     reference  llama.cpp 31288c9c6, "version: 0.7.0-dev (build 11723, commit 31288c9c6)",
-               built with GNU 14.2.0, CPU backend, /data/llama-anchor-build
+               built with GNU 14.2.0, CPU backend, <root>/llama-anchor-build
     command    llama-embedding -m <model> -f <one input per invocation>
                  --pooling mean --embd-normalize 2 --embd-output-format raw --no-warmup
     file       114 lines, 2,029,551 B
@@ -237,7 +237,7 @@ it, in this session.
     about the port.
   - It is a second opinion beside this project's own chain, never it: the port's C
     reference path stays the oracle for the Rust host and the CUDA kernels, exactly
-    as /data/ds4-dfm-rs/AGENTS.md states for its retained -c oracles.
+    as <root>/ds4-dfm-rs/AGENTS.md states for its retained -c oracles.
 
 Open, carried forward
   - Phase 1b must carry the same three tokenizer keys in the artifact GGUF (the

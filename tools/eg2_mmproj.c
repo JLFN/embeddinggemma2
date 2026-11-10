@@ -13,7 +13,7 @@
  * Every key, name, dimension and transform below is READ, per project rule 0.2,
  * from these sources — nothing here is invented:
  *
- *   /data/llama.cpp @ 31288c9c (read-only, the form authority)
+ *   <root>/llama.cpp @ 31288c9c (read-only, the form authority)
  *     tools/mtmd/clip-impl.h:31-74      the mmproj KV key spellings (KEY_*)
  *     tools/mtmd/clip-impl.h:112-158    the tensor name templates (TN_*), and
  *     tools/mtmd/clip-impl.h:428-429     v.std_bias / v.std_scale

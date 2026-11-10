@@ -25,6 +25,12 @@ implementation, called directly; what this project adds is a dense, name-keyed c
 (`DQVD` v1) that wraps the reference payloads so an engine port inherits a contract it
 already knows. `RECIPE.md` is the full account, with every pinned input.
 
+Paths in the evidence files and transcripts are written as `<root>/<checkout>`, where
+`<root>` is the directory that holds this repository beside its read-only sibling
+checkouts (`llama.cpp`, `YoungAi`, `llama-anchor-build`, `ds4-dfm-rs`, `build`); substitute
+your own. Executable scripts under `tools/` take the same locations as environment
+variables and default to the sibling layout.
+
 ## Get the artifact
 
 The two runnable files are published with a model card, the license text and the digests at

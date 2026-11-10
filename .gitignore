@@ -6,6 +6,10 @@ ds4-rs/
 *[.]o
 out/
 out/*.bin
-# the anchor binary is linked against the pin's build, so it is a per-machine
-# product rebuilt by tools/eg2_vision_anchor.sh, not a shipped instrument
-bin/eg2vq_vision_anchor
+# bin/ holds per-machine build products, rebuilt by RECIPE.md and by the gate
+# scripts under tools/ (the anchor binary is linked against the pin's build).
+# Nothing here is a shipped instrument, so nothing here is tracked.
+/bin/
+# the session handoff is the local plan of record (rule 9): it stays on disk
+# and out of the repository, and is never pushed
+/embeddinggemma2-handoff.md
