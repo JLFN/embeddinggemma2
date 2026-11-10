@@ -98,7 +98,7 @@ Nothing about rule 19 remains open.
 
 2. Current state (2026-11-10, re-verified IN THIS SESSION at the FIFTH performance unit's boundary: the attention runs on f16 tensor cores; feat/eg2vq-attn-perf is the published branch with PR #1 open in each repo, dev untouched in both)
 
-- THE FIFTH PERFORMANCE UNIT, LANDED LOCALLY: engine 4d160345 on feat/eg2vq-attn-perf, the only local-only substantive commit; the branch itself is published at df0ee621, and this handoff edit is the second local commit. No push has been made or authorized since the owner's one push.
+- THE FIFTH PERFORMANCE UNIT, LANDED LOCALLY: engine 4d160345 (the kernel, the harnesses, the Makefile dependency fix, the record) plus c207e97f (the post-unit profile); the branch itself is published at df0ee621, and the outer handoff commits are the other half of the local-only set. No push has been made or authorized since the owner's one push.
 - WHAT IT IS: two tensor-core kernels in cuda/eg2vq_attn.cuh behind eg2vq_attn's shape dispatch — sliding (D=256, group 2, 8 tokens x 2 heads per warp, RTILE 64, K and V resident, 32 KiB) and full (D=512, group 4, 4 tokens x 4 heads per warp on one 256-dim half, RTILE 16, the pair exchanging partial scores, 48 KiB). m16n8k16 + ldmatrix.x4 + f16 operands + f32 accumulators; each CTA is ONE item, mapped by walking the item lengths, which is what keeps unit 27's batched byte identity. The old launcher is eg2vq_attn_scalar, unchanged, and stays the fallback for every other shape.
 - THE REFERENCES: the dense one is PR 142 (feat/spark2_5-family, cuda/spark2_5.cuh:887-1044 — the owner's pointer: the tower is dense, so the dense model's kernel is the form), which supplies the sliding geometry; PR 143 (cuda/gemma4_attn_mma.cuh:344-583) supplies the D=512 half-split, which the dense branch does not have. The previous draft of the citation block named gemma4 only and was corrected before the commit.
 - MEASURED, one window, both paths interleaved in one process: kernel 10.03x on an 8x565 block (0.328 ms, 31.6 TFLOP/s), 9.26x on 1414 tokens, 8.45x on 8x306, 1.88x at 184 rows, 0.97x-1.01x at 27-115 rows (hence no row threshold — see the constraint below).
@@ -111,19 +111,21 @@ Nothing about rule 19 remains open.
 
 3. Next unit plan — THE SMALL OPS, which are now the largest item, and the profile before them
 
-(1) THE UNIT, AND WHY IT IS NEXT. With the GEMM and the attention on f16 tensor
-    cores, the two large arithmetic items are done and what is left is a set of
-    launch-bound kernels. The last full profile (before this unit) put them at
-    24.3 ms of 87.6 ms: eg2vq_ops_rms_kernel 8.6 ms over 121 launches,
-    proj768 7.1 ms over ONE launch, rms_head 5.4 ms over 72, add 0.8, gelu_mul
-    0.7, scale 0.7, rope 0.5, the rest under 0.1. Extrapolating this unit's
-    measured attention gain takes the forward to about 49 ms, where those ops
-    are roughly half of it. THE FIRST ACTION IS A FRESH nsys PROFILE of the same
-    8-item / 2,451-token batch (pages 001-008 of out/live-demo/pages, which is
-    exactly 2,451 tokens: 42+162+11+104+624+481+424+603) and a frozen baseline
-    in the same window: ./tests/bench_eg2vq_vq 7 and ./tests/bench_eg2vq_attn 20.
-    Do not start from the old split; do not take the extrapolation as the new
-    one.
+(1) THE UNIT, AND WHY IT IS NEXT. MEASURED AT THIS BOUNDARY, not extrapolated:
+    the fresh nsys profile of the same 8-item / 2,451-token batch on the build
+    that just landed (pages 001-008 of out/live-demo/pages, 42+162+11+104+624+
+    481+424+603 tokens; raw: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/
+    nsys-kern-sum-b8-attn-tensor-cores.txt) reads 49.2 ms of kernel time, down
+    from 87.6 ms, and the split is now:
+      small ops   24.3 ms (49.2%): rms 8.64 / 121 launches, proj768 7.13 / ONE
+                  launch, rms_head 5.44 / 72, add 0.79, scale 0.69 (25
+                  launches, one 538 us), gelu_mul 0.65, rope 0.52, gelu_strided
+                  0.42, embed 0.06
+      VQ GEMM     19.4 ms (39.4%): mma<64> 10.81 / 144 launches, mma<128> 8.63
+      attention    5.44 ms (11.0%): slide 3.85 / 20 launches, full 1.59 / 4
+    So the small ops are the largest item and they are launch-bound, not
+    arithmetic-bound. Freeze the baseline in the same window before touching
+    anything: ./tests/bench_eg2vq_vq 7 and ./tests/bench_eg2vq_attn 20.
 
 (2) THE CANDIDATES, cheapest first, each read in cuda/eg2vq_ops.cuh before it is
     touched:
@@ -163,10 +165,11 @@ Nothing about rule 19 remains open.
 
 (5) PUSH DISCIPLINE: unchanged. feat/eg2vq-attn-perf is published with PR #1
     open in each repo (tip df0ee621 engine, 273eb76 outer). The local-only set
-    is engine 4d160345 and this handoff commit. A push is an OFFER: run the four
-    checks fresh (rule 6 `gh repo view` on both targets, rule 10 OSV, rule 19's
-    gate, rule 23's branch/range checks), report branch, range, visibility, gate
-    results and the exact rollback, and wait for the owner's answer.
+    is engine 4d160345 + c207e97f and the outer handoff commits. A push is an
+    OFFER: run the four checks fresh (rule 6 `gh repo view` on both targets,
+    rule 10 OSV, rule 19's gate, rule 23's branch/range checks), report branch,
+    range, visibility, gate results and the exact rollback, and wait for the
+    owner's answer.
 
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
