@@ -1,7 +1,7 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 7a94441f95eabbd35aef4f341d7f9b09b7d94529
+last_updated_commit: e2cd623769b7d0d24e95b807ef9efe9835c67db3
 branch: feat/eg2vq-attn-perf
 remote: 
 handoff_written_at_context_usage: 28%
