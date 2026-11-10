@@ -1,11 +1,11 @@
 ---
 project: embeddinggemma2
 plan_start_commit: 9f252ef
-last_updated_commit: 273eb762f72532ce3b868104291bcb1f79936a0e
+last_updated_commit: 7a94441f95eabbd35aef4f341d7f9b09b7d94529
 branch: feat/eg2vq-attn-perf
 remote: 
-handoff_written_at_context_usage: 5%
-handoff_written_at: 2026-11-10T13:42:11+01:00
+handoff_written_at_context_usage: 28%
+handoff_written_at: 2026-11-10T14:25:02+01:00
 session_id: 01a1c513-c770-7f32-943d-da6a4603e4da
 boundary_state: clean/unpushed
 ---
@@ -32,7 +32,7 @@ README.md                               | 176 ++++++++++++++++++
 --- end handoff probe ---
 
 
-Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-11-10 after the FIFTH performance unit: the attention runs on f16 tensor cores, 10.03x at the kernel and 1.86x on the 143-page corpus at batch 8, read from the DENSE reference PR 142 with PR 143 for the D=512 split; section 3 now points at the small ops, which are the largest item left)
+Handoff + executable plan — EmbeddingGemma-2 VQ in ds4-rs (rotated 2026-11-10 after the SIXTH performance unit: the two norm primitives run one warp per row, the forward is 49.2 -> 40.0 ms of kernel time and the corpus gains 1.17x at batch 8; section 3 now points at the 768 projection, the largest kernel left that is not a VQ payload GEMM)
 
 Note on the frontmatter: it MUST be the first thing in the file, with
 bare values (no inline comments after the value) — the handoff-hooks
@@ -96,62 +96,74 @@ Nothing about rule 19 remains open.
    and the commits are in place, call the compact_session tool as the last action
    of that turn. The handoff write itself also parks a compaction.
 
-2. Current state (2026-11-10, re-verified IN THIS SESSION at the FIFTH performance unit's boundary: the attention runs on f16 tensor cores; feat/eg2vq-attn-perf is the published branch with PR #1 open in each repo, dev untouched in both)
+2. Current state (2026-11-10, re-verified IN THIS SESSION at the SIXTH performance unit's boundary: the tower's norms run one warp per row; feat/eg2vq-attn-perf is the published branch with PR #1 open in each repo, dev untouched in both)
 
-- THE FIFTH PERFORMANCE UNIT, LANDED LOCALLY: engine 4d160345 (the kernel, the harnesses, the Makefile dependency fix, the record) plus c207e97f (the post-unit profile); the branch itself is published at df0ee621, and the outer handoff commits are the other half of the local-only set. No push has been made or authorized since the owner's one push.
-- WHAT IT IS: two tensor-core kernels in cuda/eg2vq_attn.cuh behind eg2vq_attn's shape dispatch — sliding (D=256, group 2, 8 tokens x 2 heads per warp, RTILE 64, K and V resident, 32 KiB) and full (D=512, group 4, 4 tokens x 4 heads per warp on one 256-dim half, RTILE 16, the pair exchanging partial scores, 48 KiB). m16n8k16 + ldmatrix.x4 + f16 operands + f32 accumulators; each CTA is ONE item, mapped by walking the item lengths, which is what keeps unit 27's batched byte identity. The old launcher is eg2vq_attn_scalar, unchanged, and stays the fallback for every other shape.
-- THE REFERENCES: the dense one is PR 142 (feat/spark2_5-family, cuda/spark2_5.cuh:887-1044 — the owner's pointer: the tower is dense, so the dense model's kernel is the form), which supplies the sliding geometry; PR 143 (cuda/gemma4_attn_mma.cuh:344-583) supplies the D=512 half-split, which the dense branch does not have. The previous draft of the citation block named gemma4 only and was corrected before the commit.
-- MEASURED, one window, both paths interleaved in one process: kernel 10.03x on an 8x565 block (0.328 ms, 31.6 TFLOP/s), 9.26x on 1414 tokens, 8.45x on 8x306, 1.88x at 184 rows, 0.97x-1.01x at 27-115 rows (hence no row threshold — see the constraint below).
-- GATES: `make test-eg2vq-attn` -> EG2VQ_ATTN_PASS (both paths against the f64 oracle at all seven shapes, the mask edge on both, the packed block on both, the dispatch bit-identical); gate 7 -> EG2VQ_GPU_PASS, min cos 0.999999768, max rel_rms 6.813e-04 against the unchanged 0.999999 / 1e-03; gate 27 -> PASS with max per-element delta 0.000e+00 over 64 items x 768 values; tests/run.sh fast path exit 0 through the QA gate; P-1 five checks zero; OSV 140 packages / 0 vulnerable; 256 HMMA.16816.F32; REG 254/255, STACK 0/48.
-- END TO END, both round pairings, old build df0ee621: corpus 143 pages batch 8 24,227.3 -> 45,013.6 and 24,035.5 -> 44,853.6 tokens/s (1.858x / 1.866x), batch 4 1.719x / 1.734x, batch 1 1.352x / 1.348x; the 300 one-item device leg 0.98x / 1.00x, because those items average 27 tokens.
-- THE CONSTRAINT THAT DECIDED THE DISPATCH: a call-sized row threshold would give a 20-token item the scalar path alone and the tensor-core path inside a 64-item batch, breaking unit 27's byte identity. One arithmetic per shape, call-independent, costs 3% of the attention kernel at the smallest item and a fraction of a percent of that forward.
-- THE RECORD: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/attn-tensor-cores.md, nsys-kern-sum-b8-mma-vq.txt, attn-mma-ab-bench{,-run1}.txt, ab-{new,old}-dev-r{1,2}.txt, corpus-attn-ab-{new,old}-{1,2}.csv and their health readouts.
-- RULE 19: the outer gate is green (no new runtime, route or public-API surface); its extractor still cannot see a kernel header, so the arithmetic review remains the open discipline item from the previous unit.
-- NOT RE-RUN: the deep path (tests/run.sh --deep), gate 20's route gate, the loader digest, gate 5, and the inner repo's stale rule-19 mount. The unit is one kernel header, two harnesses, a Makefile dependency fix and documentation.
+- THE SIXTH PERFORMANCE UNIT, LANDED LOCALLY: engine c7ae8da0 (the reduction, the two harnesses, the Makefile and .gitignore rules, the record); the branch itself is published at c207e97f, and the outer handoff commit is the other half of the local-only set. No push has been made or authorized since the owner's one push.
+- WHAT IT IS: cuda/eg2vq_ops.cuh's two norm primitives now run ONE WARP PER ROW — the lane's strided slice read once into registers, the sum of squares folded with a __shfl_xor_sync butterfly (five shuffles, no shared memory, no block barrier), one template instantiation per per-lane count (2/4/8/16/32, i.e. widths to 1,024), the old block kernels kept as eg2vq_ops_rms_block for anything wider. Same arithmetic as the graph (double sum, double mean, cast before the eps, x*scale*w, ds4_eg2vq_graph.inc:44-53); only the summation tree changed.
+- THE PROOF THAT NO OTHER LEG MOVED: the two forms are BIT-IDENTICAL at every width the text and vision towers run — 0 of 283,648 row values and 0 of 242,944 per-head values differ, max 0 ULP (tests/test_eg2vq_ops.cu), and the vision gates 23/24 print their recorded digits.
+- MEASURED, one window, both forms interleaved in one process: 3.07x a launch at 512 x 2,451 rows (0.0622 -> 0.0203 ms), 2.54x on the 58,824-row PLE norm, 2.63x on the q head norm, 2.52x on k/v; the two kernels 14.08 -> 4.90 ms and the forward 49.2 -> 40.0 ms of kernel time.
+- END TO END, both round pairings, old build c207e97f: corpus batch 4 1.148x/1.142x, batch 8 1.171x/1.161x, batch 1 1.025x/1.018x. The sweep's single-item p50 row is NOT this unit's number (24.5 vs 14.7 ms in the sweep; a controlled 12-request re-measurement has both builds at 14.3-15.5 ms).
+- GATES: test-eg2vq-ops / -attn / -vq PASS; gate 7 unmoved at min cos 0.999999768 and max rel_rms 6.813e-04; gate 27 PASS at 0.000e+00 and 21.56x; tests/run.sh fast path exit 0 through gates 22-27 and the QA gate; P-1's five checks zero; OSV 140 packages / 0 vulnerable.
+- THE DISPATCH DECISION: no row-count threshold. A 27-row call is 0.75x on the warp form (1.4 us a launch) and that is accepted, because a dispatch that picks arithmetic from a call's size is exactly the contract unit 27's byte identity must not have.
+- THE RECORD: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/norm-warp-reduction.md, norm-warp-ab-bench{,-run1}.txt, nsys-kern-sum-b8-norm-warp.txt, gate7-norm-warp.txt, corpus-norm-ab-{new,old}-{1,2}.csv with their health readouts, norm-batch8-request.json.
+- NOT RE-RUN: the deep path (tests/run.sh --deep), gate 20's route gate, the loader digest, gate 5, and the engine repo's stale rule-19 mount. The unit is one kernel header, two harnesses, a Makefile rule and documentation.
 
-3. Next unit plan — THE SMALL OPS, which are now the largest item, and the profile before them
+3. Next unit plan — THE 768 PROJECTION, now the largest kernel left that is not a VQ payload GEMM
 
 (1) THE UNIT, AND WHY IT IS NEXT. MEASURED AT THIS BOUNDARY, not extrapolated:
     the fresh nsys profile of the same 8-item / 2,451-token batch on the build
     that just landed (pages 001-008 of out/live-demo/pages, 42+162+11+104+624+
     481+424+603 tokens; raw: ds4-rs/docs/benchmarks/eg2-embedding-2026-10-20/
-    nsys-kern-sum-b8-attn-tensor-cores.txt) reads 49.2 ms of kernel time, down
-    from 87.6 ms, and the split is now:
-      small ops   24.3 ms (49.2%): rms 8.64 / 121 launches, proj768 7.13 / ONE
-                  launch, rms_head 5.44 / 72, add 0.79, scale 0.69 (25
-                  launches, one 538 us), gelu_mul 0.65, rope 0.52, gelu_strided
-                  0.42, embed 0.06
-      VQ GEMM     19.4 ms (39.4%): mma<64> 10.81 / 144 launches, mma<128> 8.63
-      attention    5.44 ms (11.0%): slide 3.85 / 20 launches, full 1.59 / 4
-    So the small ops are the largest item and they are launch-bound, not
-    arithmetic-bound. Freeze the baseline in the same window before touching
-    anything: ./tests/bench_eg2vq_vq 7 and ./tests/bench_eg2vq_attn 20.
+    nsys-kern-sum-b8-norm-warp.txt) reads 40.0 ms of kernel time, down from
+    49.2 ms, and the split is now:
+      VQ GEMM     19.39 ms (48.5%): mma<64> 10.78 / 144 launches, mma<128> 8.61
+      proj768      7.13 ms (17.8%): ONE launch, 2,451 rows x 512 x 768
+      attention    5.41 ms (13.5%): slide 3.83 / 20 launches, full 1.58 / 4
+      norms        4.90 ms (12.2%): warp<16> 3.18 / 133, warp<8> 1.72 / 60
+      other ops    2.79 ms (7.0%): add 0.76, scale 0.69, gelu 1.08, rope 0.52,
+                  embed 0.06, pool 0.04
+    proj768 is 1.93 GFLOP in 7.13 ms = 271 GFLOP/s, i.e. 1/100 of what the
+    card does on the payload GEMM, and it is NOT launch-bound (one launch).
+    Freeze the baseline in the same window before touching anything:
+    ./tests/bench_eg2vq_ops 200 and ./tests/bench_eg2vq_vq 7.
 
-(2) THE CANDIDATES, cheapest first, each read in cuda/eg2vq_ops.cuh before it is
-    touched:
-      - FUSE WHAT THE GRAPH ALREADY RUNS BACK TO BACK. ds4_eg2vq_graph.inc is
-        the arithmetic authority and the op order must not change: add + rms
-        (the residual add feeds the next norm directly), and rms_head feeding
-        the Q/K/V projection are the two pairs to check first. A fusion is only
-        allowed if the parity gate still measures what it measures today.
-      - THE PROJ768 IS ONE LAUNCH PER CALL at 7.1 ms: it reads the q8_0 token
-        table in-kernel and is 512->768; check whether its 7.1 ms is the launch
-        (it is one launch, so no) or the table read, before changing anything.
-      - rms_head AT 5.4 ms OVER 72 LAUNCHES is per row per layer: it is the
-        most launch-heavy of the three.
-      - THE f16 KV CACHE is the structural item after that: attention stages K
-        and V from the port's f32 cache and converts per tile, and the rope
-        kernel is the only writer, so a half-width cache halves that traffic —
-        but it changes a buffer the whole device path shares, so it is its own
-        unit and not this one.
+(2) WHAT IT IS TODAY, read from the kernel before anything is changed:
+    cuda/eg2vq_ops.cuh's eg2vq_ops_proj768_kernel — one block of 256 threads
+    per ROW. Prologue: the output_norm RMS of the row (double sum, the same
+    shared tree the norms used to have) into a dynamic-shared e_s of n_embd
+    floats. Then each thread owns a few of the 768 outputs and walks all 512
+    weights of that output's bf16 row, widening each by shift+memcpy and
+    accumulating in f32. Every block reads the whole 768x512 bf16 matrix
+    (786 KB, L2-resident) and the inner loop is scalar.
+    Records that must survive: the result goes to the ROW's own plane
+    (acc + row * n_out) so an item's numbers cannot depend on which items
+    share the call (unit 27), and the accumulation order the reference uses is
+    the CPU binder's f32 dot (ds4_eg2vq_graph.inc:339-356).
+    Candidates, cheapest first:
+      - A bf16 m16n8k16 GEMM of [rows x 512] x [512 x 768] with f32
+        accumulators, the operands EXACTLY as the file stores them (bf16, so
+        the widening is exact and only the accumulation order changes), the
+        output_norm as the prologue of the row tile, and the row's own plane
+        as the epilogue. The pattern to port is this project's own payload
+        GEMM (cuda/eg2vq_vq.cuh's mma kernel) and the dense reference's
+        (feat/spark2_5-family, cuda/spark2_5_vq_gemm.cuh) — PR 142, the branch
+        the owner pointed at for the dense tower.
+      - A shared-tile f32 GEMM (4-8 rows per block, the weight tile staged
+        once) if the tensor-core leg's per-row-plane epilogue turns out to be
+        the constraint; it keeps the dot's order and only amortizes the read.
+      - NOT a change to the expression: the norm, the plane and the pool stay
+        where the graph puts them. A different accumulation order is allowed
+        only if gate 7 measures it inside its declared bound, and the bound is
+        reported before the run, not after.
 
-(3) THE METHOD, unchanged from the last three units: one change per unit, A/B'd
+(3) THE METHOD, unchanged from the last four units: one change per unit, A/B'd
     inside one window with both round pairings, the bench harness extended
-    first, gate 7 plus the interleaved 143-page corpus sweep (batches 1, 4 and
-    8) as the end-to-end evidence, `make test-eg2vq-*` for the kernel gate,
-    tests/run.sh and gate 27 for the contract legs, and REG/STACK/LOCAL/SHARED
-    from cuobjdump reported. The bench binary compiles the header in, so rebuild
-    it after every header edit.
+    first (bench_eg2vq_ops has the norm rows; the projection needs its own
+    row at 2,451 / 294 / 27 rows), gate 7 plus the interleaved 143-page corpus
+    sweep (batches 1, 4 and 8) as the end-to-end evidence, `make test-eg2vq-*`
+    for the kernel gate, tests/run.sh and gate 27 for the contract legs, and
+    REG/STACK/LOCAL/SHARED from cuobjdump reported. The bench binary compiles
+    the header in, so rebuild it after every header edit.
 
 (4) THE OWNER'S STANDING LIST, unchanged: the C CLI's tokenizer gap; the AUDIO
     tower (out of scope); a MULTI-IMAGE item; retiring the inert QA deferral
@@ -160,16 +172,16 @@ Nothing about rule 19 remains open.
     retiring the duplicate feat/ds41-dsml-carriage); and the engine repo's
     inherited stale rule-19 mount (ds4-rs/tests/qa-gate.sh, red over another
     project's surfaces — the project's mount is the OUTER one). A kernel-level
-    QA pass over the tensor-core arithmetic (both units) is the open discipline
-    item; the rule-19 extractor cannot see a kernel header.
+    QA pass over the tensor-core arithmetic (three units now) is the open
+    discipline item; the rule-19 extractor cannot see a kernel header.
 
 (5) PUSH DISCIPLINE: unchanged. feat/eg2vq-attn-perf is published with PR #1
-    open in each repo (tip df0ee621 engine, 273eb76 outer). The local-only set
-    is engine 4d160345 + c207e97f and the outer handoff commits. A push is an
-    OFFER: run the four checks fresh (rule 6 `gh repo view` on both targets,
-    rule 10 OSV, rule 19's gate, rule 23's branch/range checks), report branch,
-    range, visibility, gate results and the exact rollback, and wait for the
-    owner's answer.
+    open in each repo (tip c207e97f engine, 5786e6f outer). The local-only set
+    is engine c7ae8da0 plus the outer docs commits. A push is an OFFER: run the
+    four checks fresh (rule 6 `gh repo view` on both targets, rule 10 OSV,
+    rule 19's gate, rule 23's branch/range checks against publish/dev, since
+    this fork has no origin/dev), report branch, range, visibility, gate
+    results and the exact rollback, and wait for the owner's answer.
 
 4. Reference map — the exact repos and files (pinned; verified at this boundary)
 
